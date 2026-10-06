@@ -1,0 +1,36 @@
+{
+  "upstream_repo": "https://github.com/fstandhartinger/jevbench",
+  "git_ref": "v1.4.2",
+  "commit_sha": "1df665e3956d7aab7fa0208ff6c4f2d8557f9f90",
+  "protocol": "jevbench::v1.2 (v1.3.1 scoring)",
+  "synced_at_utc": "2026-09-27T06:17:45Z",
+  "total_public_items": 231,
+  "unified_dataset_sha256": "e38827fd03e60c6033c9b34090cbb468d7551211c687491781cb5774ec22da14",
+  "splits": [
+    {
+      "name": "easy",
+      "tier": "easy",
+      "items": 48,
+      "sha256": "231df3c2c8e88a1a8c137ebe85de96ba70fabd330849098ac7b3c52c70b7172b",
+      "canonical_sha256": "3cbd0e951fa8059741955ef2bd3273b0bb60aecae8f4a68b89872f55f7376b3d",
+      "source_url": "https://raw.githubusercontent.com/fstandhartinger/jevbench/v1.4.2/datasets/public/easy.jsonl"
+    },
+    {
+      "name": "original",
+      "tier": "standard",
+      "items": 72,
+      "sha256": "5c2414edb3006b8bfcb70fda433f0f9ca015759433849f8d3104328a1f7c4180",
+      "canonical_sha256": "914276022fa5f0ea70e4231f2af98e68c67b274b61bea8c440b33890401cd2f9",
+      "source_url": "https://raw.githubusercontent.com/fstandhartinger/jevbench/v1.4.2/datasets/public/original.jsonl"
+    },
+    {
+      "name": "hard",
+      "tier": "hard",
+      "items": 111,
+      "sha256": "89e9e6becb33ed88c1de7d42dcc87531b2fb64cfaef4e1986faf7c37b3f80ebb",
+      "canonical_sha256": "e816e106f562dec75a8da12e69b75e957a4bbd9f6300f1145fc71837327a3c61",
+      "source_url": "https://raw.githubusercontent.com/fstandhartinger/jevbench/v1.4.2/datasets/public/hard.jsonl"
+    }
+  ],
+  "topics_revision": "v1.2.15"
+}

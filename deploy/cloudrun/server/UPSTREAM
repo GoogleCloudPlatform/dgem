@@ -1,0 +1,4 @@
+repository: https://github.com/vllm-project/vllm
+commit: a9eafde59cbd55182dc2265cc398b7186f0a0eaa
+file: examples/features/structured_diffusion/structured_server.py
+pulled_at: 2026-09-27T14:54:52Z

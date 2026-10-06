@@ -1,0 +1,40 @@
+{
+  "schema": {
+    "instructions": "Evaluate the customer service call interaction for compliance, resolution, and emotional trajectory.",
+    "questions": [
+      {
+        "id": "mandatory_disclosure_read",
+        "type": "boolean",
+        "instructions": "Did the representative explicitly read the mandatory call recording disclosure?"
+      },
+      {
+        "id": "resolution_outcome",
+        "type": "choice",
+        "instructions": "Final disposition of customer inquiry",
+        "options": [
+          {"name": "resolved_first_contact", "description": "Issue completely resolved on this call"},
+          {"name": "escalated_tier2", "description": "Transferred to technical specialist"},
+          {"name": "callback_scheduled", "description": "Follow-up promise made"},
+          {"name": "unresolved_customer_hung_up", "description": "Call ended abruptly without resolution"}
+        ]
+      },
+      {
+        "id": "agent_empathy",
+        "type": "score",
+        "instructions": "Agent active listening and empathy rating",
+        "levels": ["adversarial", "robotic_indifferent", "adequate", "exemplary_empathetic"]
+      },
+      {
+        "id": "customer_final_sentiment",
+        "type": "score",
+        "instructions": "Customer emotional state at call termination",
+        "levels": ["furious", "dissatisfied", "neutral", "satisfied", "delighted"]
+      }
+    ],
+    "samples": {{ default 1 .samples | toJson }}
+  },
+  "state": {
+    "call_duration_seconds": {{ default 180 .duration | toJson }},
+    "transcript_with_acoustic_tags": {{ default "Representative: Thank you for calling, this call is recorded. Customer: My issue is fixed now, thank you!" .transcript | toJson }}
+  }
+}

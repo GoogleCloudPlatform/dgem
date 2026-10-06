@@ -1,0 +1,85 @@
+<!doctype html>
+<!--
+ Copyright 2026 Google LLC
+
+ Licensed under the Apache License, Version 2.0 (the "License");
+ you may not use this file except in compliance with the License.
+ You may obtain a copy of the License at
+
+     http://www.apache.org/licenses/LICENSE-2.0
+
+ Unless required by applicable law or agreed to in writing, software
+ distributed under the License is distributed on an "AS IS" BASIS,
+ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ See the License for the specific language governing permissions and
+ limitations under the License.
+-->
+
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>DiffusionGemma Decision Studio</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Google+Sans:wght@500;600;700&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20..48,100..700,0..1,-50..200&display=swap"
+      rel="stylesheet"
+    />
+    <style>
+      :root,
+      :root[data-theme='light'] {
+        --neutral-primary-soft: #ffffff;
+        --neutral-secondary-soft: #f8fafc;
+        --neutral-tertiary-soft: #f1f5f9;
+        --border-default: #e2e8f0;
+        --border-muted: #f1f5f9;
+        --text-heading: #0f172a;
+        --text-body: #334155;
+        --text-muted: #64748b;
+        --brand: #1447e6;
+        --brand-hover: #1d4ed8;
+        --brand-soft: #eff6ff;
+        --brand-border: #bfdbfe;
+        --radius-base: 10px;
+        --radius-sm: 6px;
+        --shadow-xs: 0 1px 2px 0 rgba(15, 23, 42, 0.04);
+      }
+
+      :root[data-theme='dark'] {
+        --neutral-primary-soft: #0f172a;
+        --neutral-secondary-soft: #020617;
+        --neutral-tertiary-soft: #1e293b;
+        --border-default: #1e293b;
+        --border-muted: #0f172a;
+        --text-heading: #f8fafc;
+        --text-body: #cbd5e1;
+        --text-muted: #94a3b8;
+        --brand: #3b82f6;
+        --brand-hover: #60a5fa;
+        --brand-soft: rgba(59, 130, 246, 0.14);
+        --brand-border: rgba(59, 130, 246, 0.35);
+      }
+
+      *,
+      *::before,
+      *::after {
+        box-sizing: border-box;
+      }
+
+      html,
+      body {
+        margin: 0;
+        padding: 0;
+        font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+        background: var(--neutral-secondary-soft);
+        color: var(--text-body);
+        -webkit-font-smoothing: antialiased;
+      }
+    </style>
+    <script type="module" src="/src/dgem-studio.ts"></script>
+  </head>
+  <body>
+    <dgem-studio></dgem-studio>
+  </body>
+</html>

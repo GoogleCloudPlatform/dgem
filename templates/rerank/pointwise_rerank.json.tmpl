@@ -1,0 +1,24 @@
+{
+  "schema": {
+    "instructions": "Evaluate the relevance of a single candidate passage to the user query and retrieval policy rubric.",
+    "questions": [
+      {
+        "id": "relevant",
+        "type": "boolean",
+        "instructions": "Does this passage directly satisfy the query and policy constraints?"
+      },
+      {
+        "id": "grade",
+        "type": "score",
+        "instructions": "Graded relevance of this passage (irrelevant=0, marginal=1, complementary=2, exact_answer=3)",
+        "levels": ["irrelevant", "marginal", "complementary", "exact_answer"]
+      }
+    ],
+    "samples": 1
+  },
+  "state": {
+    "query": {{ default "" .query | toJson }},
+    "policy": {{ default "Prioritize direct authoritative answers." .policy | toJson }},
+    "passage": {{ default "" .passage | toJson }}
+  }
+}

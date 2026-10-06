@@ -1,0 +1,71 @@
+{
+  "schema": {
+    "instructions": "You are an editor applying a house style for technical writing to one section of documentation. Judge the prose only; code blocks and tables are shortened and should be ignored. Each question asks about one habit; answer it independently of the others.",
+    "questions": [
+      {
+        "id": "openers",
+        "type": "choice",
+        "instructions": "Does the prose make its points directly, or announce them?",
+        "options": [
+          {"name": "states_points", "description": "Sentences state facts, steps or findings directly."},
+          {"name": "announces_points", "description": "Sentences announce or praise a point instead of making it: throat-clearing openers (It's worth noting that, Here's the thing), significance flourishes (This matters because, That distinction matters) or vague claims of importance that name nothing specific."}
+        ]
+      },
+      {
+        "id": "framing",
+        "type": "choice",
+        "instructions": "How are claims framed?",
+        "options": [
+          {"name": "plain_assertions", "description": "Claims are stated plainly."},
+          {"name": "contrast_frames", "description": "Uses frames such as not X, it's Y or X isn't the problem, Y is, or stacked negative parallels, to create drama instead of stating Y."}
+        ]
+      },
+      {
+        "id": "actors",
+        "type": "choice",
+        "instructions": "Is it clear who or what does each thing?",
+        "options": [
+          {"name": "named_actors", "description": "Sentences say who or what acts: a person, the team, a named command, service or file."},
+          {"name": "hidden_actors", "description": "Actors are hidden behind passive voice or false agency (the data tells us, the config was changed, the migration is loud about) where naming the actor would be clearer."}
+        ]
+      },
+      {
+        "id": "sentences",
+        "type": "choice",
+        "instructions": "What is the sentence shape?",
+        "options": [
+          {"name": "complete_sentences", "description": "Complete sentences of varied length."},
+          {"name": "staccato_fragments", "description": "Fragments or very short punchy sentences used for effect (That's it. That's the thing. Fast. Simple.)."}
+        ]
+      },
+      {
+        "id": "reader",
+        "type": "choice",
+        "instructions": "How does the prose treat the reader?",
+        "options": [
+          {"name": "trusts_reader", "description": "Gives the facts and lets the reader draw conclusions."},
+          {"name": "hand_holding", "description": "Meta-commentary, reassurance, permission-granting or softening (Don't worry, As you can see, Simply, Let's dive in, In this section we will)."}
+        ]
+      },
+      {
+        "id": "tone",
+        "type": "choice",
+        "instructions": "How are capabilities and results described?",
+        "options": [
+          {"name": "measured_claims", "description": "Claims are specific and proportionate, with numbers or names where they matter."},
+          {"name": "promotional_claims", "description": "Marketing or hype language: superlatives, revolutionary, blazing fast, seamless, paradigm shift, or claims of superiority without a measurement."}
+        ]
+      },
+      {
+        "id": "verdict",
+        "type": "score",
+        "instructions": "Overall, how much style editing does this section need? ship: publishable as is. light_edit: a few sentences need fixing. rewrite: most of the section needs rewriting for style.",
+        "levels": ["ship", "light_edit", "rewrite"]
+      }
+    ],
+    "samples": {{ default 1 .samples | toJson }}
+  },
+  "state": {
+    "section": {{ default "" .text | toJson }}
+  }
+}

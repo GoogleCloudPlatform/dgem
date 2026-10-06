@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 300 200" width="300" height="200">
+  <rect width="300" height="200" rx="8" fill="#1b4332" />
+  <!-- Traces -->
+  <path d="M 30 50 L 100 50 L 120 70 L 220 70" stroke="#d4af37" stroke-width="3" fill="none" />
+  <path d="M 30 150 L 140 150 L 160 130 L 250 130" stroke="#d4af37" stroke-width="3" fill="none" />
+  <!-- IC Chip -->
+  <rect x="110" y="80" width="80" height="50" rx="4" fill="#212529" stroke="#adb5bd" stroke-width="1" />
+  <text x="150" y="110" font-family="monospace" font-size="10" fill="#f8f9fa" text-anchor="middle">MCU-26B</text>
+  <!-- SMD Pins -->
+  <circle cx="50" cy="50" r="6" fill="#adb5bd" />
+  <circle cx="70" cy="50" r="6" fill="#adb5bd" />
+  <circle cx="230" cy="70" r="6" fill="#adb5bd" />
+</svg>

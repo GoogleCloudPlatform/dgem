@@ -1,0 +1,22 @@
+{
+  "schema": {
+    "instructions": "Determine the correct forward text normalization (spoken expansion) for the ambiguous token in the provided context. Output a JSON object with the key \"expansion\" set to the exact selected option name.",
+    "questions": [
+      {
+        "id": "expansion",
+        "type": "choice",
+        "instructions": {{ printf "Select the exact spoken verbalization for target token '%s'" .target_token | toJson }},
+        "options": [
+          {{ range $i, $opt := .options }}
+          {{ if $i }},{{ end }}{"name": {{ $opt | toJson }}}
+          {{ end }}
+        ]
+      }
+    ],
+    "samples": {{ default 1 .samples | toJson }}
+  },
+  "state": {
+    "sentence": {{ .input | toJson }},
+    "target_token": {{ .target_token | toJson }}
+  }
+}

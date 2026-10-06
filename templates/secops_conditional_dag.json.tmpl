@@ -1,0 +1,105 @@
+{
+  "schema": {
+    "instructions": "Evaluate the cloud security telemetry event and execute the SecOps incident response policy.",
+    "questions": [
+      {
+        "id": "active_breach",
+        "type": "choice",
+        "instructions": "Does this security telemetry indicate an active or attempted unauthorized compromise requiring containment?",
+        "options": [
+          {
+            "name": "yes",
+            "description": "Yes, active or attempted unauthorized compromise, privilege escalation, or data exfiltration"
+          },
+          {
+            "name": "no",
+            "description": "No, routine authorized administrative activity, benign health check, or false-positive alert"
+          }
+        ]
+      },
+      {
+        "id": "threat_vector",
+        "type": "choice",
+        "instructions": "What is the primary threat vector or operational classification of this telemetry event?",
+        "options": [
+          {
+            "name": "iam_compromise",
+            "description": "Unauthorized IAM role assumption, credential stuffing, or token hijacking"
+          },
+          {
+            "name": "data_exfiltration",
+            "description": "Unauthorized database snapshot sharing, S3 public ACL mutation, or bulk egress"
+          },
+          {
+            "name": "workload_injection",
+            "description": "Remote code execution, container escape, or reverse shell spawn"
+          },
+          {
+            "name": "benign_operation",
+            "description": "Authorized CI/CD deployment, scheduled backup, or routine engineering action"
+          }
+        ]
+      },
+      {
+        "id": "confidence_score",
+        "type": "score",
+        "instructions": "Rate the fidelity and urgency of the threat indicators (1 = benign/informational, 5 = critical verified compromise).",
+        "levels": ["1", "2", "3", "4", "5"]
+      },
+      {
+        "id": "containment_action",
+        "type": "choice",
+        "instructions": "Which immediate automated containment playbook must be executed to isolate the active compromise?",
+        "depends_on": ["active_breach"],
+        "ask_if": {
+          "active_breach": ["yes"]
+        },
+        "options": [
+          {
+            "name": "revoke_iam_and_snapshots",
+            "description": "Immediately revoke active IAM session tokens, rotate keys, and block public RDS/S3 snapshot sharing"
+          },
+          {
+            "name": "quarantine_pod_egress",
+            "description": "Apply zero-egress Cilium network policy to isolate the compromised Kubernetes pod"
+          },
+          {
+            "name": "block_edge_asn",
+            "description": "Drop ingress traffic from the offending IP/ASN at the Cloud Armor WAF edge"
+          },
+          {
+            "name": "freeze_db_replica",
+            "description": "Place the targeted database cluster into read-only maintenance mode"
+          }
+        ]
+      },
+      {
+        "id": "blast_radius",
+        "type": "choice",
+        "instructions": "What is the estimated blast radius of the compromise if left uncontained?",
+        "depends_on": ["active_breach"],
+        "ask_if": {
+          "active_breach": ["yes"]
+        },
+        "options": [
+          {
+            "name": "single_service",
+            "description": "Isolated to a single ephemeral container or non-privileged microservice"
+          },
+          {
+            "name": "production_data_plane",
+            "description": "Direct exposure of production customer databases or persistent storage volumes"
+          },
+          {
+            "name": "account_wide_root",
+            "description": "Full cloud account or organization-wide IAM control plane takeover"
+          }
+        ]
+      }
+    ],
+    "samples": {{ default 4 .samples | toJson }}
+  },
+  "state": {
+    "alert_payload": {{ default "No security telemetry payload provided." .alert_payload | toJson }}
+  }
+}

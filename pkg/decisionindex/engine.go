@@ -1,0 +1,946 @@
+// Copyright 2026 Google LLC
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+package decisionindex
+
+import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"fmt"
+	"math"
+	"net/http"
+	"sort"
+	"strings"
+	"sync"
+	"time"
+
+	"github.com/GoogleCloudPlatform/dgem/pkg/client"
+	"github.com/GoogleCloudPlatform/dgem/pkg/permutation"
+)
+
+const (
+	// MaxOptionsPerSlot is the hardware/tokenizer ceiling of single-letter [A-Z] slot mapping in structured_server.py.
+	MaxOptionsPerSlot = 26
+	// BracketSize is the chunk size used when partitioning wide choices (27..255 options) into Round-1 brackets.
+	BracketSize = 20
+	// MaxSlotsPerPass is the safe per-pass slot count to prevent 256-token diffusion canvas overflow ("the canvas holds").
+	MaxSlotsPerPass = 8
+)
+
+// SystemOneQuestion matches apolinario/decision-index's question specification:
+// {"type": "choice", "instructions": "...", "criteria": {"opt_key": "description", ...}}
+type SystemOneQuestion struct {
+	Type         string            `json:"type"`
+	Instructions any               `json:"instructions"`
+	Criteria     map[string]string `json:"criteria"`
+}
+
+// UnmarshalJSON accepts any JSON value as an option description. The Decision Index suite sends objects (POP909
+// chords, ChessBench moves) and arrays (cfcolor swatches) as well as strings. Strings pass through unchanged; any
+// other value is rendered as compact JSON text for the prompt (a mechanical format conversion, no content change).
+func (q *SystemOneQuestion) UnmarshalJSON(b []byte) error {
+	var raw struct {
+		Type         string                     `json:"type"`
+		Instructions any                        `json:"instructions"`
+		Criteria     map[string]json.RawMessage `json:"criteria"`
+	}
+	if err := json.Unmarshal(b, &raw); err != nil {
+		return err
+	}
+	q.Type, q.Instructions = raw.Type, raw.Instructions
+	q.Criteria = nil
+	if raw.Criteria != nil {
+		q.Criteria = make(map[string]string, len(raw.Criteria))
+		for k, v := range raw.Criteria {
+			q.Criteria[k] = criterionText(v)
+		}
+	}
+	return nil
+}
+
+func criterionText(v json.RawMessage) string {
+	var s string
+	if err := json.Unmarshal(v, &s); err == nil {
+		return s
+	}
+	var buf bytes.Buffer
+	if err := json.Compact(&buf, v); err == nil {
+		return buf.String()
+	}
+	return string(v)
+}
+
+// SystemOneRequest matches the POST /v1/systemone payload sent by decision_index.engines.http:HttpSystemOne.
+type SystemOneRequest struct {
+	Model     string                       `json:"model,omitempty"`
+	State     any                          `json:"state"`
+	Questions map[string]SystemOneQuestion `json:"questions"`
+}
+
+// SystemOneAnswer matches the per-question answer validated by decision_index.engines.base:validate().
+type SystemOneAnswer struct {
+	Type          string             `json:"type"`
+	Choice        string             `json:"choice,omitempty"`
+	Probabilities map[string]float64 `json:"probabilities,omitempty"`
+	Noul          *float64           `json:"noul,omitempty"`
+	Entropy       float64            `json:"entropy,omitempty"`
+	NormalizedH   float64            `json:"normalized_entropy,omitempty"`
+	PassesUsed    int                `json:"passes_used,omitempty"`
+}
+
+// SystemOneResponse matches the response envelope validated by decision_index.
+type SystemOneResponse struct {
+	Answers         map[string]SystemOneAnswer `json:"answers"`
+	EvaluationTrace *EvaluationTrace           `json:"evaluation_trace,omitempty"`
+}
+
+// EvaluationTrace records dgem's multi-slot batching and wide-option bracket telemetry.
+type EvaluationTrace struct {
+	TotalQuestions   int     `json:"total_questions"`
+	MaxOptionsSeen   int     `json:"max_options_seen"`
+	ForwardPasses    int     `json:"forward_passes"`
+	WideBracketedQs  int     `json:"wide_bracketed_questions"`
+	MultiSlotBatches int     `json:"multi_slot_batches"`
+	WallTimeMs       float64 `json:"wall_time_ms"`
+	TemperatureScale float64 `json:"temperature_scale,omitempty"`
+}
+
+// EngineOptions configures the Decision Index execution adapter.
+type EngineOptions struct {
+	MaxSlotsPerPass   int
+	MaxOptionsPerSlot int
+	NaiveLimits       bool    // If true, mimics naive 26-option / 10-slot capacity rejections (HTTP 422 Unsupported)
+	TemperatureScale  float64 // Post-hoc slot temperature scaling T* (1.0 = unscaled, default)
+	MaxConcurrency    int
+	DualMirror        bool    // Evaluate forward + reversed option orderings on the same diffusion canvas
+	NullPriorDebias   bool    // Divide out content-free positional 'A'-bias prior
+	PriorAlpha        float64 // Damping exponent alpha in [0, 1] for null-prior de-biasing
+	BracketSize       int     // Max options per Round-1 bracket for wide (>26) choices; <=1 means BracketSize
+	CatchAll          string  // Wide-option catch-all handling: "off" (default), "final", "both" or "verify"; see catchAllKeys
+	NoulMode          string  // How yes/no questions are read: "noul" (default) or "choice" (2-option choice; see noulAsChoice)
+	PromptLayout      string  // Server prompt layout: "document_first" (default: state first, then questions) or "schema_first"/"" (questions as the system prompt)
+}
+
+// DefaultEngineOptions returns production settings with Wide-Option Tournament + Multi-Slot Batching enabled (T*=1.0).
+func DefaultEngineOptions() EngineOptions {
+	return EngineOptions{
+		MaxSlotsPerPass:   MaxSlotsPerPass,
+		MaxOptionsPerSlot: MaxOptionsPerSlot,
+		NaiveLimits:       false,
+		TemperatureScale:  1.0,
+		MaxConcurrency:    4,
+		PriorAlpha:        0.50,
+		BracketSize:       BracketSize,
+		// document_first: on the wave-2 canary (dev suites, paired) it raised di_catchall 0.790 -> 0.870 and rag_dev
+		// 0.705 -> 0.770 with JevBench and di_wide unchanged; out-of-scope recall on di_catchall fell 1.00 -> 0.825.
+		PromptLayout: "document_first",
+	}
+}
+
+func isNoulType(t string) bool {
+	lower := strings.ToLower(strings.TrimSpace(t))
+	return lower == "noul" || lower == "bool" || lower == "boolean"
+}
+
+// FormatState converts an arbitrary Decision Index state (string or JSON object) into a valid JSON string for structured_server.py.
+func FormatState(state any) string {
+	if state == nil {
+		return `{"state":"Evaluate the decision questions based on the provided option criteria."}`
+	}
+	switch v := state.(type) {
+	case string:
+		trimmed := strings.TrimSpace(v)
+		if (strings.HasPrefix(trimmed, "{") && strings.HasSuffix(trimmed, "}")) ||
+			(strings.HasPrefix(trimmed, "[") && strings.HasSuffix(trimmed, "]")) {
+			if json.Valid([]byte(trimmed)) {
+				return trimmed
+			}
+		}
+		b, _ := json.Marshal(map[string]string{"state": v})
+		return string(b)
+	default:
+		b, err := json.Marshal(v)
+		if err != nil {
+			b2, _ := json.Marshal(map[string]string{"state": fmt.Sprintf("%v", v)})
+			return string(b2)
+		}
+		return string(b)
+	}
+}
+
+// FormatInstructions converts instructions (string or structured object) into a concise string.
+func FormatInstructions(instr any) string {
+	if instr == nil {
+		return "Select the single best option matching the criteria."
+	}
+	switch v := instr.(type) {
+	case string:
+		return v
+	default:
+		b, err := json.Marshal(v)
+		if err != nil {
+			return fmt.Sprintf("%v", v)
+		}
+		return string(b)
+	}
+}
+
+// ExecuteSystemOne evaluates a Decision Index request against a dgem Client, automatically applying:
+// 1. Wide-Option Tournament Routing when any question has >26 options (up to 255 options)
+// 2. Multi-Slot Canvas Batching when a request has >MaxSlotsPerPass simultaneous questions
+// 3. Post-hoc Slot Temperature Scaling T* while strictly preserving argmax and sum(p)=1.0.
+func ExecuteSystemOne(ctx context.Context, cli *client.Client, req SystemOneRequest, opts EngineOptions) (*SystemOneResponse, error) {
+	start := time.Now()
+	if opts.MaxSlotsPerPass <= 0 {
+		opts.MaxSlotsPerPass = MaxSlotsPerPass
+	}
+	if opts.MaxOptionsPerSlot <= 0 {
+		opts.MaxOptionsPerSlot = MaxOptionsPerSlot
+	}
+	if opts.TemperatureScale <= 0 {
+		opts.TemperatureScale = 1.0
+	}
+
+	qKeys := make([]string, 0, len(req.Questions))
+	maxOpts := 0
+	for k, q := range req.Questions {
+		qKeys = append(qKeys, k)
+		if len(q.Criteria) > maxOpts {
+			maxOpts = len(q.Criteria)
+		}
+	}
+	sort.Strings(qKeys)
+
+	// If NaiveLimits mode is enabled, enforce raw 26-option and 10-slot canvas ceilings to demonstrate capacity failure rate.
+	if opts.NaiveLimits {
+		if maxOpts > 26 {
+			return nil, fmt.Errorf("HTTP 422 Unsupported: options per choice (%d) exceeds 26-option [A-Z] limit", maxOpts)
+		}
+		if len(qKeys) > 10 {
+			return nil, fmt.Errorf("HTTP 422 Unsupported: the canvas holds at most 10 questions per pass (got %d)", len(qKeys))
+		}
+	}
+
+	stateText := FormatState(req.State)
+	answers := make(map[string]SystemOneAnswer, len(qKeys))
+	var mu sync.Mutex
+	totalPasses := 0
+	wideQs := 0
+	multiBatches := 0
+
+	// Partition questions into standard (K <= 26 or noul) vs wide (K > 26)
+	var standardKeys []string
+	var wideKeys []string
+	for _, k := range qKeys {
+		q := req.Questions[k]
+		if !isNoulType(q.Type) && len(q.Criteria) > opts.MaxOptionsPerSlot {
+			wideKeys = append(wideKeys, k)
+		} else {
+			standardKeys = append(standardKeys, k)
+		}
+	}
+
+	// 1. Process standard questions (K <= 26) in Multi-Slot Canvas Batches of size opts.MaxSlotsPerPass
+	for i := 0; i < len(standardKeys); i += opts.MaxSlotsPerPass {
+		end := i + opts.MaxSlotsPerPass
+		if end > len(standardKeys) {
+			end = len(standardKeys)
+		}
+		batchKeys := standardKeys[i:end]
+		multiBatches++
+
+		batchAns, passes, err := evaluateStandardBatch(ctx, cli, stateText, batchKeys, req.Questions, opts)
+		if err != nil {
+			return nil, err
+		}
+		mu.Lock()
+		totalPasses += passes
+		for k, a := range batchAns {
+			answers[k] = a
+		}
+		mu.Unlock()
+	}
+
+	// 2. Process wide questions (27 <= K <= 255) via 2-Stage Bracket Tournament Routing
+	for _, k := range wideKeys {
+		wideQs++
+		q := req.Questions[k]
+		ans, passes, err := evaluateWideQuestionTournament(ctx, cli, stateText, k, q, opts.TemperatureScale, opts.BracketSize, opts.CatchAll, opts.PromptLayout)
+		if err != nil {
+			return nil, err
+		}
+		mu.Lock()
+		totalPasses += passes
+		answers[k] = ans
+		mu.Unlock()
+	}
+
+	return &SystemOneResponse{
+		Answers: answers,
+		EvaluationTrace: &EvaluationTrace{
+			TotalQuestions:   len(qKeys),
+			MaxOptionsSeen:   maxOpts,
+			ForwardPasses:    totalPasses,
+			WideBracketedQs:  wideQs,
+			MultiSlotBatches: multiBatches,
+			WallTimeMs:       float64(time.Since(start).Milliseconds()),
+			TemperatureScale: opts.TemperatureScale,
+		},
+	}, nil
+}
+
+// evaluateStandardBatch runs a single forward pass for up to MaxSlotsPerPass questions where each question has <= 26 options.
+func evaluateStandardBatch(
+	ctx context.Context,
+	cli *client.Client,
+	stateText string,
+	batchKeys []string,
+	allQuestions map[string]SystemOneQuestion,
+	opts EngineOptions,
+) (map[string]SystemOneAnswer, int, error) {
+	questionsPayload := make([]map[string]any, 0, len(batchKeys))
+	for _, qKey := range batchKeys {
+		qSpec := allQuestions[qKey]
+		if isNoulType(qSpec.Type) && opts.NoulMode == "choice" {
+			questionsPayload = append(questionsPayload, noulAsChoice(qKey, qSpec))
+		} else if isNoulType(qSpec.Type) {
+			q := map[string]any{
+				"id":           qKey,
+				"type":         "boolean",
+				"instructions": FormatInstructions(qSpec.Instructions),
+			}
+			// Keep the request's true/false descriptions: the structured server renders them next to yes/no.
+			// Dropping them changed the question (e.g. RAGTruth states the claim in `instructions` and defines
+			// what yes and no mean only in `criteria`).
+			if crit := noulCriteria(qSpec.Criteria); crit != nil {
+				q["criteria"] = crit
+			}
+			questionsPayload = append(questionsPayload, q)
+		} else {
+			optKeys := sortedOptionKeys(qSpec.Criteria)
+			optObjs := make([]map[string]string, 0, len(optKeys))
+			for _, ok := range optKeys {
+				optObjs = append(optObjs, map[string]string{
+					"name":        ok,
+					"description": strings.TrimSpace(qSpec.Criteria[ok]),
+				})
+			}
+			questionsPayload = append(questionsPayload, map[string]any{
+				"id":           qKey,
+				"type":         "choice",
+				"instructions": FormatInstructions(qSpec.Instructions),
+				"options":      optObjs,
+			})
+		}
+	}
+
+	schemaEnvelope := map[string]any{
+		"instructions": "Evaluate each decision question strictly against the provided state and option descriptions.",
+		"samples":      1,
+		"think":        0,
+		"questions":    questionsPayload,
+	}
+	if opts.PromptLayout == "document_first" {
+		schemaEnvelope["layout"] = "document_first"
+	}
+	schemaBytes, err := json.Marshal(schemaEnvelope)
+	if err != nil {
+		return nil, 1, err
+	}
+	schemaJSON := string(schemaBytes)
+
+	var slotOpts map[string][]permutation.OptionItem
+	if opts.DualMirror && len(batchKeys) <= 4 {
+		schemaJSON, slotOpts, _ = permutation.InjectDualMirrorSchema(schemaJSON)
+	} else if opts.NullPriorDebias {
+		slotOpts = permutation.ExtractSchemaSlotOptions(schemaJSON)
+	}
+
+	if strings.TrimSpace(stateText) == "" {
+		stateText = "Evaluate the decision questions based on the provided option criteria."
+	}
+
+	resp, _, err := cli.Decide(ctx, schemaJSON, stateText)
+	if err != nil {
+		return nil, 1, err
+	}
+
+	if (opts.DualMirror && len(batchKeys) <= 4) || opts.NullPriorDebias {
+		permutation.PostProcessDecisionResponse(resp, slotOpts, opts.DualMirror && len(batchKeys) <= 4, opts.NullPriorDebias, opts.PriorAlpha)
+	}
+
+	tempScale := opts.TemperatureScale
+
+	out := make(map[string]SystemOneAnswer, len(batchKeys))
+	for _, qKey := range batchKeys {
+		qSpec := allQuestions[qKey]
+		rawAns, exists := resp.Answers[qKey]
+
+		if isNoulType(qSpec.Type) {
+			pYes := 0.5
+			if exists && opts.NoulMode == "choice" {
+				// Rendered as a yes/no choice (noulAsChoice): read the option probabilities directly.
+				if py, ok := rawAns.Probabilities["yes"]; ok {
+					pYes = py
+				} else if pn, ok := rawAns.Probabilities["no"]; ok {
+					pYes = 1.0 - pn
+				}
+			} else if exists {
+				if rawAns.Noul > 0 {
+					pYes = rawAns.Noul
+				} else if rawAns.Confidence > 0 && (strings.EqualFold(rawAns.Label, "yes") || strings.EqualFold(rawAns.Label, "true")) {
+					pYes = rawAns.Confidence
+				} else if rawAns.Confidence > 0 && (strings.EqualFold(rawAns.Label, "no") || strings.EqualFold(rawAns.Label, "false")) {
+					pYes = 1.0 - rawAns.Confidence
+				} else if rawAns.Probabilities != nil {
+					if py, ok := rawAns.Probabilities["yes"]; ok {
+						pYes = py
+					} else if pt, ok := rawAns.Probabilities["true"]; ok {
+						pYes = pt
+					} else if pn, ok := rawAns.Probabilities["no"]; ok {
+						pYes = 1.0 - pn
+					}
+				}
+			}
+			if tempScale != 1.0 && tempScale > 0 {
+				logitYes := math.Log(math.Max(1e-12, pYes)) / tempScale
+				logitNo := math.Log(math.Max(1e-12, 1.0-pYes)) / tempScale
+				maxLogit := math.Max(logitYes, logitNo)
+				ey := math.Exp(logitYes - maxLogit)
+				en := math.Exp(logitNo - maxLogit)
+				pYes = ey / (ey + en)
+			}
+			pYes = math.Max(0.0, math.Min(1.0, pYes))
+			normH := 0.0
+			if rawAns.Entropy > 0 {
+				normH = rawAns.Entropy / math.Ln2
+			}
+			out[qKey] = SystemOneAnswer{
+				Type:        "noul",
+				Noul:        &pYes,
+				PassesUsed:  1,
+				Entropy:     rawAns.Entropy,
+				NormalizedH: normH,
+			}
+			continue
+		}
+
+		optKeys := sortedOptionKeys(qSpec.Criteria)
+		probs := make(map[string]float64, len(optKeys))
+
+		if exists && len(rawAns.Probabilities) > 0 {
+			for _, ok := range optKeys {
+				probs[ok] = rawAns.Probabilities[ok]
+			}
+		} else if exists && (rawAns.Choice != "" || rawAns.Label != "") {
+			winner := rawAns.Choice
+			if winner == "" {
+				winner = rawAns.Label
+			}
+			for _, ok := range optKeys {
+				if ok == winner {
+					probs[ok] = 0.90
+				} else {
+					probs[ok] = 0.10 / float64(maxInt(1, len(optKeys)-1))
+				}
+			}
+		} else {
+			u := 1.0 / float64(len(optKeys))
+			for _, ok := range optKeys {
+				probs[ok] = u
+			}
+		}
+
+		scaledProbs, winner, h, normH := NormalizeAndScaleProbabilities(probs, optKeys, tempScale)
+		out[qKey] = SystemOneAnswer{
+			Type:          "choice",
+			Choice:        winner,
+			Probabilities: scaledProbs,
+			Entropy:       h,
+			NormalizedH:   normH,
+			PassesUsed:    1,
+		}
+	}
+
+	return out, 1, nil
+}
+
+// evaluateWideQuestionTournament resolves a choice question with 27..255 options by:
+// 1. Partitioning the K options into brackets of <= BracketSize (20) options.
+// 2. Running Round-1 single-pass readouts on each bracket to extract top-2 contenders + bracket probability masses.
+// 3. Running a Round-2 Finals readout over the bracket winners to calibrate the global probability distribution over all K options.
+func evaluateWideQuestionTournament(
+	ctx context.Context,
+	cli *client.Client,
+	stateText string,
+	qKey string,
+	qSpec SystemOneQuestion,
+	tempScale float64,
+	bracketSize int,
+	catchAllMode string,
+	layout string,
+) (SystemOneAnswer, int, error) {
+	optKeys := sortedOptionKeys(qSpec.Criteria)
+	numOpts := len(optKeys)
+	// Catch-all options ("none of the listed", "out of scope", ...) are the correct answer inside any Round-1 bracket
+	// that lacks the true option, so a flat tournament sends them to the final too often. Opt-in modes:
+	//   final  - catch-alls skip Round 1 and compete only in the final
+	//   both   - catch-alls appear in every Round-1 bracket and in the final
+	//   verify - the final runs over real options only, then a second read picks between that winner and the catch-alls
+	// Measured on CLINC150 validation (dev): final raised macro-F1 0.734 -> 0.775 but lowered out-of-scope recall
+	// 0.96 -> 0.87, so the default stays "off".
+	var catchAll []string
+	if catchAllMode != "" && catchAllMode != "off" && numOpts > MaxOptionsPerSlot {
+		catchAll = catchAllKeys(qSpec.Criteria)
+	}
+	isCatchAll := make(map[string]bool, len(catchAll))
+	for _, k := range catchAll {
+		isCatchAll[k] = true
+	}
+	roundKeys := optKeys
+	if len(catchAll) > 0 {
+		roundKeys = make([]string, 0, numOpts-len(catchAll))
+		for _, k := range optKeys {
+			if !isCatchAll[k] {
+				roundKeys = append(roundKeys, k)
+			}
+		}
+	}
+	if numOpts <= MaxOptionsPerSlot {
+		batchMap, passes, err := evaluateStandardBatch(ctx, cli, stateText, []string{qKey}, map[string]SystemOneQuestion{qKey: qSpec}, EngineOptions{TemperatureScale: tempScale, PromptLayout: layout})
+		if err != nil {
+			return SystemOneAnswer{}, passes, err
+		}
+		return batchMap[qKey], passes, nil
+	}
+
+	if bracketSize <= 1 || bracketSize > MaxOptionsPerSlot {
+		bracketSize = BracketSize
+	}
+	brackets := balancedBrackets(roundKeys, bracketSize)
+
+	// Pack up to MaxSlotsPerPass bracket sub-questions into a single Round-1 canvas pass!
+	round1Questions := make(map[string]SystemOneQuestion, len(brackets))
+	round1Keys := make([]string, 0, len(brackets))
+	for bIdx, bOpts := range brackets {
+		bKey := fmt.Sprintf("%s_b%02d", qKey, bIdx)
+		round1Keys = append(round1Keys, bKey)
+		subCriteria := make(map[string]string, len(bOpts)+len(catchAll))
+		for _, ok := range bOpts {
+			subCriteria[ok] = qSpec.Criteria[ok]
+		}
+		if catchAllMode == "both" {
+			for _, k := range catchAll {
+				subCriteria[k] = qSpec.Criteria[k]
+			}
+		}
+		round1Questions[bKey] = SystemOneQuestion{
+			Type:         "choice",
+			Instructions: FormatInstructions(qSpec.Instructions),
+			Criteria:     subCriteria,
+		}
+	}
+
+	round1Results := make(map[string]SystemOneAnswer, len(brackets))
+	passesUsed := 0
+	for i := 0; i < len(round1Keys); i += MaxSlotsPerPass {
+		end := i + MaxSlotsPerPass
+		if end > len(round1Keys) {
+			end = len(round1Keys)
+		}
+		subKeys := round1Keys[i:end]
+		subAns, p, err := evaluateStandardBatch(ctx, cli, stateText, subKeys, round1Questions, EngineOptions{TemperatureScale: 1.0, PromptLayout: layout})
+		if err != nil {
+			return SystemOneAnswer{}, passesUsed + p, err
+		}
+		passesUsed += p
+		for k, v := range subAns {
+			round1Results[k] = v
+		}
+	}
+
+	// Collect top-2 contenders from each bracket for Round-2 Finals (capped at 24 finalists)
+	type contender struct {
+		key        string
+		bracketKey string
+		localProb  float64
+	}
+	var finalists []contender
+	for bIdx, bKey := range round1Keys {
+		bAns := round1Results[bKey]
+		bOpts := brackets[bIdx]
+		sortedLocal := make([]contender, 0, len(bOpts))
+		for _, ok := range bOpts {
+			sortedLocal = append(sortedLocal, contender{
+				key:        ok,
+				bracketKey: bKey,
+				localProb:  bAns.Probabilities[ok],
+			})
+		}
+		sort.Slice(sortedLocal, func(i, j int) bool {
+			return sortedLocal[i].localProb > sortedLocal[j].localProb
+		})
+		take := 2
+		if len(sortedLocal) < take {
+			take = len(sortedLocal)
+		}
+		finalists = append(finalists, sortedLocal[:take]...)
+	}
+
+	maxFinal := 24
+	if catchAllMode != "verify" {
+		maxFinal -= len(catchAll)
+	}
+	if len(finalists) > maxFinal {
+		sort.Slice(finalists, func(i, j int) bool {
+			return finalists[i].localProb > finalists[j].localProb
+		})
+		finalists = finalists[:maxFinal]
+	}
+	if catchAllMode == "final" || catchAllMode == "both" {
+		for _, k := range catchAll {
+			finalists = append(finalists, contender{key: k, localProb: 1})
+		}
+	}
+
+	finalCriteria := make(map[string]string, len(finalists))
+	for _, f := range finalists {
+		finalCriteria[f.key] = qSpec.Criteria[f.key]
+	}
+	finalQ := map[string]SystemOneQuestion{
+		qKey: {
+			Type:         "choice",
+			Instructions: FormatInstructions(qSpec.Instructions),
+			Criteria:     finalCriteria,
+		},
+	}
+
+	finalBatch, p, err := evaluateStandardBatch(ctx, cli, stateText, []string{qKey}, finalQ, EngineOptions{TemperatureScale: 1.0, PromptLayout: layout})
+	if err != nil {
+		return SystemOneAnswer{}, passesUsed + p, err
+	}
+	passesUsed += p
+	finalAns := finalBatch[qKey]
+
+	if catchAllMode == "verify" && len(catchAll) > 0 {
+		best, bestP := "", -1.0
+		for k, v := range finalAns.Probabilities {
+			if v > bestP || (v == bestP && k < best) {
+				best, bestP = k, v
+			}
+		}
+		vCrit := map[string]string{best: qSpec.Criteria[best]}
+		for _, k := range catchAll {
+			vCrit[k] = qSpec.Criteria[k]
+		}
+		vBatch, p2, err := evaluateStandardBatch(ctx, cli, stateText, []string{qKey},
+			map[string]SystemOneQuestion{qKey: {Type: "choice", Instructions: FormatInstructions(qSpec.Instructions), Criteria: vCrit}},
+			EngineOptions{TemperatureScale: 1.0, PromptLayout: layout})
+		if err != nil {
+			return SystemOneAnswer{}, passesUsed + p2, err
+		}
+		passesUsed += p2
+		pv := vBatch[qKey].Probabilities
+		merged := make(map[string]float64, len(finalAns.Probabilities)+len(catchAll))
+		for k, v := range finalAns.Probabilities {
+			merged[k] = v * pv[best]
+		}
+		for _, k := range catchAll {
+			merged[k] = pv[k]
+			finalists = append(finalists, contender{key: k, localProb: 1})
+		}
+		finalAns.Probabilities = merged
+	}
+
+	finalistSet := make(map[string]bool, len(finalists))
+	for _, f := range finalists {
+		finalistSet[f.key] = true
+	}
+	round1 := make([]map[string]float64, len(brackets))
+	for bIdx, bKey := range round1Keys {
+		round1[bIdx] = round1Results[bKey].Probabilities
+	}
+	// Catch-alls are in no bracket's option list, so fusion treats them as finalists carrying final-round mass only.
+	combined := fuseBracketProbabilities(brackets, round1, finalistSet, finalAns.Probabilities)
+
+	scaledProbs, winner, h, normH := NormalizeAndScaleProbabilities(combined, optKeys, tempScale)
+	return SystemOneAnswer{
+		Type:          "choice",
+		Choice:        winner,
+		Probabilities: scaledProbs,
+		Entropy:       h,
+		NormalizedH:   normH,
+		PassesUsed:    passesUsed,
+	}, passesUsed, nil
+}
+
+// NormalizeAndScaleProbabilities applies temperature scaling T > 0, guarantees strict positivity and
+// exact normalization (abs(sum(p)-1) < 1e-9) required by decision_index/engines/base.py:validate(),
+// and returns (probabilities, argmaxWinner, shannonEntropyNats, normalizedEntropy).
+func NormalizeAndScaleProbabilities(raw map[string]float64, optKeys []string, tempScale float64) (map[string]float64, string, float64, float64) {
+	if tempScale <= 0 {
+		tempScale = 1.0
+	}
+	kCount := len(optKeys)
+	if kCount == 0 {
+		return map[string]float64{}, "", 0, 0
+	}
+
+	scaled := make(map[string]float64, kCount)
+	sum := 0.0
+	for _, k := range optKeys {
+		p := raw[k]
+		if math.IsNaN(p) || math.IsInf(p, 0) || p <= 1e-9 {
+			p = 1e-6
+		}
+		sp := math.Pow(p, 1.0/tempScale)
+		scaled[k] = sp
+		sum += sp
+	}
+
+	winner := optKeys[0]
+	bestP := -1.0
+	entropy := 0.0
+	for _, k := range optKeys {
+		p := scaled[k] / sum
+		scaled[k] = p
+		if p > bestP {
+			bestP = p
+			winner = k
+		}
+		if p > 0 {
+			entropy -= p * math.Log(p)
+		}
+	}
+
+	normH := 0.0
+	if kCount > 1 {
+		normH = entropy / math.Log(float64(kCount))
+	}
+	return scaled, winner, entropy, normH
+}
+
+func sortedOptionKeys(m map[string]string) []string {
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	return keys
+}
+
+func maxInt(a, b int) int {
+	if a > b {
+		return a
+	}
+	return b
+}
+
+// NewSystemOneHTTPHandler returns an http.HandlerFunc serving POST /v1/systemone compatible with
+// `python -m decision_index run --engine http`.
+func NewSystemOneHTTPHandler(cli *client.Client, opts EngineOptions) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		var req SystemOneRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			http.Error(w, fmt.Sprintf("invalid JSON body: %v", err), http.StatusBadRequest)
+			return
+		}
+		resp, err := ExecuteSystemOne(r.Context(), cli, req, opts)
+		if err != nil {
+			errStr := err.Error()
+			if strings.Contains(errStr, "HTTP 422") ||
+				strings.Contains(errStr, "options per choice") ||
+				strings.Contains(errStr, "the canvas holds at most") ||
+				strings.Contains(errStr, "too many tokens") ||
+				strings.Contains(errStr, "maximum context length") ||
+				strings.Contains(errStr, "context window") {
+				http.Error(w, errStr, http.StatusUnprocessableEntity)
+				return
+			}
+			http.Error(w, errStr, http.StatusInternalServerError)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(resp)
+	}
+}
+
+// balancedBrackets splits keys into ceil(K/size) brackets of near-equal size (differing by at most one).
+// Fixed-size chunking left a 1-option tail whenever K % size == 1 (e.g. 41, 61, 101 options), which the
+// server rejects ("needs at least two alternatives").
+func balancedBrackets(keys []string, size int) [][]string {
+	if size < 2 {
+		size = 2
+	}
+	n := len(keys)
+	if n == 0 {
+		return nil
+	}
+	nb := (n + size - 1) / size
+	base, extra := n/nb, n%nb
+	out := make([][]string, 0, nb)
+	i := 0
+	for b := 0; b < nb; b++ {
+		sz := base
+		if b < extra {
+			sz++
+		}
+		out = append(out, keys[i:i+sz])
+		i += sz
+	}
+	return out
+}
+
+// fuseBracketProbabilities combines Round-1 bracket readouts and the Round-2 final into one distribution over all K
+// options, using the model's own outputs instead of a fixed finalist/non-finalist split (previously 92% / 8%, which
+// capped every wide-option confidence at ~0.92):
+//
+//	P(b)          = Σ_{f finalist in b} p_final(f)          (the final round is the evidence for which bracket wins)
+//	non-final o∈b = P(b) · p_b(o)                           (Round-1 share inside that bracket)
+//	finalist  f   = p_final(f) · (1 − Σ non-finalist mass)
+//
+// A uniform bracket prior (w_b = |b|/K) was rejected: Round-1 distributions sum to 1 even in brackets with no good
+// option, so it hands most of the mass to brackets the final round already rejected.
+// Every option gets a strictly positive probability, the result sums to 1, and the final-round winner stays the
+// argmax (a non-finalist is capped just below it before renormalising, which preserves order).
+func fuseBracketProbabilities(brackets [][]string, round1 []map[string]float64, finalist map[string]bool, final map[string]float64) map[string]float64 {
+	const eps = 1e-6
+	out := make(map[string]float64)
+	finTot := 0.0
+	for o := range finalist {
+		finTot += math.Max(eps, final[o])
+	}
+	if finTot == 0 {
+		finTot = 1
+	}
+	tail := 0.0
+	nonFin := make(map[string]float64)
+	for bIdx, b := range brackets {
+		mass, pb := 0.0, 0.0
+		for _, o := range b {
+			mass += math.Max(eps, round1[bIdx][o])
+			if finalist[o] {
+				pb += math.Max(eps, final[o]) / finTot
+			}
+		}
+		pb = math.Max(eps, pb)
+		for _, o := range b {
+			if !finalist[o] {
+				v := pb * math.Max(eps, round1[bIdx][o]) / mass
+				nonFin[o] = v
+				tail += v
+			}
+		}
+	}
+	tail = math.Min(1-eps, tail)
+	winner, best := "", -1.0
+	for o := range finalist {
+		v := (1 - tail) * math.Max(eps, final[o]) / finTot
+		out[o] = v
+		if v > best || (v == best && o < winner) {
+			winner, best = o, v
+		}
+	}
+	for o, v := range nonFin {
+		if winner != "" && v >= best {
+			v = best * 0.999
+		}
+		out[o] = math.Max(eps*eps, v)
+	}
+	sum := 0.0
+	for _, v := range out {
+		sum += v
+	}
+	for o := range out {
+		out[o] /= sum
+	}
+	return out
+}
+
+// noulCriteria maps a noul question's criteria to the structured server's boolean form ({"true", "false"}),
+// accepting "yes"/"no" keys as synonyms. Returns nil when neither description is present.
+func noulCriteria(c map[string]string) map[string]string {
+	if len(c) == 0 {
+		return nil
+	}
+	out := map[string]string{}
+	for k, v := range c {
+		v = strings.TrimSpace(v)
+		if v == "" {
+			continue
+		}
+		switch strings.ToLower(strings.TrimSpace(k)) {
+		case "true", "yes":
+			out["true"] = v
+		case "false", "no":
+			out["false"] = v
+		}
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
+// noulAsChoice renders a yes/no question as a 2-option choice ("yes"/"no") whose descriptions are the question's
+// true/false criteria. Opt-in (NoulMode "choice"): on RAGTruth train (dev) it raised hallucination F1 0.441 -> 0.752
+// on a held-out confirm split, but lowered accuracy slightly on other yes/no families (JevBench, calibration suite,
+// typed-decisions), so it is not the default. The choice answer is mapped back to a noul answer.
+func noulAsChoice(qKey string, qSpec SystemOneQuestion) map[string]any {
+	yes, no := "yes", "no"
+	if crit := noulCriteria(qSpec.Criteria); crit != nil {
+		if v := crit["true"]; v != "" {
+			yes = v
+		}
+		if v := crit["false"]; v != "" {
+			no = v
+		}
+	}
+	return map[string]any{
+		"id":           qKey,
+		"type":         "choice",
+		"instructions": FormatInstructions(qSpec.Instructions),
+		"options":      []map[string]string{{"name": "yes", "description": yes}, {"name": "no", "description": no}},
+	}
+}
+
+// catchAllPatterns mark an option as "none of the others apply" by its description or name (generic wording only).
+var catchAllPatterns = []string{
+	"none of the listed", "none of the above", "none of these", "none of the options", "none apply",
+	"out of scope", "out-of-scope", "not listed", "no matching", "not applicable",
+}
+
+// catchAllKeys returns the options whose description (or name) says "none of the others apply". If more than 3
+// options match, the heuristic is not trusted and nothing is returned.
+func catchAllKeys(criteria map[string]string) []string {
+	var out []string
+	for _, k := range sortedOptionKeys(criteria) {
+		text := strings.ToLower(strings.TrimSpace(criteria[k]) + " " + strings.ReplaceAll(k, "_", " "))
+		for _, p := range catchAllPatterns {
+			if strings.Contains(text, p) {
+				out = append(out, k)
+				break
+			}
+		}
+	}
+	if len(out) > 3 {
+		return nil
+	}
+	return out
+}

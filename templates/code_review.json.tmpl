@@ -1,0 +1,33 @@
+{
+  "schema": {
+    "instructions": "You are a senior software engineer reviewing a pull request diff.",
+    "questions": [
+      {
+        "id": "approved",
+        "type": "boolean",
+        "instructions": "Is this code safe and sound to merge without blocking issues?"
+      },
+      {
+        "id": "category",
+        "type": "choice",
+        "instructions": "Primary classification of this change",
+        "options": [
+          {"name": "bugfix", "description": "Fixes broken functionality or defect"},
+          {"name": "feature", "description": "Adds new capability or endpoint"},
+          {"name": "refactor", "description": "Internal code reorganization without behavior change"},
+          {"name": "security", "description": "Patches vulnerability, auth, or secret exposure"}
+        ]
+      },
+      {
+        "id": "risk_level",
+        "type": "score",
+        "instructions": "Deployment risk assessment",
+        "levels": ["low", "medium", "high", "critical"]
+      }
+    ],
+    "samples": {{ default 4 .samples | toJson }}
+  },
+  "state": {
+    "diff": {{ default "No diff provided" .diff | toJson }}
+  }
+}

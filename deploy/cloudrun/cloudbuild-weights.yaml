@@ -1,0 +1,40 @@
+# Copyright 2026 Google LLC
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+# Baked-weights image on top of the serving image built by cloudbuild.yaml (inherits its version labels and env).
+#   gcloud builds submit deploy/cloudrun --project=<PROJECT> --config=deploy/cloudrun/cloudbuild-weights.yaml \
+#     --substitutions=_TAG=<tag of the serving image>
+substitutions:
+  _REGISTRY: us-central1-docker.pkg.dev/${PROJECT_ID}/dgem
+  _BASE_IMAGE: dgemma
+  _IMAGE: dgemma-weights
+  _TAG: dev
+steps:
+  - name: 'gcr.io/cloud-builders/docker'
+    args:
+      - 'build'
+      - '-f'
+      - 'Dockerfile.weights'
+      - '--build-arg'
+      - 'BASE=${_REGISTRY}/${_BASE_IMAGE}:${_TAG}'
+      - '-t'
+      - '${_REGISTRY}/${_IMAGE}:${_TAG}'
+      - '.'
+images:
+  - '${_REGISTRY}/${_IMAGE}:${_TAG}'
+options:
+  machineType: 'E2_HIGHCPU_32'
+  diskSizeGb: 200
+  dynamicSubstitutions: true
+timeout: '3600s'

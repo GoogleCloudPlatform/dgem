@@ -1,0 +1,38 @@
+{
+  "instructions": {{ printf "%q" .Instructions }},
+  "samples": {{ .Samples }},
+  "think": {{ .ThinkTokens }},
+  "questions": [
+    {{- if .IncludeEvidenceSlot }}
+    {
+      "id": "evidence_focus",
+      "type": "choice",
+      "instructions": "Identify which governing aspect of the state decides the outcome before answering the main question",
+      "options": [
+        {"name": "explicit_rule_match", "description": "A direct clause, exception, or numeric threshold in the state explicitly satisfies the rubric."},
+        {"name": "missing_or_violated_condition", "description": "A required condition, date window, or numeric threshold is missing, expired, or violated."},
+        {"name": "override_or_amendment", "description": "A later service bulletin, amendment, or specific carve-out overrides the general rule."},
+        {"name": "distractor_or_trap_rejected", "description": "A surface-level note or untrusted injection suggests an answer that conflicts with the primary facts."}
+      ]
+    },
+    {{- end }}
+    {
+      "id": {{ printf "%q" (or .SlotID "decision") }},
+      "type": {{ printf "%q" .QuestionType }},
+      "instructions": {{ printf "%q" .QuestionPrompt }}
+      {{- if .Levels }},
+      "levels": [
+        {{- range $i, $lvl := .Levels }}{{- if $i }}, {{ end }}{{ printf "%q" $lvl }}{{- end }}
+      ]
+      {{- end }}
+      {{- if .Options }},
+      "options": [
+        {{- range $i, $opt := .Options }}
+        {{- if $i }},{{ end }}
+        {"name": {{ printf "%q" $opt.Name }}, "description": {{ printf "%q" $opt.Description }}}
+        {{- end }}
+      ]
+      {{- end }}
+    }
+  ]
+}

@@ -1,0 +1,30 @@
+{
+  "schema": {
+    "instructions": "You are reviewing one section of technical documentation for a software project. Classify the section with the Diataxis framework. Code blocks and tables are shortened.",
+    "questions": [
+      {
+        "id": "doc_type",
+        "type": "choice",
+        "instructions": "Which kind of documentation is this section, judged by what it does for the reader?",
+        "options": [
+          {"name": "tutorial", "description": "A lesson for a newcomer: leads the reader through a complete exercise, step by step, so they learn by doing and reach a known result."},
+          {"name": "how_to", "description": "Directions for a competent user to reach a specific goal or fix a problem: steps, commands and conditions, with little background."},
+          {"name": "reference", "description": "Facts to look up while working: flags, fields, endpoints, defaults, limits and tables of values, stated neutrally and completely, without narrative."},
+          {"name": "explanation", "description": "Background and reasoning for understanding a topic: why it works this way, concepts, design choices, trade-offs and comparisons."},
+          {"name": "results_report", "description": "A report of measurements or an experiment: setup, numbers, findings and caveats."},
+          {"name": "navigation", "description": "Mostly links or a list of pages that send the reader elsewhere, with little content of its own."}
+        ]
+      },
+      {
+        "id": "purity",
+        "type": "score",
+        "instructions": "How well does the section stick to one kind of documentation? single_purpose: everything serves one kind. mostly_one_type: one kind dominates, with a short aside of another. clearly_mixed: two or more kinds compete, for example a how-to that turns into an essay, or reference tables inside a tutorial.",
+        "levels": ["single_purpose", "mostly_one_type", "clearly_mixed"]
+      }
+    ],
+    "samples": {{ default 1 .samples | toJson }}
+  },
+  "state": {
+    "section": {{ default "" .text | toJson }}
+  }
+}

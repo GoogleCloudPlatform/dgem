@@ -1,0 +1,48 @@
+{
+  "schema": {
+    "instructions": "Look at the attached image (a photo or a screenshot) and answer every question about it. The target is the thing described in the state.",
+    "questions": [
+      {
+        "id": "present",
+        "type": "boolean",
+        "instructions": "Is the described target visible in the image?"
+      },
+      {
+        "id": "grid_cell",
+        "type": "choice",
+        "instructions": "Divide the image into a 3x3 grid. Which cell contains the centre of the target?",
+        "options": [
+          {"name": "top_left", "description": "upper third, left third"},
+          {"name": "top_center", "description": "upper third, middle third"},
+          {"name": "top_right", "description": "upper third, right third"},
+          {"name": "middle_left", "description": "middle third, left third"},
+          {"name": "middle_center", "description": "middle third, middle third"},
+          {"name": "middle_right", "description": "middle third, right third"},
+          {"name": "bottom_left", "description": "lower third, left third"},
+          {"name": "bottom_center", "description": "lower third, middle third"},
+          {"name": "bottom_right", "description": "lower third, right third"}
+        ]
+      },
+      {
+        "id": "relation",
+        "type": "choice",
+        "instructions": {{ printf "Where is the target relative to: %s?" (default "the other main object" .reference) | toJson }},
+        "options": [
+          {"name": "left_of", "description": "the target is to the left"},
+          {"name": "right_of", "description": "the target is to the right"},
+          {"name": "above", "description": "the target is above"},
+          {"name": "below", "description": "the target is below"}
+        ]
+      },
+      {
+        "id": "occluded",
+        "type": "boolean",
+        "instructions": "Is part of the target hidden behind something else or cut off by the image border?"
+      }
+    ],
+    "samples": {{ default 1 .samples | toJson }}
+  },
+  "state": {
+    "target": {{ default "the main object" .target | toJson }}
+  }
+}

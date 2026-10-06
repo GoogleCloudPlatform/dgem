@@ -1,0 +1,71 @@
+{
+  "schema": {
+    "instructions": "Look at the attached image (a user interface screen) and answer every question about it. The target is the element named in the state.",
+    "questions": [
+      {
+        "id": "present",
+        "type": "boolean",
+        "instructions": "Is the target element visible in the image?"
+      },
+      {
+        "id": "grid_cell",
+        "type": "choice",
+        "instructions": "Divide the image into a 3x3 grid. Which cell contains the centre of the target element?",
+        "options": [
+          {"name": "top_left", "description": "upper third, left third"},
+          {"name": "top_center", "description": "upper third, middle third"},
+          {"name": "top_right", "description": "upper third, right third"},
+          {"name": "middle_left", "description": "middle third, left third"},
+          {"name": "middle_center", "description": "middle third, middle third"},
+          {"name": "middle_right", "description": "middle third, right third"},
+          {"name": "bottom_left", "description": "lower third, left third"},
+          {"name": "bottom_center", "description": "lower third, middle third"},
+          {"name": "bottom_right", "description": "lower third, right third"}
+        ]
+      },
+      {
+        "id": "element_count",
+        "type": "choice",
+        "instructions": "How many distinct interface elements (buttons, badges, fields, icons, cards) are in the image? Ignore grid lines and blocking panels.",
+        "options": [
+          {"name": "1", "description": "one element"},
+          {"name": "2", "description": "two elements"},
+          {"name": "3", "description": "three elements"},
+          {"name": "4", "description": "four or more elements"}
+        ]
+      },
+      {
+        "id": "relation",
+        "type": "choice",
+        "instructions": {{ printf "Where is the target element relative to the %s?" (default "other element" .reference) | toJson }},
+        "options": [
+          {"name": "left_of", "description": "the target is to the left"},
+          {"name": "right_of", "description": "the target is to the right"},
+          {"name": "above", "description": "the target is above"},
+          {"name": "below", "description": "the target is below"}
+        ]
+      },
+      {
+        "id": "image_quality",
+        "type": "choice",
+        "instructions": "Which best describes the image quality?",
+        "options": [
+          {"name": "clean", "description": "sharp, no visible degradation"},
+          {"name": "blurred", "description": "out of focus or blurred"},
+          {"name": "noisy", "description": "grainy random noise"},
+          {"name": "compressed", "description": "blocky compression artifacts"},
+          {"name": "low_contrast", "description": "washed out, faded colors"}
+        ]
+      },
+      {
+        "id": "occluded",
+        "type": "boolean",
+        "instructions": "Is part of the target element hidden behind another panel or element?"
+      }
+    ],
+    "samples": {{ default 1 .samples | toJson }}
+  },
+  "state": {
+    "target": {{ default "primary cta button" .target | toJson }}
+  }
+}

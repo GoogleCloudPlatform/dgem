@@ -1,0 +1,31 @@
+{
+  "schema": {
+    "instructions": "You are a multi-domain virtual assistant router with Out-of-Scope (OOS) rejection (CLINC150). Determine both the high-level domain and the specific intent for the user utterance. If the request falls outside the supported domains/intents, select \"oos\" for both \"domain\" and \"intent\". Output a JSON object with keys \"domain\" and \"intent\".",
+    "questions": [
+      {
+        "id": "domain",
+        "type": "choice",
+        "instructions": "High-level service domain, or \"oos\" if out-of-scope.",
+        "options": [
+          {{ range $i, $dom := .domains }}
+          {{ if $i }},{{ end }}{"name": {{ $dom | toJson }}}
+          {{ end }}
+        ]
+      },
+      {
+        "id": "intent",
+        "type": "choice",
+        "instructions": "Specific user intent within the domain, or \"oos\" if out-of-scope.",
+        "options": [
+          {{ range $i, $opt := .options }}
+          {{ if $i }},{{ end }}{"name": {{ $opt | toJson }}}
+          {{ end }}
+        ]
+      }
+    ],
+    "samples": {{ default 1 .samples | toJson }}
+  },
+  "state": {
+    "user_utterance": {{ .text | toJson }}
+  }
+}

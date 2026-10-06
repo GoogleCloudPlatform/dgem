@@ -1,0 +1,35 @@
+{
+  "schema": {
+    "instructions": "Inspect the attached surface-mount PCB optical inspection image for manufacturing defects.",
+    "questions": [
+      {
+        "id": "defect_detected",
+        "type": "boolean",
+        "instructions": "Is there visible evidence of a manufacturing defect?"
+      },
+      {
+        "id": "defect_type",
+        "type": "choice",
+        "instructions": "Primary defect classification",
+        "options": [
+          {"name": "none", "description": "Board passes visual inspection"},
+          {"name": "solder_bridge", "description": "Unintended solder short between adjacent pins"},
+          {"name": "missing_component", "description": "Empty pad where SMD component should be placed"},
+          {"name": "tombstoning", "description": "Passive component lifted vertically on one terminal"},
+          {"name": "misalignment", "description": "Component rotated or offset from pad footprint"}
+        ]
+      },
+      {
+        "id": "action_tier",
+        "type": "score",
+        "instructions": "Rework severity and line intervention required",
+        "levels": ["pass", "minor_rework", "scrap_and_halt_line"]
+      }
+    ],
+    "samples": {{ default 1 .samples | toJson }}
+  },
+  "state": {
+    "inspection_point": {{ default "SMD-Line-B-Camera-04" .camera_id | toJson }},
+    "notes": {{ default "routine automated optical inspection" .notes | toJson }}
+  }
+}

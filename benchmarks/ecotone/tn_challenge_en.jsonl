@@ -1,0 +1,19 @@
+{"id":"ch-01","category":"date_numeric","input":"The event is on 3/5/2026.","target_token":"3/5/2026","options":["march fifth twenty twenty six","three five twenty twenty six"],"expected_spoken":"march fifth twenty twenty six"}
+{"id":"ch-02","category":"date_numeric","input":"Holiday falls on 12/25/2000.","target_token":"12/25/2000","options":["december twenty fifth two thousand","twelve twenty five two thousand"],"expected_spoken":"december twenty fifth two thousand"}
+{"id":"ch-03","category":"date_numeric","input":"Fireworks on 7/4/1999.","target_token":"7/4/1999","options":["july fourth nineteen ninety nine","seven four nineteen ninety nine"],"expected_spoken":"july fourth nineteen ninety nine"}
+{"id":"ch-04","category":"date_numeric","input":"Meeting scheduled for 5/3/2024.","target_token":"5/3/2024","options":["may third twenty twenty four","five three twenty twenty four"],"expected_spoken":"may third twenty twenty four"}
+{"id":"ch-05","category":"date_numeric","input":"Taxes due on 4/15/2025.","target_token":"4/15/2025","options":["april fifteenth twenty twenty five","four fifteen twenty twenty five"],"expected_spoken":"april fifteenth twenty twenty five"}
+{"id":"ch-06","category":"date_numeric","input":"School starts 9/1/2025.","target_token":"9/1/2025","options":["september first twenty twenty five","nine one twenty twenty five"],"expected_spoken":"september first twenty twenty five"}
+{"id":"ch-07","category":"fraction","input":"Eat 3/4 of the pie.","target_token":"3/4","options":["three quarters","march fourth"],"expected_spoken":"three quarters"}
+{"id":"ch-08","category":"fraction","input":"Add 1 1/2 cups of flour.","target_token":"1 1/2","options":["one and a half","one one half"],"expected_spoken":"one and a half"}
+{"id":"ch-09","category":"year_range","input":"The years 2010-2015 were productive.","target_token":"2010-2015","options":["twenty ten to twenty fifteen","two thousand ten minus two thousand fifteen"],"expected_spoken":"twenty ten to twenty fifteen"}
+{"id":"ch-10","category":"negative","input":"Temperature is -5 degrees.","target_token":"-5","options":["minus five","dash five"],"expected_spoken":"minus five"}
+{"id":"ch-11","category":"time_24h","input":"Train departs at 14:00.","target_token":"14:00","options":["fourteen hundred","one four zero zero"],"expected_spoken":"fourteen hundred"}
+{"id":"ch-12","category":"percent","input":"Gained 10% in value.","target_token":"10%","options":["ten percent","ten modulo"],"expected_spoken":"ten percent"}
+{"id":"ch-13","category":"cardinal_sep","input":"Collected 2,500,000 signatures.","target_token":"2,500,000","options":["two million five hundred thousand","two five hundred thousand"],"expected_spoken":"two million five hundred thousand"}
+{"id":"ch-14","category":"currency","input":"It costs $5.99 today.","target_token":"$5.99","options":["five dollars ninety nine cents","five point nine nine"],"expected_spoken":"five dollars ninety nine cents"}
+{"id":"ch-15","category":"time","input":"Meeting at 3:30 today.","target_token":"3:30","options":["three thirty","three colon thirty"],"expected_spoken":"three thirty"}
+{"id":"ch-16","category":"date_named","input":"Born on Jan. 3, 2010.","target_token":"Jan. 3, 2010","options":["january third twenty ten","jan three two thousand ten"],"expected_spoken":"january third twenty ten"}
+{"id":"ch-17","category":"cardinal","input":"Exactly 1000 items.","target_token":"1000","options":["one thousand","ten hundred"],"expected_spoken":"one thousand"}
+{"id":"ch-18","category":"roman_numeral","input":"Review Chapter IV carefully.","target_token":"IV","options":["four","the fourth"],"expected_spoken":"four"}
+{"id":"ch-19","category":"cardinal_bare","input":"Counted 2500000 items.","target_token":"2500000","options":["two million five hundred thousand","two five zero zero zero zero zero"],"expected_spoken":"two million five hundred thousand"}

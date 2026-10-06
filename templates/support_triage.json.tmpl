@@ -1,0 +1,32 @@
+{
+  "schema": {
+    "instructions": "You are triaging incoming customer operations tickets.",
+    "questions": [
+      {
+        "id": "urgent",
+        "type": "boolean",
+        "instructions": "Does this issue require immediate same-day escalation?"
+      },
+      {
+        "id": "team",
+        "type": "choice",
+        "instructions": "Which department owns resolution of this ticket?",
+        "options": [
+          {"name": "billing", "description": "Charges, invoices, payment methods, renewals"},
+          {"name": "support", "description": "General questions, password resets, account setup"},
+          {"name": "engineering", "description": "System outages, 500 errors, bugs, API failures"}
+        ]
+      },
+      {
+        "id": "sentiment",
+        "type": "score",
+        "instructions": "Customer anger or distress level",
+        "levels": ["calm", "frustrated", "furious"]
+      }
+    ],
+    "samples": {{ default 4 .samples | toJson }}
+  },
+  "state": {
+    "ticket": {{ default "No ticket text provided" .ticket | toJson }}
+  }
+}

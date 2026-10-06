@@ -1,0 +1,490 @@
+--- deploy/cloudrun/server/structured_server.upstream.py
++++ deploy/cloudrun/server/structured_server.py
+@@ -1,5 +1,6 @@
+ # SPDX-License-Identifier: Apache-2.0
+ # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
++# Modifications Copyright 2026 Google LLC (see deploy/cloudrun/server/dgem.patch)
+ """Structured decisions in front of a vLLM DiffusionGemma server.
+ 
+ POST /v1/systemone takes Jev's request body: {"model", "state", "questions"}.
+@@ -9,12 +10,13 @@
+   choice: option name -> description or null
+   score:  ordered list of levels
+ Answers take Jev's shapes, with this server's diagnostics alongside:
+-  noul:   {"noul": p}
++  noul:   {"noul": p, "probabilities": {"true", "false"}, "confidence"}
+   choice: {"choice", "probabilities", "confidence"}
+   score:  {"score", "legend", "probabilities", "confidence"}
+ The request body may also carry the schema keys "instructions", "samples",
+ "auto_max", "auto_threshold", "steps", "think", "ask", "chunk_rows",
+-"chunk_prompt" and "sequential" as extensions. Images go ahead of the
++"chunk_prompt", "sequential", "layout" and "isolate" ("auto", "noul", "none" or "all") as
++extensions. Images go ahead of the
+ state, either as multipart/form-data with the JSON body in a part named
+ "request" and each image as a file part, or as an "images" array of data
+ URLs in the JSON body.
+@@ -50,7 +52,9 @@
+                              its prompt
+   "ask_if": {id: [answers]}  asked only when that question's answer is
+                              among them (a skipped answer is null)
+-  "alone": true              a read of its own
++  "alone": true              a read of its own (by default yes/no questions get one in text requests of
++                             2-3 questions with 2+ yes/no, DEFAULT_ISOLATE=auto; "isolate": "noul" on the
++                             request does it in requests of 2-8 questions; "alone": false keeps one joint)
+ Questions run in stages by these dependencies. Each stage is one joint
+ read. Later stages continue the earlier answers, prefilled for a text
+ state and restated for an image.
+@@ -64,7 +68,10 @@
+ prefilled, and "chunk_prompt": "shared" lists every question in each
+ chunk's prompt. "think": N lets the model write up to N tokens in its
+ thought channel, as an ordinary generation, and the read then runs with
+-that thought in its prompt. With images the model writes the thought with
++that thought in its prompt. "layout" picks the prompt layout:
++"document_first" (the default; env DEFAULT_LAYOUT) sends the state first
++and the questions after it, both in the user turn; "schema_first" sends the
++questions as the system prompt. With images the model writes the thought with
+ the image in view and the server seeds it into the canvas ahead of the
+ answer, so the canvas bounds it. The noise draws of a decision share one
+ thought.
+@@ -97,9 +104,27 @@
+ 
+ ARGS = None
+ TOK = None
+-API_KEY = os.environ.get(
+-    "API_KEY", ""
+-)  # when set, POST routes need "Authorization: Bearer <key>"
++API_KEY = os.environ.get("API_KEY", "")
++DEFAULT_SAMPLES = os.environ.get("DEFAULT_SAMPLES", "1")
++MAX_INFLIGHT = int(os.environ.get("MAX_INFLIGHT", "8"))
++# The prompt layout of a request that doesn't name one: "document_first" (the state, then the questions, both in
++# the user turn) or "schema_first" (the questions as the system prompt, the layout before v0.2.0).
++DEFAULT_LAYOUT = os.environ.get("DEFAULT_LAYOUT", "document_first")
++# Which questions get a read of their own when the request does not say ("alone"): "auto" (the default), "none" (one
++# joint read), "noul" (yes/no questions) or "all". Read jointly, a yes/no question after another one tended to copy
++# its answer in agent/tool-call states, mostly in small requests: with 2 questions an action judgment scored
++# 0.60 jointly vs 0.88 alone; with 5 questions there was no loss. "auto" isolates yes/no questions only in text requests
++# of 2..ISOLATE_AUTO_MAX questions with at least 2 yes/no questions, where the cost is one or two extra parallel reads;
++# "noul" isolates them in any request of up to ISOLATE_MAX_QUESTIONS questions (+30 ms, -20% throughput at 5 questions).
++DEFAULT_ISOLATE = os.environ.get("DEFAULT_ISOLATE", "auto")
++ISOLATE_MAX_QUESTIONS = int(os.environ.get("ISOLATE_MAX_QUESTIONS", "8"))
++ISOLATE_AUTO_MAX = int(os.environ.get("ISOLATE_AUTO_MAX", "3"))
++ISOLATE_MODES = ("auto", "noul", "none", "all")
++if DEFAULT_ISOLATE not in ISOLATE_MODES:
++    raise SystemExit("DEFAULT_ISOLATE must be auto, noul, none or all")
++INFLIGHT_WAIT_S = float(os.environ.get("INFLIGHT_WAIT_S", "30.0"))
++_INFLIGHT = threading.BoundedSemaphore(MAX_INFLIGHT) if MAX_INFLIGHT > 0 else None
++_upstream_ready = False  # when set, POST routes need "Authorization: Bearer <key>"
+ CANVAS_LEN = 64  # the served canvas length. A request may be narrower.
+ CANVAS_STEP = 16  # request widths are multiples of this
+ VOCAB = 262144
+@@ -195,9 +220,27 @@
+                 "labels": labels,
+                 "depends_on": list(dict.fromkeys(list(deps) + list(ask_if))),
+                 "ask_if": ask_if,
+-                "alone": bool(q.get("alone", False)),
++                "alone": q.get("alone"),
+             }
+         )
++    isolate = value.get("isolate", DEFAULT_ISOLATE)
++    if isolate not in ISOLATE_MODES:
++        raise SchemaError('schema: isolate must be "auto", "noul", "none" or "all"')
++    n_noul = sum(1 for q in qs if q["type"] == "noul")
++    if isolate == "auto":
++        # text-only is checked in decide(), which sees the state
++        isolate = "noul" if 2 <= len(qs) <= ISOLATE_AUTO_MAX and n_noul >= 2 else "none"
++        auto = isolate == "noul"
++    else:
++        auto = False
++    if len(qs) < 2 or len(qs) > ISOLATE_MAX_QUESTIONS:
++        isolate = "none"
++    for q in qs:
++        if q["alone"] is None:
++            q["alone"] = isolate == "all" or (isolate == "noul" and q["type"] == "noul")
++            q["alone_auto"] = auto and q["alone"]
++        else:
++            q["alone"] = bool(q["alone"])
+     by_id = {q["id"]: q for q in qs}
+     for q in qs:
+         for dep in q["depends_on"]:
+@@ -213,7 +256,10 @@
+                     f"must be among {names}"
+                 )
+     schedule(qs)  # refuses a cycle
+-    samples = value.get("samples", "auto")
++    def_samples = int(DEFAULT_SAMPLES) if DEFAULT_SAMPLES.isdigit() else DEFAULT_SAMPLES
++    samples = value.get("samples", def_samples)
++    if isinstance(samples, str) and samples.strip().isdigit():  # dgem: template variables arrive as strings
++        samples = int(samples.strip())
+     if samples == "auto":
+         policy = {
+             "mode": "auto",
+@@ -240,6 +286,9 @@
+     if chunk_prompt not in ("shared", "own"):
+         raise SchemaError('schema: chunk_prompt must be "shared" or "own"')
+     sequential = bool(value.get("sequential", False))
++    layout = value.get("layout", DEFAULT_LAYOUT)
++    if layout not in LAYOUTS:
++        raise SchemaError('schema: layout must be "schema_first" or "document_first"')
+     think = value.get("think", 0)
+     if isinstance(think, bool) or not isinstance(think, int) or not 0 <= think <= 4096:
+         raise SchemaError("schema: think must be a thought budget in tokens, 0 to 4096")
+@@ -253,6 +302,7 @@
+         "chunk_rows": chunk_rows,
+         "chunk_prompt": chunk_prompt,
+         "sequential": sequential,
++        "layout": layout,
+         "format": "lines" if len(qs) <= 10 else "indexed",
+     }
+ 
+@@ -280,6 +330,38 @@
+ }
+ 
+ 
++LAYOUTS = ("schema_first", "document_first")
++if DEFAULT_LAYOUT not in LAYOUTS:
++    raise SystemExit(f"DEFAULT_LAYOUT must be one of {LAYOUTS}")
++
++
++class SystemText(str):
++    """The question text of a read, carrying the schema's layout so every
++    place that builds the chat messages lays them out the same way."""
++
++    layout = "schema_first"
++
++
++def chat_messages(sys_text, state_content):
++    """The chat messages of a read. "schema_first" puts the questions in the
++    system prompt and the state in the user turn. "document_first" puts both
++    in the user turn, the state first, as <user_text> then <instructions>."""
++    if getattr(sys_text, "layout", "schema_first") != "document_first":
++        return [
++            {"role": "system", "content": str(sys_text)},
++            {"role": "user", "content": state_content},
++        ]
++    tail = "\n\n<instructions>\n" + str(sys_text) + "\n</instructions>"
++    if isinstance(state_content, str):
++        content = "<user_text>\n" + state_content + "\n</user_text>" + tail
++    else:
++        text = "\n".join(p["text"] for p in state_content if p.get("type") == "text")
++        content = [p for p in state_content if p.get("type") != "text"] + [
++            {"type": "text", "text": "<user_text>\n" + text + "\n</user_text>" + tail}
++        ]
++    return [{"role": "user", "content": content}]
++
++
+ def system_text(schema, chunked=False):
+     s = (
+         "Answer a fixed set of questions about the state the user provides. "
+@@ -303,6 +385,8 @@
+             " A reply may cover only some of the questions; answer every line "
+             "that is present."
+         )
++    s = SystemText(s)
++    s.layout = schema.get("layout", DEFAULT_LAYOUT)
+     return s
+ 
+ 
+@@ -432,7 +516,24 @@
+     return ids[:128]  # vLLM's cap per request. A schema needs far fewer.
+ 
+ 
++def _wait_for_upstream(max_wait=180):
++    global _upstream_ready
++    if _upstream_ready:
++        return
++    deadline = time.time() + max_wait
++    url = ARGS.upstream.rstrip("/") + "/health"
++    while time.time() < deadline:
++        try:
++            with urllib.request.urlopen(url, timeout=1.5) as r:
++                if r.status == 200:
++                    _upstream_ready = True
++                    return
++        except Exception:
++            time.sleep(1.0)
++
++
+ def upstream_chat(body, timeout=600):
++    _wait_for_upstream()
+     req = urllib.request.Request(
+         ARGS.upstream.rstrip("/") + "/v1/chat/completions",
+         data=json.dumps(body).encode(),
+@@ -441,7 +542,32 @@
+     return json.load(urllib.request.urlopen(req, timeout=timeout))
+ 
+ 
++def _health_info():
++    """Readiness telemetry for /health: always HTTP 200 (the container is up), with
++    vllm_ready/phase/bytes_staged_gb/warmed from entrypoint.sh's warmup_state.json so the
++    gateway, MCP get_health_and_gpu_status and the Studio can report cold-start progress."""
++    info = {"status": "ok", "server": "dgem-structured-server",
++            "version": os.environ.get("DGEM_VERSION", "dev"),
++            "revision": os.environ.get("DGEM_REVISION", "unknown"),
++            "vllm_commit": os.environ.get("DGEM_VLLM_COMMIT", ""),
++            "vllm_ready": False, "phase": "loading_vllm_siglip", "bytes_staged_gb": 0.0}
++    try:
++        with open("/tmp/dgemma/warmup_state.json") as wf:
++            info.update(json.load(wf))
++    except Exception:
++        pass
++    try:
++        with urllib.request.urlopen(ARGS.upstream.rstrip("/") + "/health", timeout=0.4) as r:
++            if r.status == 200:
++                info["vllm_ready"] = True
++                info["phase"] = "ready"
++    except Exception:
++        pass
++    return info
++
++
+ def upstream_completions(body, timeout=600):
++    _wait_for_upstream()
+     req = urllib.request.Request(
+         ARGS.upstream.rstrip("/") + "/v1/completions",
+         data=json.dumps(body).encode(),
+@@ -454,10 +580,7 @@
+     """The prompt the chat endpoint would build, as token ids, ending after
+     the model turn marker. Text states only. ``thinking`` turns the chat
+     template's thinking marker on."""
+-    messages = [
+-        {"role": "system", "content": sys_text},
+-        {"role": "user", "content": state_text},
+-    ]
++    messages = chat_messages(sys_text, state_text)
+     out = TOK.apply_chat_template(
+         messages, tokenize=True, add_generation_prompt=True, enable_thinking=thinking
+     )
+@@ -502,10 +625,7 @@
+     Returns the thought's token ids and a diagnostics dict."""
+     body = {
+         "model": ARGS.model,
+-        "messages": [
+-            {"role": "system", "content": sys_text},
+-            {"role": "user", "content": state_content},
+-        ],
++        "messages": chat_messages(sys_text, state_content),
+         "max_tokens": budget,
+         "logprobs": True,
+         "top_logprobs": 0,
+@@ -538,10 +658,7 @@
+ ):
+     if prefix is not None:
+         return one_read_continuation(schema, template, slots, prefix, seed)
+-    messages = [
+-        {"role": "system", "content": sys_text},
+-        {"role": "user", "content": state_content},
+-    ]
++    messages = chat_messages(sys_text, state_content)
+     body = {
+         "model": ARGS.model,
+         "messages": messages,
+@@ -738,8 +855,12 @@
+         for q in schema["questions"]
+         if not schema.get("ask") or q["id"] in schema["ask"]
+     ]
+-    levels = schedule(qs)
+     text_state = isinstance(state_content, str)
++    if not text_state:
++        for q in schema["questions"]:
++            if q.get("alone_auto"):
++                q["alone"] = False  # "auto" isolation is for text states only (each read would repeat the image)
++    levels = schedule(qs)
+     fmt = schema["format"]
+     join = FORMATS[fmt][0]
+     # More than one read in sequence needs the full question list in every
+@@ -871,6 +992,8 @@
+     one = len(parts) == 1 and not skipped
+     diagnostics = {
+         "steps": schema["steps"],
++        "layout": schema["layout"],
++        "isolated": [q["id"] for q in schema["questions"] if q.get("alone")],
+         "stages": stages,
+         "skipped": skipped,
+         "chunks": chunks,
+@@ -1034,6 +1157,7 @@
+         "answers": answers,
+         "diagnostics": {
+             "steps": schema["steps"],
++            "layout": schema["layout"],
+             "samples": {
+                 "n": n,
+                 "tops": tops,
+@@ -1065,6 +1189,8 @@
+     "chunk_rows",
+     "chunk_prompt",
+     "sequential",
++    "layout",
++    "isolate",
+ )
+ 
+ 
+@@ -1160,7 +1286,8 @@
+     state = body.get("state")
+     if state is None:
+         raise SchemaError("state: required")
+-    text = state if isinstance(state, str) else json.dumps(state)
++    # dgem: ensure_ascii=False keeps non-Latin text readable; the default escaped it to \uXXXX.
++    text = state if isinstance(state, str) else json.dumps(state, ensure_ascii=False)
+     if not image_parts:
+         return text
+     return list(image_parts) + [{"type": "text", "text": text}]
+@@ -1170,7 +1297,13 @@
+     if a is None:
+         return None
+     if q["type"] == "noul":
+-        return {"type": "noul", "noul": a["noul"]}
++        # dgem: probabilities and confidence too, so clients can gate and calibrate every type alike.
++        return {
++            "type": "noul",
++            "noul": a["noul"],
++            "probabilities": {"true": a["noul"], "false": 1.0 - a["noul"]},
++            "confidence": a["confidence"],
++        }
+     if q["type"] == "choice":
+         return {
+             "type": "choice",
+@@ -1201,19 +1334,43 @@
+     return c if isinstance(c, str) else ""
+ 
+ 
++class _Server(ThreadingHTTPServer):
++    # dgem: the default listen backlog of 5 resets connections when a client opens as many at
++    # once as the engine serves sequences (seen as Vertex "Model server early terminated the
++    # request" at 16+ concurrent requests). Excess requests queue on MAX_INFLIGHT instead.
++    request_queue_size = 256
++    daemon_threads = True
++
++
+ class Handler(BaseHTTPRequestHandler):
++    # dgem: HTTP/1.1 keep-alive. With the default HTTP/1.0 the server closes every connection after
++    # one response, and Vertex's prediction proxy intermittently sent a request on a connection being
++    # closed (503 "Model server early terminated the request (truncated headers)" at 16-32 concurrent
++    # requests). Every response sets content-length, and every path reads the body or closes.
++    protocol_version = "HTTP/1.1"
++    # dgem: close a keep-alive connection that stays idle this long (seconds; 0 = never, the behaviour before
++    # v0.3.1). Without it every idle or half-open connection kept a thread blocked in readline() forever, and over
++    # long sessions a single replica stopped serving requests, /health included (issue #96).
++    timeout = float(os.environ.get("HTTP_IDLE_TIMEOUT", "120")) or None
++
+     def log_message(self, fmt, *args):
+         pass
+ 
+-    def _json(self, code, obj):
++    def _json(self, code, obj, headers=None):
+         body = json.dumps(obj).encode()
+         self.send_response(code)
+         self.send_header("content-type", "application/json")
+         self.send_header("content-length", str(len(body)))
++        for k, v in (headers or {}).items():
++            self.send_header(k, v)
++        if self.close_connection:
++            self.send_header("connection", "close")
+         self.end_headers()
+         self.wfile.write(body)
+ 
+     def do_GET(self):
++        if self.path in ("/health", "/invoke/health", "/"):
++            return self._json(200, _health_info())
+         if self.path == "/health":
+             return self._json(200, {"status": "ok"})
+         return self._json(404, {"error": {"message": "unknown route"}})
+@@ -1251,6 +1408,7 @@
+ 
+     def do_POST(self):
+         if API_KEY and self.headers.get("authorization", "") != f"Bearer {API_KEY}":
++            self.close_connection = True  # dgem: body left unread; don't reuse this keep-alive connection
+             return self._json(
+                 401,
+                 {
+@@ -1276,7 +1434,8 @@
+             )
+         if self.path == "/v1/systemone":
+             return self._systemone(req, images)
+-        if self.path == "/v1/chat/completions":
++        # dgem: /predict and /rawPredict keep regional Vertex :rawPredict callers working.
++        if self.path in ("/v1/chat/completions", "/predict", "/rawPredict"):
+             return self._chat(req)
+         return self._json(404, {"error": {"message": "unknown route"}})
+ 
+@@ -1303,6 +1462,8 @@
+ 
+     def _decide(self, schema, state, seed):
+         """-> (status, body) with the error body already shaped."""
++        if _INFLIGHT is not None and not _INFLIGHT.acquire(timeout=INFLIGHT_WAIT_S):
++            return 503, {"error": {"message": f"server busy: {MAX_INFLIGHT} decisions in flight", "type": "overloaded"}}
+         try:
+             return 200, decide(schema, state, seed)
+         except SchemaError as e:
+@@ -1318,6 +1479,12 @@
+             }
+         except Exception as e:
+             return 500, {"error": {"message": repr(e), "type": "server_error"}}
++        finally:
++            if _INFLIGHT is not None:
++                try:
++                    _INFLIGHT.release()
++                except ValueError:
++                    pass
+ 
+     def _systemone(self, req, images):
+         try:
+@@ -1362,6 +1529,7 @@
+                 },
+                 "diagnostics": body["diagnostics"],
+             },
++            _timing_headers(body),
+         )
+ 
+     def _chat(self, req):
+@@ -1451,9 +1619,18 @@
+                     "total_tokens": completion_tokens,
+                 },
+             },
++            _timing_headers(body),
+         )
+ 
+ 
++def _timing_headers(body):
++    """dgem: server-side decision time as headers, so proxies and load tests can read it."""
++    ms = ((body.get("diagnostics") or {}).get("timing") or {}).get("total_ms")
++    if ms is None:
++        return {}
++    return {"Server-Timing": f"decide;dur={ms:.2f}", "X-Inference-Time-Ms": f"{ms:.2f}"}
++
++
+ def self_signed(cert_dir):
+     """Paths of a self-signed certificate and key in cert_dir, made with
+     openssl on first use."""
+@@ -1487,12 +1664,21 @@
+     cert, key = self_signed(cert_dir)
+     ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+     ctx.load_cert_chain(cert, key)
+-    srv = ThreadingHTTPServer((host, port), Handler)
++    srv = _Server((host, port), Handler)
+     srv.socket = ctx.wrap_socket(srv.socket, server_side=True)
+     threading.Thread(target=srv.serve_forever, daemon=True).start()
+     return srv
+ 
+ 
++def _watchdog(period=60.0):
++    """dgem: log the thread count, decisions in flight and open connections every period (issue #96)."""
++    while True:
++        time.sleep(period)
++        inflight = MAX_INFLIGHT - getattr(_INFLIGHT, "_value", MAX_INFLIGHT) if _INFLIGHT is not None else -1
++        print(f"watchdog: threads={threading.active_count()} inflight={inflight} "
++              f"idle_timeout={Handler.timeout}", flush=True)
++
++
+ def main():
+     global ARGS, CANVAS_LEN, CANVAS_STEP
+     p = argparse.ArgumentParser()
+@@ -1537,7 +1723,8 @@
+         f"(canvas {CANVAS_LEN})",
+         flush=True,
+     )
+-    ThreadingHTTPServer((ARGS.host, ARGS.port), Handler).serve_forever()
++    threading.Thread(target=_watchdog, daemon=True).start()
++    _Server((ARGS.host, ARGS.port), Handler).serve_forever()
+ 
+ 
+ if __name__ == "__main__":

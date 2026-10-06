@@ -1,0 +1,297 @@
+{
+ "version": "example-1",
+ "description": "Example dgem regression matrix. Tiers: T0 smoke check (every deploy), T1 serving-change check, T2 full matrix including frozen held-out sets (needs --confirm). Suites marked \"accuracy\": true are scored per item. There are no reference ranges: run a candidate next to your own baseline target in the same session (--baseline) and the verdicts compare the two against the noise floor the run measures itself. Suites listed with \"requires\" need files that are not in the repository (JevBench: ./bin/dgem bench-jev --sync). Copy this file and edit it for your own suites and thresholds; see docs/operate/regression-matrix.md.",
+ "tiers": {
+  "T0": [
+   "health",
+   "contract",
+   "calibration",
+   "massive_spot"
+  ],
+  "T1": [
+   "health",
+   "contract",
+   "calibration",
+   "massive_spot",
+   "jev_native",
+   "jev_systemone",
+   "intents_banking77",
+   "intents_clinc150",
+   "latency",
+   "di_probes",
+   "di_wide",
+   "di_catchall",
+   "rag_dev",
+   "vision_spot",
+   "vision"
+  ],
+  "T2": [
+   "health",
+   "contract",
+   "calibration",
+   "massive_spot",
+   "jev_native",
+   "jev_systemone",
+   "intents_banking77",
+   "intents_clinc150",
+   "latency",
+   "massive",
+   "xnli",
+   "typed",
+   "order",
+   "bbox",
+   "decision_index",
+   "di_probes",
+   "di_wide",
+   "di_kit_compat",
+   "di_catchall",
+   "rag_dev",
+   "vision_spot",
+   "vision"
+  ]
+ },
+ "confirm_required": [
+  "T2"
+ ],
+ "suites": {
+  "health": {
+   "kind": "health",
+   "description": "/health: status ok, vLLM ready; records version, revision, vLLM commit"
+  },
+  "contract": {
+   "kind": "contract",
+   "description": "scripts/contract_diff.py cases (valid, edge, error, multilingual with known answers)"
+  },
+  "calibration": {
+   "kind": "dgem",
+   "args": [
+    "bench-calibration"
+   ],
+   "runs": {
+    "T0": 1,
+    "T1": 3,
+    "T2": 3
+   },
+   "n": 50,
+   "description": "calibration suite, dgem's production prompt path",
+   "accuracy": true
+  },
+  "massive_spot": {
+   "kind": "systemone",
+   "cases": "massive_spot",
+   "runs": 1,
+   "n": 100,
+   "description": "MASSIVE validation split, ru/th/hi/ja/es x 20, 20 options (non-Latin input on /v1/systemone)",
+   "accuracy": true
+  },
+  "jev_native": {
+   "kind": "dgem",
+   "args": [
+    "bench-jev"
+   ],
+   "runs": {
+    "T1": 3,
+    "T2": 3
+   },
+   "n": 231,
+   "description": "JevBench (public items) via dgem bench-jev (chat/completions)",
+   "accuracy": true,
+   "requires": [
+    "benchmarks/jevbench/jevbench_public.jsonl"
+   ]
+  },
+  "jev_systemone": {
+   "kind": "systemone",
+   "cases": "jev_systemone",
+   "runs": {
+    "T1": 3,
+    "T2": 3
+   },
+   "n": 231,
+   "description": "JevBench via /v1/systemone with native noul/choice/score types",
+   "accuracy": true,
+   "requires": [
+    "benchmarks/jevbench/jevbench_public.jsonl"
+   ]
+  },
+  "intents_banking77": {
+   "kind": "dgem",
+   "args": [
+    "bench-intents",
+    "--dataset",
+    "banking77"
+   ],
+   "runs": {
+    "T1": 3,
+    "T2": 3
+   },
+   "n": 30,
+   "description": "banking77 slice, 30 options (2-stage bracket)",
+   "accuracy": true
+  },
+  "intents_clinc150": {
+   "kind": "dgem",
+   "args": [
+    "bench-intents",
+    "--dataset",
+    "clinc150"
+   ],
+   "runs": {
+    "T1": 3,
+    "T2": 3
+   },
+   "n": 30,
+   "description": "clinc150 slice with out-of-scope",
+   "accuracy": true
+  },
+  "latency": {
+   "kind": "latency",
+   "description": "/v1/systemone keep-alive: q1, q5, q10, long_q1 (when JevBench is synced), q5_s4 x 100; sweep q1/q5 at 16 and 32 workers, >= 256 requests"
+  },
+  "massive": {
+   "kind": "systemone",
+   "cases": "massive",
+   "runs": 1,
+   "frozen": true,
+   "n": 5100,
+   "description": "MASSIVE test, 51 languages x 100, 20 options",
+   "accuracy": true
+  },
+  "xnli": {
+   "kind": "systemone",
+   "cases": "xnli",
+   "runs": 1,
+   "frozen": true,
+   "n": 4500,
+   "description": "XNLI test, 15 languages x 300",
+   "accuracy": true
+  },
+  "typed": {
+   "kind": "systemone",
+   "cases": "typed",
+   "runs": 1,
+   "frozen": true,
+   "n": 2000,
+   "description": "LocalLLaMA/typed-decisions test: 400 cases x 5 questions in one request",
+   "accuracy": true
+  },
+  "order": {
+   "kind": "systemone",
+   "cases": "order",
+   "permutes": [
+    "none",
+    "none2",
+    "random",
+    "reverse"
+   ],
+   "frozen": true,
+   "n": 739,
+   "description": "option order: MASSIVE-en 200, emotion 200, XNLI-en 200, JevBench choice 139; identical repeat + one shuffle + reversed",
+   "requires": [
+    "benchmarks/jevbench/jevbench_public.jsonl"
+   ]
+  },
+  "bbox": {
+   "kind": "dgem",
+   "args": [
+    "bench-bbox"
+   ],
+   "runs": 1,
+   "n": 12,
+   "description": "bounding-box localization (vision)"
+  },
+  "decision_index": {
+   "kind": "dgem",
+   "args": [
+    "bench-decision-index"
+   ],
+   "runs": 1,
+   "n": 22,
+   "description": "Decision Index stand-in panel (wide options, many slots)"
+  },
+  "di_probes": {
+   "kind": "adapter_probes",
+   "via": "adapter",
+   "description": "Decision Index adapter (dgem systemone serve, this checkout's binary) against the target: wide options at K=27/41/61/101/151/255 (answer + complete probabilities summing to 1), 12-question slot batching, ~31k-token input must answer or refuse with HTTP 422 and a kit marker"
+  },
+  "di_wide": {
+   "kind": "systemone",
+   "via": "adapter",
+   "cases": "di_wide",
+   "runs": {
+    "T1": 3,
+    "T2": 3
+   },
+   "n": 100,
+   "description": "MASSIVE validation (English) with the full ~60-label set as options, through the adapter's bracket routing",
+   "accuracy": true
+  },
+  "di_kit_compat": {
+   "kind": "kit_compat",
+   "via": "adapter",
+   "description": "Decision Index kit compatibility pass (86 requests) through the adapter; runs only when DGEM_DI_KIT_DIR and DGEM_DI_COMPAT_ROWS are set, otherwise reported as skipped"
+  },
+  "di_catchall": {
+   "kind": "systemone",
+   "via": "adapter",
+   "cases": "di_catchall",
+   "runs": {
+    "T1": 2,
+    "T2": 3
+   },
+   "n": 100,
+   "description": "CLINC150 validation (80 in-scope + 20 out-of-scope) in the Decision Index format, 151 options with an 'out of scope' catch-all, through the adapter; tracks in-scope answered as out-of-scope",
+   "accuracy": true
+  },
+  "rag_dev": {
+   "kind": "systemone",
+   "via": "adapter",
+   "cases": "rag_dev",
+   "runs": {
+    "T1": 2,
+    "T2": 3
+   },
+   "n": 198,
+   "description": "RAGTruth train (66 per task), the Decision Index hallucination wording with true/false criteria, through the adapter; tracks the yes/no 'no' bias (macro-F1 and recall on the hallucinated class)",
+   "accuracy": true
+  },
+  "vision_spot": {
+   "kind": "dgem",
+   "args": [
+    "bench-vision",
+    "-n",
+    "40"
+   ],
+   "runs": {
+    "T1": 1,
+    "T2": 1
+   },
+   "n": 40,
+   "description": "multi-aspect image decisions: first 40 items of the seeded synthetic sweep, six aspects in one pass",
+   "accuracy": true
+  },
+  "vision": {
+   "kind": "dgem",
+   "args": [
+    "bench-vision"
+   ],
+   "runs": {
+    "T1": 2,
+    "T2": 2
+   },
+   "n": 230,
+   "description": "multi-aspect image decisions on the 230-item seeded synthetic sweep (benchmarks/bbox_sweep.jsonl): presence, 3x3 grid cell, count, relation, quality, occlusion; gated per answer like the text suites",
+   "accuracy": true
+  }
+ },
+ "thresholds": {
+  "agreement_margin_pp": 2.0,
+  "mcnemar_p": 0.01,
+  "multilingual_min_accuracy": 0.7,
+  "latency_p50_ratio_review": 1.1,
+  "latency_p50_ratio_fail": 1.25,
+  "throughput_ratio_min": 0.9,
+  "order_net_flip_delta_review": 0.05,
+  "reference_slack_items_frac": 0.02
+ }
+}

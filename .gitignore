@@ -1,0 +1,68 @@
+# Binaries and build artifacts
+bin/
+dgem
+*.test
+*.out
+coverage.out
+
+# Model weights and download artifacts (~19+ GiB)
+model/
+*.dgq.bin
+*.dgq.bin.*
+*.part*
+*.stage
+*.tmp
+
+# Server logs and runtime state
+server.log
+*.log
+diffgemma.pid
+dgem-gateway.pid
+deploy/cloudrun/dgem
+
+# Scratch and exploratory scripts
+scratch/
+tmp/
+fixtures/bbox/annotated_*.svg
+
+# Python cache (for benchmark scripts)
+__pycache__/
+*.py[cod]
+.venv/
+
+# Documentation & Studio site artifacts
+docs-site/node_modules/
+docs-site/dist/
+docs-site/.astro/
+docs/assets/idc/*.png
+docs-site/public/assets/idc/*.png
+studio/node_modules/
+studio/dist/*
+!studio/dist/.gitkeep
+cmd/studio_dist/
+
+# Rust/Cargo artifacts (if building diffgemma locally)
+target/
+
+# Local configuration overrides
+.dgem.local.yaml
+.env
+.env.*
+
+# macOS system files
+.DS_Store
+._*
+
+# Serena / IDE metadata
+.serena/
+.vscode/
+.idea/
+benchmarks/runs/*/.manifest.lock
+
+# synthetic sweep images: regenerate with scripts/generate_bbox_sweep.py (seeded)
+fixtures/bbox_sweep/
+fixtures/bbox_real/
+fixtures/domain_images/
+
+# downloaded by `dgem bench-jev --sync` (pinned in benchmarks/jevbench/manifest.lock.json)
+benchmarks/jevbench/jevbench_public.jsonl

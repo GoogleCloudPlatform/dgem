@@ -1,0 +1,34 @@
+{
+  "schema": {
+    "instructions": "Review the rendered UI screen screenshot against accessibility and layout design standards.",
+    "questions": [
+      {
+        "id": "wcag_contrast_pass",
+        "type": "boolean",
+        "instructions": "Does body copy and primary button text meet minimum WCAG 4.5:1 contrast against the background?"
+      },
+      {
+        "id": "primary_call_to_action",
+        "type": "choice",
+        "instructions": "The most prominent visual focal point on the page",
+        "options": [
+          {"name": "checkout_button", "description": "High-contrast action button"},
+          {"name": "promotional_banner", "description": "Marketing image or carousel banner"},
+          {"name": "nav_menu", "description": "Navigation header"},
+          {"name": "none_diffuse", "description": "No clear visual hierarchy"}
+        ]
+      },
+      {
+        "id": "visual_density",
+        "type": "score",
+        "instructions": "Information density and whitespace balance",
+        "levels": ["sparse", "balanced_modern", "cramped_cluttered"]
+      }
+    ],
+    "samples": {{ default 1 .samples | toJson }}
+  },
+  "state": {
+    "viewport": {{ default "desktop-1440px" .viewport | toJson }},
+    "component_id": {{ default "CheckoutForm" .component | toJson }}
+  }
+}

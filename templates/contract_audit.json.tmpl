@@ -1,0 +1,34 @@
+{
+  "schema": {
+    "instructions": "You are a legal and procurement compliance auditor reviewing a vendor contract clause.",
+    "steps": 1,
+    "think": 0,
+    "samples": 1,
+    "questions": [
+      {
+        "id": "auto_renews",
+        "type": "boolean",
+        "instructions": "Does this clause contain an automatic renewal (evergreen) provision?"
+      },
+      {
+        "id": "liability_cap",
+        "type": "choice",
+        "instructions": "How is vendor liability bounded in this clause?",
+        "options": [
+          {"name": "uncapped",     "description": "No ceiling on damages or explicit unlimited liability"},
+          {"name": "capped_12m",   "description": "Liability is capped at 12 months of fees paid"},
+          {"name": "capped_super", "description": "Liability is capped at 2x-3x annual contract value"}
+        ]
+      },
+      {
+        "id": "legal_risk",
+        "type": "score",
+        "instructions": "Overall legal risk exposure for the buyer",
+        "levels": ["minimal", "moderate", "elevated", "severe_blocker"]
+      }
+    ]
+  },
+  "state": {
+    "clause_text": {{ default "" .clause | toJson }}
+  }
+}

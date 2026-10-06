@@ -1,0 +1,176 @@
+{
+  "schema": {
+    "instructions": "Localize all instances matching the target query in the attached image using normalized percentage coordinates [ymin, xmin, ymax, xmax] from 00 (0%, top/left border) to 100 (100%, bottom/right border) in 5% increments. Assign Object Query 1 (obj1_*) to the left-most matching instance, and Object Query 2 (obj2_*) to the second distinct matching instance (if more than one exists).",
+    "questions": [
+      {
+        "id": "matched_count",
+        "type": "choice",
+        "instructions": "How many distinct objects in the image satisfy the target query?",
+        "options": [
+          {"name": "0", "description": "Zero matching instances"},
+          {"name": "1", "description": "Exactly one matching instance"},
+          {"name": "2", "description": "Exactly two matching instances"},
+          {"name": "3_or_more", "description": "Three or more matching instances"}
+        ]
+      },
+      {
+        "id": "object_present",
+        "type": "boolean",
+        "instructions": "Is at least one matching target object visibly present?"
+      },
+      {
+        "id": "obj1_ymin",
+        "type": "choice",
+        "instructions": "Object Query 1 (left-most match): Top edge vertical coordinate (ymin) as percentage from top border (00..100)",
+        "options": [
+          {"name": "00", "description": "0%"}, {"name": "05", "description": "5%"},
+          {"name": "10", "description": "10%"}, {"name": "15", "description": "15%"},
+          {"name": "20", "description": "20%"}, {"name": "25", "description": "25%"},
+          {"name": "30", "description": "30%"}, {"name": "35", "description": "35%"},
+          {"name": "40", "description": "40%"}, {"name": "45", "description": "45%"},
+          {"name": "50", "description": "50%"}, {"name": "55", "description": "55%"},
+          {"name": "60", "description": "60%"}, {"name": "65", "description": "65%"},
+          {"name": "70", "description": "70%"}, {"name": "75", "description": "75%"},
+          {"name": "80", "description": "80%"}, {"name": "85", "description": "85%"},
+          {"name": "90", "description": "90%"}, {"name": "95", "description": "95%"},
+          {"name": "100", "description": "100%"}
+        ]
+      },
+      {
+        "id": "obj1_xmin",
+        "type": "choice",
+        "instructions": "Object Query 1 (left-most match): Left edge horizontal coordinate (xmin) as percentage from left border (00..100)",
+        "options": [
+          {"name": "00", "description": "0%"}, {"name": "05", "description": "5%"},
+          {"name": "10", "description": "10%"}, {"name": "15", "description": "15%"},
+          {"name": "20", "description": "20%"}, {"name": "25", "description": "25%"},
+          {"name": "30", "description": "30%"}, {"name": "35", "description": "35%"},
+          {"name": "40", "description": "40%"}, {"name": "45", "description": "45%"},
+          {"name": "50", "description": "50%"}, {"name": "55", "description": "55%"},
+          {"name": "60", "description": "60%"}, {"name": "65", "description": "65%"},
+          {"name": "70", "description": "70%"}, {"name": "75", "description": "75%"},
+          {"name": "80", "description": "80%"}, {"name": "85", "description": "85%"},
+          {"name": "90", "description": "90%"}, {"name": "95", "description": "95%"},
+          {"name": "100", "description": "100%"}
+        ]
+      },
+      {
+        "id": "obj1_ymax",
+        "type": "choice",
+        "instructions": "Object Query 1 (left-most match): Bottom edge vertical coordinate (ymax) as percentage from top border (00..100)",
+        "options": [
+          {"name": "00", "description": "0%"}, {"name": "05", "description": "5%"},
+          {"name": "10", "description": "10%"}, {"name": "15", "description": "15%"},
+          {"name": "20", "description": "20%"}, {"name": "25", "description": "25%"},
+          {"name": "30", "description": "30%"}, {"name": "35", "description": "35%"},
+          {"name": "40", "description": "40%"}, {"name": "45", "description": "45%"},
+          {"name": "50", "description": "50%"}, {"name": "55", "description": "55%"},
+          {"name": "60", "description": "60%"}, {"name": "65", "description": "65%"},
+          {"name": "70", "description": "70%"}, {"name": "75", "description": "75%"},
+          {"name": "80", "description": "80%"}, {"name": "85", "description": "85%"},
+          {"name": "90", "description": "90%"}, {"name": "95", "description": "95%"},
+          {"name": "100", "description": "100%"}
+        ]
+      },
+      {
+        "id": "obj1_xmax",
+        "type": "choice",
+        "instructions": "Object Query 1 (left-most match): Right edge horizontal coordinate (xmax) as percentage from left border (00..100)",
+        "options": [
+          {"name": "00", "description": "0%"}, {"name": "05", "description": "5%"},
+          {"name": "10", "description": "10%"}, {"name": "15", "description": "15%"},
+          {"name": "20", "description": "20%"}, {"name": "25", "description": "25%"},
+          {"name": "30", "description": "30%"}, {"name": "35", "description": "35%"},
+          {"name": "40", "description": "40%"}, {"name": "45", "description": "45%"},
+          {"name": "50", "description": "50%"}, {"name": "55", "description": "55%"},
+          {"name": "60", "description": "60%"}, {"name": "65", "description": "65%"},
+          {"name": "70", "description": "70%"}, {"name": "75", "description": "75%"},
+          {"name": "80", "description": "80%"}, {"name": "85", "description": "85%"},
+          {"name": "90", "description": "90%"}, {"name": "95", "description": "95%"},
+          {"name": "100", "description": "100%"}
+        ]
+      },
+      {
+        "id": "obj2_present",
+        "type": "boolean",
+        "instructions": "Is there a second distinct object in the image that also satisfies the target query?"
+      },
+      {
+        "id": "obj2_ymin",
+        "type": "choice",
+        "instructions": "Object Query 2 (second distinct match, right of Query 1): Top edge vertical coordinate (ymin) (00..100)",
+        "options": [
+          {"name": "00", "description": "0%"}, {"name": "05", "description": "5%"},
+          {"name": "10", "description": "10%"}, {"name": "15", "description": "15%"},
+          {"name": "20", "description": "20%"}, {"name": "25", "description": "25%"},
+          {"name": "30", "description": "30%"}, {"name": "35", "description": "35%"},
+          {"name": "40", "description": "40%"}, {"name": "45", "description": "45%"},
+          {"name": "50", "description": "50%"}, {"name": "55", "description": "55%"},
+          {"name": "60", "description": "60%"}, {"name": "65", "description": "65%"},
+          {"name": "70", "description": "70%"}, {"name": "75", "description": "75%"},
+          {"name": "80", "description": "80%"}, {"name": "85", "description": "85%"},
+          {"name": "90", "description": "90%"}, {"name": "95", "description": "95%"},
+          {"name": "100", "description": "100%"}
+        ]
+      },
+      {
+        "id": "obj2_xmin",
+        "type": "choice",
+        "instructions": "Object Query 2 (second distinct match): Left edge horizontal coordinate (xmin) (00..100)",
+        "options": [
+          {"name": "00", "description": "0%"}, {"name": "05", "description": "5%"},
+          {"name": "10", "description": "10%"}, {"name": "15", "description": "15%"},
+          {"name": "20", "description": "20%"}, {"name": "25", "description": "25%"},
+          {"name": "30", "description": "30%"}, {"name": "35", "description": "35%"},
+          {"name": "40", "description": "40%"}, {"name": "45", "description": "45%"},
+          {"name": "50", "description": "50%"}, {"name": "55", "description": "55%"},
+          {"name": "60", "description": "60%"}, {"name": "65", "description": "65%"},
+          {"name": "70", "description": "70%"}, {"name": "75", "description": "75%"},
+          {"name": "80", "description": "80%"}, {"name": "85", "description": "85%"},
+          {"name": "90", "description": "90%"}, {"name": "95", "description": "95%"},
+          {"name": "100", "description": "100%"}
+        ]
+      },
+      {
+        "id": "obj2_ymax",
+        "type": "choice",
+        "instructions": "Object Query 2 (second distinct match): Bottom edge vertical coordinate (ymax) (00..100)",
+        "options": [
+          {"name": "00", "description": "0%"}, {"name": "05", "description": "5%"},
+          {"name": "10", "description": "10%"}, {"name": "15", "description": "15%"},
+          {"name": "20", "description": "20%"}, {"name": "25", "description": "25%"},
+          {"name": "30", "description": "30%"}, {"name": "35", "description": "35%"},
+          {"name": "40", "description": "40%"}, {"name": "45", "description": "45%"},
+          {"name": "50", "description": "50%"}, {"name": "55", "description": "55%"},
+          {"name": "60", "description": "60%"}, {"name": "65", "description": "65%"},
+          {"name": "70", "description": "70%"}, {"name": "75", "description": "75%"},
+          {"name": "80", "description": "80%"}, {"name": "85", "description": "85%"},
+          {"name": "90", "description": "90%"}, {"name": "95", "description": "95%"},
+          {"name": "100", "description": "100%"}
+        ]
+      },
+      {
+        "id": "obj2_xmax",
+        "type": "choice",
+        "instructions": "Object Query 2 (second distinct match): Right edge horizontal coordinate (xmax) (00..100)",
+        "options": [
+          {"name": "00", "description": "0%"}, {"name": "05", "description": "5%"},
+          {"name": "10", "description": "10%"}, {"name": "15", "description": "15%"},
+          {"name": "20", "description": "20%"}, {"name": "25", "description": "25%"},
+          {"name": "30", "description": "30%"}, {"name": "35", "description": "35%"},
+          {"name": "40", "description": "40%"}, {"name": "45", "description": "45%"},
+          {"name": "50", "description": "50%"}, {"name": "55", "description": "55%"},
+          {"name": "60", "description": "60%"}, {"name": "65", "description": "65%"},
+          {"name": "70", "description": "70%"}, {"name": "75", "description": "75%"},
+          {"name": "80", "description": "80%"}, {"name": "85", "description": "85%"},
+          {"name": "90", "description": "90%"}, {"name": "95", "description": "95%"},
+          {"name": "100", "description": "100%"}
+        ]
+      }
+    ],
+    "samples": {{ default 1 .samples | toJson }}
+  },
+  "state": {
+    "target": {{ default "all matching instances" .target | toJson }}
+  }
+}

@@ -1,0 +1,35 @@
+# syntax=docker/dockerfile:1
+# Copyright 2026 Google LLC
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+#
+# DiffusionGemma Self-Contained Baked-Weights Image (~29 GB)
+# Bakes nvidia/diffusiongemma-26B-A4B-it-NVFP4 weights directly into /opt/dgemma/weights
+
+# BASE is the serving image built from ./Dockerfile, e.g. us-central1-docker.pkg.dev/<PROJECT>/dgem/dgemma:<tag>
+ARG BASE
+FROM ${BASE}
+
+USER root
+
+RUN mkdir -p /opt/dgemma/weights && \
+    python3 -c "\
+from huggingface_hub import snapshot_download; \
+print('==> Downloading NVFP4 weights into container image layer...'); \
+snapshot_download(repo_id='nvidia/diffusiongemma-26B-A4B-it-NVFP4', local_dir='/opt/dgemma/weights')\
+"
+
+ENV MODEL=/opt/dgemma/weights
+ENV WEIGHTS_SOURCE=baked
+EXPOSE 8080 8081 8000
+ENTRYPOINT ["/entrypoint.sh"]

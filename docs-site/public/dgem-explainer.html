@@ -1,0 +1,246 @@
+<!DOCTYPE html>
+<!--
+ Copyright 2026 Google LLC
+
+ Licensed under the Apache License, Version 2.0 (the "License");
+ you may not use this file except in compliance with the License.
+ You may obtain a copy of the License at
+
+     http://www.apache.org/licenses/LICENSE-2.0
+
+ Unless required by applicable law or agreed to in writing, software
+ distributed under the License is distributed on an "AS IS" BASIS,
+ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ See the License for the specific language governing permissions and
+ limitations under the License.
+-->
+
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>dgem: a zero-shot decision engine on DiffusionGemma</title>
+<style>
+  :root {
+    --ivory:   #FAF9F5;
+    --paper:   #FFFFFF;
+    --slate:   #141413;
+    --clay:    #D97757;
+    --oat:     #E3DACC;
+    --olive:   #788C5D;
+    --rust:    #B04A3F;
+    --sky:     #6A8CAF;
+    --g100:    #F0EEE6;
+    --g200:    #E6E3DA;
+    --g300:    #D1CFC5;
+    --g500:    #87867F;
+    --g700:    #3D3D3A;
+    --serif: ui-serif, Georgia, "Times New Roman", serif;
+    --sans:  system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    --mono:  ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+    --border: 1.5px solid var(--g300);
+    --radius: 10px;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html { scroll-behavior: smooth; }
+  body {
+    background: var(--ivory); color: var(--g700);
+    font-family: var(--sans); font-size: 15px; line-height: 1.62;
+    padding: 52px 28px 110px; -webkit-font-smoothing: antialiased;
+  }
+  .page { max-width: 860px; margin: 0 auto; }
+  code, .mono { font-family: var(--mono); font-size: 0.92em; }
+  code { background: var(--g100); border: 1px solid var(--g200); border-radius: 4px; padding: 1px 5px; color: var(--slate); }
+  pre { background: var(--paper); border: var(--border); border-radius: 8px; padding: 12px 14px; overflow-x: auto; font-family: var(--mono); font-size: 12.5px; line-height: 1.5; color: var(--slate); margin: 10px 0 14px; }
+  pre code { background: none; border: none; padding: 0; font-size: inherit; }
+  a { color: var(--clay); text-decoration: none; border-bottom: 1px dotted var(--clay); }
+  a:hover { color: var(--slate); border-bottom-color: var(--slate); }
+
+  .math {
+    font-family: "STIX Two Math", "Cambria Math", "Times New Roman", Georgia, serif;
+    font-size: 1.02em;
+    white-space: nowrap;
+    color: var(--slate);
+  }
+  .math i { font-style: italic; }
+  .math sub { font-size: 0.76em; vertical-align: -0.18em; }
+  .math sup { font-size: 0.76em; vertical-align: 0.35em; }
+
+  header.masthead { margin-bottom: 32px; padding-bottom: 24px; border-bottom: 1px solid var(--g300); }
+  .eyebrow { font-family: var(--mono); font-size: 12px; color: var(--g500); margin-bottom: 10px; }
+  h1 { font-family: var(--serif); font-weight: 500; font-size: 40px; line-height: 1.12; letter-spacing: -0.015em; color: var(--slate); margin-bottom: 8px; }
+  .tagline { font-family: var(--serif); font-size: 19px; color: var(--g700); margin-bottom: 16px; }
+  .lead { font-size: 15.5px; color: var(--g700); max-width: 780px; margin-bottom: 14px; }
+  .status-line { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 14px; }
+  .pill { font-family: var(--mono); font-size: 11.5px; color: var(--g700); background: var(--g100); border: 1px solid var(--g200); border-radius: 999px; padding: 4px 11px; white-space: nowrap; }
+  .pill.live { color: var(--olive); border-color: rgba(120,140,93,0.5); background: rgba(120,140,93,0.08); }
+
+  nav.toc {
+    position: sticky; top: 0; z-index: 50;
+    display: flex; flex-wrap: wrap; gap: 6px 16px;
+    margin: 0 0 42px; padding: 10px 0;
+    font-size: 13.5px;
+    background: rgba(250, 249, 245, 0.95);
+    backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px);
+    border-bottom: 1px solid var(--g200);
+  }
+  nav.toc a { color: var(--g700); border-bottom: 1px solid transparent; padding-bottom: 2px; cursor: pointer; }
+  nav.toc a .n { font-family: var(--mono); font-size: 11px; color: var(--g500); margin-right: 5px; }
+  nav.toc a:hover, nav.toc a.active { color: var(--slate); border-bottom-color: var(--clay); font-weight: 500; }
+
+  section { margin-bottom: 52px; scroll-margin-top: 68px; }
+  .sec-head { display: flex; align-items: baseline; gap: 12px; margin-bottom: 12px; }
+  .sec-head .num { font-family: var(--mono); font-size: 12px; color: var(--clay); font-weight: 600; }
+  h2 { font-family: var(--serif); font-weight: 500; font-size: 25px; color: var(--slate); letter-spacing: -0.01em; }
+  h3 { font-family: var(--serif); font-weight: 500; font-size: 18px; color: var(--slate); margin: 22px 0 8px; }
+  p { margin-bottom: 12px; }
+  ul.plain { list-style: none; margin: 8px 0 14px; }
+  ul.plain li { position: relative; padding: 0 0 10px 20px; }
+  ul.plain li::before { content: ""; position: absolute; left: 4px; top: 9px; width: 6px; height: 6px; border-radius: 2px; background: var(--clay); }
+  ul.plain li strong { color: var(--slate); }
+  ol.steps { margin: 8px 0 14px 22px; }
+  ol.steps li { padding-bottom: 8px; }
+  ol.steps li strong { color: var(--slate); }
+
+  table.t { width: 100%; border-collapse: separate; border-spacing: 0; background: var(--paper); border: var(--border); border-radius: var(--radius); overflow: hidden; font-size: 13.5px; margin: 12px 0 8px; }
+  table.t th { text-align: left; font-size: 12px; font-weight: 600; color: var(--slate); background: var(--g100); padding: 10px 13px; border-bottom: 1px solid var(--g300); white-space: nowrap; }
+  table.t td { padding: 10px 13px; border-bottom: 1px solid var(--g100); vertical-align: top; }
+  table.t tr:last-child td { border-bottom: none; }
+  table.t tbody tr:hover { background: var(--ivory); }
+  table.t td.num, table.t th.num { text-align: right; font-family: var(--mono); font-size: 12.5px; white-space: nowrap; }
+  table.t td.best { color: var(--olive); font-weight: 600; }
+  table.t td.bad { color: var(--rust); }
+  .tscroll { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+  .small { font-size: 12.5px; color: var(--g500); margin-bottom: 16px; }
+
+  .callout { border-left: 3.5px solid var(--clay); background: var(--paper); border-radius: 8px; padding: 14px 18px; margin: 16px 0; border-top: var(--border); border-right: var(--border); border-bottom: var(--border); }
+  .callout .ct { font-weight: 600; color: var(--slate); margin-bottom: 4px; }
+
+  .flow { display: flex; flex-wrap: wrap; align-items: stretch; gap: 8px; margin: 18px 0 8px; }
+  .flow .box { flex: 1 1 140px; background: var(--paper); border: var(--border); border-radius: 8px; padding: 12px 13px; }
+  .flow .box .k { font-family: var(--mono); font-size: 11px; color: var(--g500); margin-bottom: 4px; font-weight: 600; }
+  .flow .box .v { font-size: 13px; color: var(--slate); line-height: 1.45; }
+  .flow .box.hi { border-color: var(--clay); background: rgba(217,119,87,0.06); }
+  .flow .arrow { align-self: center; color: var(--g500); font-size: 18px; flex: 0 0 auto; }
+  .flow-note { font-size: 12.5px; color: var(--g500); margin-bottom: 16px; }
+
+</style>
+</head>
+<body>
+<div class="page">
+
+<header class="masthead">
+  <div class="eyebrow">Explainer &middot; dgem</div>
+  <h1>dgem</h1>
+  <p class="tagline">Templates, one-pass readout, honest uncertainty and routing for a zero-shot decision engine on DiffusionGemma.</p>
+  <p class="lead"><code>dgem</code> takes some text or an image (the <em>state</em>) and a list of typed questions from a template file. For each question it returns the answer it picked, a probability for every allowed answer, and a <strong>hesitation</strong> score. All questions are answered together in one forward pass. We don't change the model weights. Confident answers are used directly; hesitant ones go to a person or to Gemini.</p>
+  <p class="lead">This page explains what you can build, how a decision is read, what the confidence numbers mean and what we learned testing ways to correct them. The documentation starts at <a href="/dgem/">the docs home</a>.</p>
+  <div class="status-line">
+    <span class="pill">Base: DiffusionGemma 26B-A4B (frozen weights)</span>
+    <span class="pill">Serving: Vertex AI, Cloud Run GPU or Apple Silicon</span>
+    <span class="pill live">Decision Studio: <code>dgem serve</code> &rarr; localhost:8090</span>
+  </div>
+</header>
+
+<nav class="toc">
+  <a href="#build"><span class="n">01</span>What you can build</a>
+  <a href="#how"><span class="n">02</span>How an answer is made</a>
+  <a href="#confidence"><span class="n">03</span>Confidence</a>
+  <a href="#learned"><span class="n">04</span>What we learned</a>
+  <a href="#serving"><span class="n">05</span>Serving</a>
+  <a href="#limits"><span class="n">06</span>Limits</a>
+  <a href="#try"><span class="n">07</span>Try it</a>
+</nav>
+
+<section id="build">
+  <div class="sec-head"><span class="num">01</span><h2>What you can build</h2></div>
+  <ul class="plain">
+    <li><strong>Triage and routing.</strong> Urgency, owning team and sentiment for a ticket, in one call.</li>
+    <li><strong>Guardrails.</strong> Prompt-injection, toxicity and agent tool-drift checks as separate questions on one input.</li>
+    <li><strong>Policy checks.</strong> "Does this refund meet the policy?", with a follow-up question asked only when it doesn't.</li>
+    <li><strong>Reranking.</strong> Grade 10 retrieved passages side by side in one pass and quarantine poisoned ones.</li>
+    <li><strong>Evaluation.</strong> A fast first-pass judge that escalates uncertain verdicts to Gemini.</li>
+    <li><strong>Images.</strong> Categorical questions about screenshots or photos (presence, position, relations); boxes are coarse.</li>
+  </ul>
+  <p>Behaviour lives in a template file (<code>.json.tmpl</code>) in git. Adding a question or an option is an edit, not a training job.</p>
+</section>
+
+<section id="how">
+  <div class="sec-head"><span class="num">02</span><h2>How an answer is made</h2></div>
+  <div class="flow">
+    <div class="box"><div class="k">Template</div><div class="v">Typed questions: <code>boolean</code>, <code>choice</code> (&le;26 options), <code>score</code></div></div>
+    <div class="arrow">&rarr;</div>
+    <div class="box"><div class="k">Canvas</div><div class="v">Each question gets a masked answer slot; options become letters A&ndash;Z</div></div>
+    <div class="arrow">&rarr;</div>
+    <div class="box hi"><div class="k">One forward pass</div><div class="v">All slots are filled together and can see each other</div></div>
+    <div class="arrow">&rarr;</div>
+    <div class="box"><div class="k">Answer</div><div class="v">Chosen option, probability of every option, hesitation</div></div>
+  </div>
+  <p class="flow-note">Questions that depend on another answer (<code>depends_on</code>) run in a second pass; questions with more than 26 options use a two-stage bracket.</p>
+  <p>Unlike a chat model, nothing is written word by word, so there is no JSON to parse and the probabilities belong to the decision itself rather than to formatting tokens.</p>
+</section>
+
+<section id="confidence">
+  <div class="sec-head"><span class="num">03</span><h2>Confidence</h2></div>
+  <p><strong>Hesitation</strong> is the entropy of an answer's probabilities, scaled to 0&ndash;100% by the number of options: 0% when one answer has all the probability, 100% for a coin toss. It makes a yes/no question and a 26-option question comparable.</p>
+  <div class="tscroll"><table class="t">
+    <thead><tr><th>Hesitation</th><th>Meaning</th><th>What to do</th></tr></thead>
+    <tbody>
+      <tr><td class="num">&lt; 16%</td><td>Clear</td><td>Act automatically</td></tr>
+      <tr><td class="num">16&ndash;50%</td><td>Somewhat unsure</td><td>Escalate if errors are costly</td></tr>
+      <tr><td class="num">&gt; 50%</td><td>Very unsure</td><td>Send to a person or to Gemini</td></tr>
+    </tbody>
+  </table></div>
+  <p>In our tests hesitation alone flags most wrong answers. Calibration is still policy- and data-specific: check your own with <a href="/dgem/confidence/calibrate-your-policy/">Calibrate your policy</a>, and read <a href="/dgem/confidence/overview/">Confidence beyond Shannon</a> for how hesitation-gating works.</p>
+</section>
+
+<section id="learned">
+  <div class="sec-head"><span class="num">04</span><h2>What we learned trying to correct the probabilities</h2></div>
+  <p>DiffusionGemma, like other language models, favours the first option when it is unsure. We tested ways to fix that at request time; dgem now gates on hesitation and monitors option order on every release instead:</p>
+  <div class="tscroll"><table class="t">
+    <thead><tr><th>Technique</th><th>Finding</th><th>Status</th></tr></thead>
+    <tbody>
+      <tr><td>Null-prior de-biasing ("tare the scale")</td><td>Helped some suites and hurt others</td><td class="bad">Research; validate per suite</td></tr>
+      <tr><td>Reversed "mirror" ballot on the same canvas</td><td>Lost accuracy because both slots used letters A, B, C for different options; digit labels fix that but add little</td><td class="bad">Research</td></tr>
+      <tr><td>Mirror in a separate pass</td><td>A small extra signal, no better than reading twice, for double the cost</td><td class="bad">Research</td></tr>
+      <tr><td>Temperature scaling (held-out, per policy)</td><td>Improves calibration when fitted on the policy's own data; the best value differs by domain</td><td>Recommended per policy</td></tr>
+      <tr><td>Hesitation gate + Gemini cascade</td><td>Recovers most of the larger model's accuracy while escalating a minority of items</td><td class="best">Recommended</td></tr>
+    </tbody>
+  </table></div>
+  <div class="callout"><div class="ct">Two lessons for template authors</div>Question ids are read by the model: a second slot named <code>&hellip;mirror&hellip;</code> changed answers. Use neutral, descriptive ids. And don't give two slots the same letters for different meanings.</div>
+</section>
+
+<section id="serving">
+  <div class="sec-head"><span class="num">05</span><h2>Serving</h2></div>
+  <ul class="plain">
+    <li><strong>Vertex AI dedicated endpoint</strong> (G4, RTX PRO 6000): always warm, for production.</li>
+    <li><strong>Cloud Run GPU</strong>: scales to zero; a cold start takes minutes. Good for failover and batch.</li>
+    <li><strong>Apple Silicon</strong> (<code>diffgemma</code>, 4-bit): development and offline use.</li>
+  </ul>
+  <p>A gateway (<code>dgem serve</code>) routes to Vertex first and falls back to Cloud Run. The same image, templates, CLI, HTTP API and MCP server work on a laptop, Cloud Run and Vertex. <code>/health</code> reports the serving version. Measure latency on your own deployment: <a href="/dgem/operate/latency-capacity/">Latency and capacity</a>.</p>
+</section>
+
+<section id="limits">
+  <div class="sec-head"><span class="num">06</span><h2>Limits</h2></div>
+  <ul class="plain">
+    <li><strong>One pass can't reason step by step.</strong> Multi-hop or arithmetic questions need the cascade.</li>
+    <li><strong>Calibration is data-specific.</strong> Check on your own labelled data.</li>
+    <li><strong>Per-item answers depend on the serving image.</strong> A vLLM upgrade can change some answers with no change in totals.</li>
+    <li><strong>26 options per question</strong> in one pass; conditional questions add a pass.</li>
+    <li><strong>Long multi-slot prompts are slower</strong> than short ones.</li>
+  </ul>
+</section>
+
+<section id="try">
+  <div class="sec-head"><span class="num">07</span><h2>Try it</h2></div>
+<pre><code>make build
+./bin/dgem decide -t templates/support_triage.json.tmpl \
+  -v 'ticket=Charged twice for the annual plan' --stats
+# or connect an MCP client to your own gateway:
+./bin/dgem mcp --remote https://&lt;your-dgem-gateway&gt;/mcp</code></pre>
+  <p>Tutorial: <a href="/dgem/policies/first-policy/">Your first decision policy</a>. Deploying your own: <a href="/dgem/deploy/">From laptop to production</a>. Changes: <a href="https://github.com/GoogleCloudPlatform/dgem/blob/main/CHANGELOG.md">CHANGELOG</a>.</p>
+</section>
+
+</div>
+</body>
+</html>

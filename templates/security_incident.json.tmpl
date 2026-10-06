@@ -1,0 +1,33 @@
+{
+  "schema": {
+    "instructions": "You are an automated SecOps incident responder analyzing an alert.",
+    "questions": [
+      {
+        "id": "data_compromise",
+        "type": "boolean",
+        "instructions": "Is there plausible evidence of unauthorized data exfiltration or access?"
+      },
+      {
+        "id": "action",
+        "type": "choice",
+        "instructions": "Primary immediate containment action required",
+        "options": [
+          {"name": "monitor", "description": "False positive or low risk log anomaly"},
+          {"name": "revoke_key", "description": "Rotate leaked API key or credentials"},
+          {"name": "isolate_host", "description": "Quarantine compromised server instance"},
+          {"name": "page_oncall", "description": "Immediate high-priority security team page"}
+        ]
+      },
+      {
+        "id": "severity",
+        "type": "score",
+        "instructions": "Incident severity tier",
+        "levels": ["p3_low", "p2_medium", "p1_high", "p0_critical"]
+      }
+    ],
+    "samples": {{ default 4 .samples | toJson }}
+  },
+  "state": {
+    "alert": {{ default "No alert details" .alert | toJson }}
+  }
+}

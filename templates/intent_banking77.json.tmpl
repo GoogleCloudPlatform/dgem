@@ -1,0 +1,21 @@
+{
+  "schema": {
+    "instructions": "You are an enterprise retail banking intent router (PolyAI/Banking77). Classify the customer utterance into the exact matching banking intent from the allowed options. Output a JSON object with the key \"intent\" set to the exact option name.",
+    "questions": [
+      {
+        "id": "intent",
+        "type": "choice",
+        "instructions": "Select the exact fine-grained Banking77 intent for this customer query.",
+        "options": [
+          {{ range $i, $opt := .options }}
+          {{ if $i }},{{ end }}{"name": {{ $opt | toJson }}}
+          {{ end }}
+        ]
+      }
+    ],
+    "samples": {{ default 1 .samples | toJson }}
+  },
+  "state": {
+    "customer_utterance": {{ .text | toJson }}
+  }
+}

@@ -1,0 +1,17 @@
+{
+  "schema": {
+    "instructions": "Evaluate passage retrieval relevance (MS MARCO). Decide whether a human answering this query would pick this passage as the one that contains the answer. Being on the same topic is not enough -- the passage must actually contain the information the query asks for. Judge only against the passage text.",
+    "questions": [
+      {
+        "id": "relevant",
+        "type": "boolean",
+        "instructions": "Does this passage directly answer the user query?"
+      }
+    ],
+    "samples": {{ default 1 .samples | toJson }}
+  },
+  "state": {
+    "query": {{ default "" .query | toJson }},
+    "passage": {{ default "" .passage | toJson }}
+  }
+}

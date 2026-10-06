@@ -1,0 +1,129 @@
+{
+  "schema": {
+    "instructions": "Perform DETR-style parallel set prediction for the two primary interactive elements in the image. Assign Query Slot 1 (obj1_*) to the left-most or top-most primary object, and Query Slot 2 (obj2_*) to the secondary distinct object. Coordinates use decile bands [00..90] representing the 10% interval containing each bounding-box edge.",
+    "questions": [
+      {
+        "id": "obj1_class",
+        "type": "choice",
+        "instructions": "Object Query 1: Category of the primary (left-most / top-most) object",
+        "options": [
+          {"name": "primary_cta_button", "description": "Filled primary action button (e.g. Submit, Checkout)"},
+          {"name": "secondary_cancel_button", "description": "Outlined or muted cancel / back button"},
+          {"name": "warning_modal_banner", "description": "Alert or warning notification banner"},
+          {"name": "empty_background", "description": "No first object present"}
+        ]
+      },
+      {
+        "id": "obj1_ymin",
+        "type": "choice",
+        "instructions": "Object Query 1: Top edge decile band (00=0-10%, 50=50-60%, 90=90-100%)",
+        "options": [
+          {"name": "00", "description": "0-10%"}, {"name": "10", "description": "10-20%"},
+          {"name": "20", "description": "20-30%"}, {"name": "30", "description": "30-40%"},
+          {"name": "40", "description": "40-50%"}, {"name": "50", "description": "50-60%"},
+          {"name": "60", "description": "60-70%"}, {"name": "70", "description": "70-80%"},
+          {"name": "80", "description": "80-90%"}, {"name": "90", "description": "90-100%"}
+        ]
+      },
+      {
+        "id": "obj1_xmin",
+        "type": "choice",
+        "instructions": "Object Query 1: Left edge decile band",
+        "options": [
+          {"name": "00", "description": "0-10%"}, {"name": "10", "description": "10-20%"},
+          {"name": "20", "description": "20-30%"}, {"name": "30", "description": "30-40%"},
+          {"name": "40", "description": "40-50%"}, {"name": "50", "description": "50-60%"},
+          {"name": "60", "description": "60-70%"}, {"name": "70", "description": "70-80%"},
+          {"name": "80", "description": "80-90%"}, {"name": "90", "description": "90-100%"}
+        ]
+      },
+      {
+        "id": "obj1_ymax",
+        "type": "choice",
+        "instructions": "Object Query 1: Bottom edge decile band",
+        "options": [
+          {"name": "00", "description": "0-10%"}, {"name": "10", "description": "10-20%"},
+          {"name": "20", "description": "20-30%"}, {"name": "30", "description": "30-40%"},
+          {"name": "40", "description": "40-50%"}, {"name": "50", "description": "50-60%"},
+          {"name": "60", "description": "60-70%"}, {"name": "70", "description": "70-80%"},
+          {"name": "80", "description": "80-90%"}, {"name": "90", "description": "90-100%"}
+        ]
+      },
+      {
+        "id": "obj1_xmax",
+        "type": "choice",
+        "instructions": "Object Query 1: Right edge decile band",
+        "options": [
+          {"name": "00", "description": "0-10%"}, {"name": "10", "description": "10-20%"},
+          {"name": "20", "description": "20-30%"}, {"name": "30", "description": "30-40%"},
+          {"name": "40", "description": "40-50%"}, {"name": "50", "description": "50-60%"},
+          {"name": "60", "description": "60-70%"}, {"name": "70", "description": "70-80%"},
+          {"name": "80", "description": "80-90%"}, {"name": "90", "description": "90-100%"}
+        ]
+      },
+      {
+        "id": "obj2_class",
+        "type": "choice",
+        "instructions": "Object Query 2: Category of the second distinct object (must not duplicate Object Query 1)",
+        "options": [
+          {"name": "primary_cta_button", "description": "Filled primary action button (e.g. Submit, Checkout)"},
+          {"name": "secondary_cancel_button", "description": "Outlined or muted cancel / back button"},
+          {"name": "warning_modal_banner", "description": "Alert or warning notification banner"},
+          {"name": "empty_background", "description": "No second object present"}
+        ]
+      },
+      {
+        "id": "obj2_ymin",
+        "type": "choice",
+        "instructions": "Object Query 2: Top edge decile band",
+        "options": [
+          {"name": "00", "description": "0-10%"}, {"name": "10", "description": "10-20%"},
+          {"name": "20", "description": "20-30%"}, {"name": "30", "description": "30-40%"},
+          {"name": "40", "description": "40-50%"}, {"name": "50", "description": "50-60%"},
+          {"name": "60", "description": "60-70%"}, {"name": "70", "description": "70-80%"},
+          {"name": "80", "description": "80-90%"}, {"name": "90", "description": "90-100%"}
+        ]
+      },
+      {
+        "id": "obj2_xmin",
+        "type": "choice",
+        "instructions": "Object Query 2: Left edge decile band",
+        "options": [
+          {"name": "00", "description": "0-10%"}, {"name": "10", "description": "10-20%"},
+          {"name": "20", "description": "20-30%"}, {"name": "30", "description": "30-40%"},
+          {"name": "40", "description": "40-50%"}, {"name": "50", "description": "50-60%"},
+          {"name": "60", "description": "60-70%"}, {"name": "70", "description": "70-80%"},
+          {"name": "80", "description": "80-90%"}, {"name": "90", "description": "90-100%"}
+        ]
+      },
+      {
+        "id": "obj2_ymax",
+        "type": "choice",
+        "instructions": "Object Query 2: Bottom edge decile band",
+        "options": [
+          {"name": "00", "description": "0-10%"}, {"name": "10", "description": "10-20%"},
+          {"name": "20", "description": "20-30%"}, {"name": "30", "description": "30-40%"},
+          {"name": "40", "description": "40-50%"}, {"name": "50", "description": "50-60%"},
+          {"name": "60", "description": "60-70%"}, {"name": "70", "description": "70-80%"},
+          {"name": "80", "description": "80-90%"}, {"name": "90", "description": "90-100%"}
+        ]
+      },
+      {
+        "id": "obj2_xmax",
+        "type": "choice",
+        "instructions": "Object Query 2: Right edge decile band",
+        "options": [
+          {"name": "00", "description": "0-10%"}, {"name": "10", "description": "10-20%"},
+          {"name": "20", "description": "20-30%"}, {"name": "30", "description": "30-40%"},
+          {"name": "40", "description": "40-50%"}, {"name": "50", "description": "50-60%"},
+          {"name": "60", "description": "60-70%"}, {"name": "70", "description": "70-80%"},
+          {"name": "80", "description": "80-90%"}, {"name": "90", "description": "90-100%"}
+        ]
+      }
+    ],
+    "samples": {{ default 1 .samples | toJson }}
+  },
+  "state": {
+    "scene_description": {{ default "Dialog modal containing two distinct interactive controls" .scene_description | toJson }}
+  }
+}

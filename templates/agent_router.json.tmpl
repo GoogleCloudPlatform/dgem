@@ -1,0 +1,24 @@
+{
+  "schema": {
+    "instructions": "Select the single best tool for the agent to execute next based on user intent.",
+    "questions": [
+      {
+        "id": "tool",
+        "type": "choice",
+        "instructions": "Next immediate agent action",
+        "options": [
+          {"name": "search", "description": "Search web or documentation for external facts"},
+          {"name": "read_code", "description": "Inspect local repository files or definitions"},
+          {"name": "edit_code", "description": "Modify existing files or write new code"},
+          {"name": "run_tests", "description": "Execute test suite or verify changes"},
+          {"name": "ask_user", "description": "Clarify ambiguous instructions with the human"}
+        ]
+      }
+    ],
+    "samples": {{ default 1 .samples | toJson }}
+  },
+  "state": {
+    "prompt": {{ default "No prompt provided" .prompt | toJson }},
+    "last_action": {{ default "none" .last_action | toJson }}
+  }
+}

@@ -1,0 +1,39 @@
+{
+  "schema": {
+    "instructions": "Assess the uploaded identity verification document image for compliance and fraud indicators.",
+    "questions": [
+      {
+        "id": "document_legible",
+        "type": "boolean",
+        "instructions": "Is text and portrait clearly legible without blinding glare or blur?"
+      },
+      {
+        "id": "document_type",
+        "type": "choice",
+        "instructions": "Recognized document format",
+        "options": [
+          {"name": "passport", "description": "Official national passport booklet"},
+          {"name": "drivers_license", "description": "State or regional driver identification card"},
+          {"name": "national_id", "description": "Government-issued citizen identity card"},
+          {"name": "unsupported", "description": "Utility bill, credit card, or unrecognizable document"}
+        ]
+      },
+      {
+        "id": "tampering_suspected",
+        "type": "boolean",
+        "instructions": "Is there visible evidence of digital alteration, physical photo replacement, or screen-recapture?"
+      },
+      {
+        "id": "image_quality",
+        "type": "score",
+        "instructions": "Overall capture quality rating",
+        "levels": ["unusable", "poor", "acceptable", "pristine"]
+      }
+    ],
+    "samples": {{ default 1 .samples | toJson }}
+  },
+  "state": {
+    "country_code": {{ default "US" .country | toJson }},
+    "submission_id": {{ default "sub-auto-001" .sub_id | toJson }}
+  }
+}

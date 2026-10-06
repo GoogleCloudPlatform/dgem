@@ -1,0 +1,17 @@
+{
+  "schema": {
+    "instructions": "Judge grounding, not real-world truth (LLM-AggreFact). Decide whether the document SUPPORTS the claim. The claim is supported only if every part of it can be verified from the document -- directly stated, or entailed by combining sentences in it. If any part is absent, contradicted, or only plausible, the claim is NOT supported. Use no outside knowledge.",
+    "questions": [
+      {
+        "id": "supported",
+        "type": "boolean",
+        "instructions": "Does the document fully support every part of the claim?"
+      }
+    ],
+    "samples": {{ default 1 .samples | toJson }}
+  },
+  "state": {
+    "document": {{ default "" .document | toJson }},
+    "claim": {{ default "" .claim | toJson }}
+  }
+}

@@ -1,0 +1,2 @@
+# Only needed for the T2 suites that read parquet (XNLI, typed-decisions, emotion). T0/T1 use the standard library.
+pyarrow>=15

@@ -1,0 +1,23 @@
+{
+  "schema": {
+    "instructions": "High-entropy tie-breaker: Multiple candidate intents had competing probability mass on the first pass. Carefully compare the exact wording of the user utterance against ONLY these finalist intents (pay close attention to specific nouns/verbs: e.g., cash withdrawal vs. card payment, unrecognised transaction vs. stolen/compromised card, beneficiary not allowed vs. general failed transfer, pending vs. failed top-up, general maintenance appointment vs. specific oil change). Output a JSON object with key \"intent\" set to the single most accurate finalist option.",
+    "questions": [
+      {
+        "id": "intent",
+        "type": "choice",
+        "instructions": "Select the exact best-matching finalist intent.",
+        "options": [
+          {{ range $i, $opt := .options }}
+          {{ if $i }},{{ end }}{"name": {{ $opt | toJson }}}
+          {{ end }}
+        ]
+      }
+    ],
+    "samples": 1
+  },
+  "state": {
+    "utterance": {{ .text | toJson }},
+    "first_pass_guess": {{ .first_guess | toJson }},
+    "candidate_finalists": {{ .options | toJson }}
+  }
+}

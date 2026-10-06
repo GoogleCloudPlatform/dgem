@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 350 220" width="350" height="220">
+  <rect width="350" height="220" rx="14" fill="#f8f9fa" stroke="#ced4da" stroke-width="2" />
+  <!-- Flag / Banner -->
+  <rect x="0" y="0" width="350" height="36" rx="14" fill="#003566" />
+  <text x="25" y="24" font-family="sans-serif" font-size="12" font-weight="bold" fill="#ffd60a">NATIONAL IDENTITY CARD</text>
+  <!-- Photo Slot -->
+  <rect x="25" y="55" width="85" height="110" rx="6" fill="#e9ecef" stroke="#6c757d" stroke-width="1" />
+  <circle cx="67" cy="95" r="24" fill="#adb5bd" />
+  <path d="M 40 145 C 40 125, 95 125, 95 145" fill="#adb5bd" />
+  <!-- Text Fields -->
+  <text x="130" y="75" font-family="monospace" font-size="11" fill="#212529">SURNAME: DOE</text>
+  <text x="130" y="95" font-family="monospace" font-size="11" fill="#212529">GIVEN: JANE</text>
+  <text x="130" y="115" font-family="monospace" font-size="11" fill="#212529">DOB: 01-JAN-1990</text>
+  <text x="130" y="135" font-family="monospace" font-size="11" fill="#212529">ID: US-99482104</text>
+</svg>

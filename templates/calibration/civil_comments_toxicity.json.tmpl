@@ -1,0 +1,22 @@
+{
+  "schema": {
+    "instructions": "Evaluate comment toxicity calibrated against Jigsaw Civil Comments crowd raters. A pool of ten crowd raters was asked: 'Is this comment rude, disrespectful, or unreasonable enough that you would be likely to leave the conversation?' Judge the comment as written, in isolation. Profanity or harsh political criticism alone is not automatically toxic; a calm sentence can be toxic if it demeans a person or group.",
+    "questions": [
+      {
+        "id": "toxic",
+        "type": "boolean",
+        "instructions": "Would a majority of crowd raters mark this comment as toxic?"
+      },
+      {
+        "id": "severity",
+        "type": "score",
+        "instructions": "Ordinal toxicity severity level from 1 (completely benign) to 5 (severe personal attack or threat)",
+        "levels": ["1", "2", "3", "4", "5"]
+      }
+    ],
+    "samples": {{ default 1 .samples | toJson }}
+  },
+  "state": {
+    "comment": {{ default "" .comment | toJson }}
+  }
+}

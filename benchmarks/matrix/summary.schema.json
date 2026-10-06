@@ -1,0 +1,405 @@
+{
+ "$schema": "https://json-schema.org/draft/2020-12/schema",
+ "$id": "dgem.matrix.summary/v2",
+ "title": "dgem regression matrix run summary (summary.json)",
+ "description": "Written by scripts/bench_matrix.py next to report.md. The machine-readable result of a matrix run, for dashboards, scheduled-run trends and automation; read it instead of recomputing metrics or parsing report.md. Accuracy-type metrics are over answered items; coverage is answered / attempted. Optional blocks are omitted (or empty) when the tier did not run the suite.",
+ "type": "object",
+ "required": [
+  "schema",
+  "run_id",
+  "matrix_version",
+  "tier",
+  "targets",
+  "overall",
+  "gates",
+  "suites"
+ ],
+ "properties": {
+  "schema": {
+   "const": "dgem.matrix.summary/v2"
+  },
+  "run_id": {
+   "type": "string"
+  },
+  "created": {
+   "type": [
+    "string",
+    "null"
+   ]
+  },
+  "git_commit": {
+   "type": [
+    "string",
+    "null"
+   ]
+  },
+  "matrix_version": {
+   "type": "string"
+  },
+  "tier": {
+   "type": "string",
+   "description": "a tier of the matrix file (T0, T1, T2 in the example matrix)"
+  },
+  "baseline": {
+   "type": [
+    "string",
+    "null"
+   ],
+   "description": "target name the candidates are compared against, or null in single-target mode"
+  },
+  "started": {
+   "type": [
+    "string",
+    "null"
+   ]
+  },
+  "finished": {
+   "type": [
+    "string",
+    "null"
+   ]
+  },
+  "targets": {
+   "type": "array",
+   "items": {
+    "type": "object",
+    "required": [
+     "name",
+     "kind"
+    ],
+    "properties": {
+     "name": {
+      "type": "string"
+     },
+     "kind": {
+      "enum": [
+       "vertex",
+       "cloudrun",
+       "self-hosted"
+      ]
+     },
+     "health": {
+      "type": "object",
+      "description": "version, revision, vllm_commit reported by /health"
+     }
+    }
+   }
+  },
+  "overall": {
+   "type": "object",
+   "additionalProperties": {
+    "enum": [
+     "PASS",
+     "REVIEW",
+     "FAIL"
+    ]
+   }
+  },
+  "noise_floor": {
+   "type": "object",
+   "additionalProperties": {
+    "type": [
+     "number",
+     "null"
+    ]
+   },
+   "description": "per target: mean answer agreement between repeated identical runs"
+  },
+  "gates": {
+   "type": "array",
+   "items": {
+    "type": "object",
+    "required": [
+     "gate",
+     "target",
+     "verdict",
+     "detail"
+    ],
+    "properties": {
+     "gate": {
+      "type": "string"
+     },
+     "target": {
+      "type": "string"
+     },
+     "verdict": {
+      "enum": [
+       "PASS",
+       "REVIEW",
+       "FAIL",
+       "INFO"
+      ]
+     },
+     "detail": {
+      "type": "string"
+     }
+    }
+   }
+  },
+  "suites": {
+   "type": "object",
+   "description": "suite id -> target name -> block",
+   "additionalProperties": {
+    "type": "object",
+    "additionalProperties": {
+     "$ref": "#/$defs/suite"
+    }
+   }
+  },
+  "order": {
+   "type": "object",
+   "description": "target -> option-order subset -> flip rates (identity, random, reverse, net) and first-slot pick rates"
+  },
+  "latency": {
+   "type": "object",
+   "description": "target -> {modes, sweep}: n, ok, errors, wall_p50/p90/p99, server_p50, rps (sweep)"
+  },
+  "summary_only": {
+   "type": "object",
+   "description": "suites reported as headline numbers only (bbox, decision_index): suite -> target -> values"
+  },
+  "di_probes": {
+   "type": "object",
+   "description": "target -> Decision Index adapter probe results: name, status, ok, notes, keys, prob_sum, top_p, marker, wall_ms"
+  }
+ },
+ "$defs": {
+  "run": {
+   "type": "object",
+   "required": [
+    "run",
+    "n",
+    "correct",
+    "accuracy",
+    "attempted",
+    "answered",
+    "coverage"
+   ],
+   "properties": {
+    "run": {
+     "type": "integer"
+    },
+    "n": {
+     "type": "integer"
+    },
+    "correct": {
+     "type": "integer"
+    },
+    "accuracy": {
+     "type": "number"
+    },
+    "attempted": {
+     "type": "integer"
+    },
+    "answered": {
+     "type": "integer"
+    },
+    "coverage": {
+     "type": [
+      "number",
+      "null"
+     ]
+    },
+    "macro_f1": {
+     "type": [
+      "number",
+      "null"
+     ]
+    },
+    "ece10": {
+     "type": [
+      "number",
+      "null"
+     ]
+    },
+    "auroc": {
+     "type": [
+      "number",
+      "null"
+     ]
+    },
+    "brier": {
+     "type": "number"
+    },
+    "nll": {
+     "type": "number"
+    },
+    "mean_conf": {
+     "type": "number"
+    },
+    "wall_p50": {
+     "type": "number"
+    },
+    "soft_acc": {
+     "type": "number"
+    },
+    "abs_err_ev": {
+     "type": "number"
+    },
+    "case_exact": {
+     "type": [
+      "number",
+      "null"
+     ],
+     "description": "share of multi-question cases with every field right; null for single-question suites"
+    },
+    "refusals": {
+     "type": "object",
+     "description": "unanswered items by reason: context (prompt longer than the served context), capacity (server shape limits), na (skipped by the matrix), error",
+     "additionalProperties": {
+      "type": "integer"
+     }
+    }
+   }
+  },
+  "suite": {
+   "type": "object",
+   "required": [
+    "runs",
+    "accuracy",
+    "accuracy_range",
+    "coverage",
+    "reliability"
+   ],
+   "properties": {
+    "runs": {
+     "type": "array",
+     "items": {
+      "$ref": "#/$defs/run"
+     }
+    },
+    "accuracy": {
+     "type": "number",
+     "description": "mean over runs"
+    },
+    "accuracy_range": {
+     "type": "array",
+     "items": {
+      "type": "number"
+     },
+     "minItems": 2,
+     "maxItems": 2
+    },
+    "coverage": {
+     "type": [
+      "number",
+      "null"
+     ]
+    },
+    "macro_f1": {
+     "type": [
+      "number",
+      "null"
+     ]
+    },
+    "ece10": {
+     "type": [
+      "number",
+      "null"
+     ]
+    },
+    "brier": {
+     "type": [
+      "number",
+      "null"
+     ]
+    },
+    "nll": {
+     "type": [
+      "number",
+      "null"
+     ]
+    },
+    "auroc": {
+     "type": [
+      "number",
+      "null"
+     ]
+    },
+    "soft_acc": {
+     "type": [
+      "number",
+      "null"
+     ]
+    },
+    "score_mae": {
+     "type": [
+      "number",
+      "null"
+     ]
+    },
+    "wall_p50": {
+     "type": [
+      "number",
+      "null"
+     ]
+    },
+    "mean_conf": {
+     "type": [
+      "number",
+      "null"
+     ]
+    },
+    "noise_within": {
+     "type": [
+      "number",
+      "null"
+     ],
+     "description": "answer agreement between this target's repeated runs"
+    },
+    "heldout": {
+     "type": [
+      "object",
+      "null"
+     ],
+     "description": "5-fold held-out temperature on the first run: ece_raw, ece_heldout, nll_raw, nll_heldout, temperatures, n"
+    },
+    "reliability": {
+     "type": "array",
+     "items": {
+      "type": "object",
+      "properties": {
+       "lo": {
+        "type": "number"
+       },
+       "hi": {
+        "type": "number"
+       },
+       "count": {
+        "type": "integer"
+       },
+       "share": {
+        "type": "number"
+       },
+       "conf": {
+        "type": [
+         "number",
+         "null"
+        ]
+       },
+       "acc": {
+        "type": [
+         "number",
+         "null"
+        ]
+       }
+      }
+     }
+    },
+    "case_exact": {
+     "type": [
+      "number",
+      "null"
+     ]
+    },
+    "refusals": {
+     "type": "object",
+     "description": "unanswered items by reason: context (prompt longer than the served context), capacity (server shape limits), na (skipped by the matrix), error",
+     "additionalProperties": {
+      "type": "integer"
+     }
+    }
+   }
+  }
+ }
+}

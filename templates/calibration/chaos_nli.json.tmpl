@@ -1,0 +1,22 @@
+{
+  "schema": {
+    "instructions": "Predict the natural language inference relationship between the premise and the hypothesis (ChaosNLI / ANLI). Select entailment if a reasonable person reading the premise would conclude the hypothesis is true, neutral if the hypothesis might be true or false and the premise does not settle it, or contradiction if the premise establishes the hypothesis is false.",
+    "questions": [
+      {
+        "id": "entailment",
+        "type": "choice",
+        "instructions": "Select the NLI relationship between premise and hypothesis",
+        "options": [
+          {"name": "entailment", "description": "The premise entails that the hypothesis is true."},
+          {"name": "neutral", "description": "The hypothesis is neither entailed nor contradicted by the premise."},
+          {"name": "contradiction", "description": "The premise contradicts the hypothesis."}
+        ]
+      }
+    ],
+    "samples": {{ default 4 .samples | toJson }}
+  },
+  "state": {
+    "premise": {{ default "" .premise | toJson }},
+    "hypothesis": {{ default "" .hypothesis | toJson }}
+  }
+}

@@ -1,0 +1,129 @@
+{
+  "schema": {
+    "instructions": "Localize the requested target object in the attached image using normalized percentage coordinates [ymin, xmin, ymax, xmax] from 00 (0%, top/left edge) to 100 (100%, bottom/right edge) in 5% increments. Coordinate system origin (00, 00) is the top-left corner of the image; (100, 100) is the bottom-right corner.",
+    "questions": [
+      {
+        "id": "object_present",
+        "type": "boolean",
+        "instructions": "Is the target object visibly present inside the image frame?"
+      },
+      {
+        "id": "ymin",
+        "type": "choice",
+        "instructions": "Top edge vertical coordinate (ymin) as percentage from top border (00 = top edge, 50 = vertical midpoint, 100 = bottom edge)",
+        "options": [
+          {"name": "00", "description": "0% from top edge"},
+          {"name": "05", "description": "5% from top edge"},
+          {"name": "10", "description": "10% from top edge"},
+          {"name": "15", "description": "15% from top edge"},
+          {"name": "20", "description": "20% from top edge"},
+          {"name": "25", "description": "25% from top edge"},
+          {"name": "30", "description": "30% from top edge"},
+          {"name": "35", "description": "35% from top edge"},
+          {"name": "40", "description": "40% from top edge"},
+          {"name": "45", "description": "45% from top edge"},
+          {"name": "50", "description": "50% from top edge (vertical center)"},
+          {"name": "55", "description": "55% from top edge"},
+          {"name": "60", "description": "60% from top edge"},
+          {"name": "65", "description": "65% from top edge"},
+          {"name": "70", "description": "70% from top edge"},
+          {"name": "75", "description": "75% from top edge"},
+          {"name": "80", "description": "80% from top edge"},
+          {"name": "85", "description": "85% from top edge"},
+          {"name": "90", "description": "90% from top edge"},
+          {"name": "95", "description": "95% from top edge"},
+          {"name": "100", "description": "100% from top edge (bottom border)"}
+        ]
+      },
+      {
+        "id": "xmin",
+        "type": "choice",
+        "instructions": "Left edge horizontal coordinate (xmin) as percentage from left border (00 = left edge, 50 = horizontal midpoint, 100 = right edge)",
+        "options": [
+          {"name": "00", "description": "0% from left edge"},
+          {"name": "05", "description": "5% from left edge"},
+          {"name": "10", "description": "10% from left edge"},
+          {"name": "15", "description": "15% from left edge"},
+          {"name": "20", "description": "20% from left edge"},
+          {"name": "25", "description": "25% from left edge"},
+          {"name": "30", "description": "30% from left edge"},
+          {"name": "35", "description": "35% from left edge"},
+          {"name": "40", "description": "40% from left edge"},
+          {"name": "45", "description": "45% from left edge"},
+          {"name": "50", "description": "50% from left edge (horizontal center)"},
+          {"name": "55", "description": "55% from left edge"},
+          {"name": "60", "description": "60% from left edge"},
+          {"name": "65", "description": "65% from left edge"},
+          {"name": "70", "description": "70% from left edge"},
+          {"name": "75", "description": "75% from left edge"},
+          {"name": "80", "description": "80% from left edge"},
+          {"name": "85", "description": "85% from left edge"},
+          {"name": "90", "description": "90% from left edge"},
+          {"name": "95", "description": "95% from left edge"},
+          {"name": "100", "description": "100% from left edge (right border)"}
+        ]
+      },
+      {
+        "id": "ymax",
+        "type": "choice",
+        "instructions": "Bottom edge vertical coordinate (ymax) as percentage from top border (must be strictly greater than ymin)",
+        "options": [
+          {"name": "00", "description": "0% from top edge"},
+          {"name": "05", "description": "5% from top edge"},
+          {"name": "10", "description": "10% from top edge"},
+          {"name": "15", "description": "15% from top edge"},
+          {"name": "20", "description": "20% from top edge"},
+          {"name": "25", "description": "25% from top edge"},
+          {"name": "30", "description": "30% from top edge"},
+          {"name": "35", "description": "35% from top edge"},
+          {"name": "40", "description": "40% from top edge"},
+          {"name": "45", "description": "45% from top edge"},
+          {"name": "50", "description": "50% from top edge (vertical center)"},
+          {"name": "55", "description": "55% from top edge"},
+          {"name": "60", "description": "60% from top edge"},
+          {"name": "65", "description": "65% from top edge"},
+          {"name": "70", "description": "70% from top edge"},
+          {"name": "75", "description": "75% from top edge"},
+          {"name": "80", "description": "80% from top edge"},
+          {"name": "85", "description": "85% from top edge"},
+          {"name": "90", "description": "90% from top edge"},
+          {"name": "95", "description": "95% from top edge"},
+          {"name": "100", "description": "100% from top edge (bottom border)"}
+        ]
+      },
+      {
+        "id": "xmax",
+        "type": "choice",
+        "instructions": "Right edge horizontal coordinate (xmax) as percentage from left border (must be strictly greater than xmin)",
+        "options": [
+          {"name": "00", "description": "0% from left edge"},
+          {"name": "05", "description": "5% from left edge"},
+          {"name": "10", "description": "10% from left edge"},
+          {"name": "15", "description": "15% from left edge"},
+          {"name": "20", "description": "20% from left edge"},
+          {"name": "25", "description": "25% from left edge"},
+          {"name": "30", "description": "30% from left edge"},
+          {"name": "35", "description": "35% from left edge"},
+          {"name": "40", "description": "40% from left edge"},
+          {"name": "45", "description": "45% from left edge"},
+          {"name": "50", "description": "50% from left edge (horizontal center)"},
+          {"name": "55", "description": "55% from left edge"},
+          {"name": "60", "description": "60% from left edge"},
+          {"name": "65", "description": "65% from left edge"},
+          {"name": "70", "description": "70% from left edge"},
+          {"name": "75", "description": "75% from left edge"},
+          {"name": "80", "description": "80% from left edge"},
+          {"name": "85", "description": "85% from left edge"},
+          {"name": "90", "description": "90% from left edge"},
+          {"name": "95", "description": "95% from left edge"},
+          {"name": "100", "description": "100% from left edge (right border)"}
+        ]
+      }
+    ],
+    "samples": {{ default 1 .samples | toJson }}
+  },
+  "state": {
+    "target": {{ default "primary_cta_button" .target | toJson }},
+    "scene_context": {{ default "UI viewport or camera frame" .scene_context | toJson }}
+  }
+}

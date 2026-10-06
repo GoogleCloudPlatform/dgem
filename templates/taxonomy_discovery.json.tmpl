@@ -1,0 +1,83 @@
+{
+  "schema": {
+    "instructions": "Evaluate the incoming item against the established taxonomy. If the item does not cleanly fit an existing category (in_taxonomy=no or primary_category=other), propose a reusable new category in your thought channel formatted strictly as: SUGGESTED_OPTION: {\"name\": \"<snake_case_name>\", \"description\": \"<concise 1-line rubric>\"}",
+    "think": 120,
+    "questions": [
+      {
+        "id": "in_taxonomy",
+        "type": "boolean",
+        "instructions": "Does this item fit cleanly into one of the known operational categories (excluding 'other') without stretching definitions?"
+      },
+      {
+        "id": "primary_category",
+        "type": "choice",
+        "instructions": "Assign the primary operational category, or select 'other' if the item represents an unclassified or novel pattern.",
+        "options": [
+          {
+            "name": "billing_and_invoicing",
+            "description": "Subscription charges, invoice discrepancies, refund requests, or payment method failures"
+          },
+          {
+            "name": "account_and_auth",
+            "description": "SSO/SAML setup, MFA lockouts, RBAC role permissions, or API key rotation"
+          },
+          {
+            "name": "platform_reliability",
+            "description": "HTTP 5xx errors, latency degradation, webhook delivery failures, or cluster outages"
+          },
+          {
+            "name": "security_and_compliance",
+            "description": "Vulnerability disclosures, SOC2/ISO27001 audit requests, GDPR data deletion, or suspicious access alerts"
+          },
+          {
+            "name": "other",
+            "description": "Unclassified topic, emerging product request, or out-of-scope pattern not covered by the known categories"
+          }
+        ]
+      },
+      {
+        "id": "novelty_score",
+        "type": "score",
+        "instructions": "How strongly does this input warrant adding a new permanent category to the taxonomy?",
+        "levels": [
+          "none_fits_existing",
+          "minor_edge_case",
+          "distinct_sub_category",
+          "new_top_level_category"
+        ]
+      },
+      {
+        "id": "expansion_driver",
+        "type": "choice",
+        "instructions": "Why did this item fall into 'other'? Select the structural taxonomy gap it exposes.",
+        "depends_on": ["primary_category"],
+        "ask_if": {
+          "primary_category": ["other"]
+        },
+        "options": [
+          {
+            "name": "new_product_workflow",
+            "description": "Legitimate user workflow or feature area not yet represented in the current rubric"
+          },
+          {
+            "name": "missing_domain_vertical",
+            "description": "Specialized legal, procurement, partnership, or hardware topic outside existing buckets"
+          },
+          {
+            "name": "multi_intent_compound",
+            "description": "Spans multiple distinct categories equally and requires decomposition or a composite rule"
+          },
+          {
+            "name": "out_of_scope_noise",
+            "description": "Spam, automated bounce message, or irrelevant external chatter that should be filtered"
+          }
+        ]
+      }
+    ],
+    "samples": {{ default 1 .samples | toJson }}
+  },
+  "state": {
+    "domain": {{ default "enterprise_saas_operations" .domain | toJson }},
+    "input": {{ default "We need to execute a custom bilateral AI model indemnity addendum and export-control classification (ECCN) review before our procurement board signs the Q4 enterprise renewal." .input | toJson }}
+  }
+}

@@ -1,0 +1,22 @@
+{
+  "schema": {
+    "instructions": "You check whether numbers in technical documentation are backed by evidence. A measured result is a number obtained by testing: accuracy, latency, cost, error rate, throughput or a count of correct items. Configuration values, defaults, version numbers, ports, sizes, dates and limits are not measured results.",
+    "questions": [
+      {
+        "id": "evidence",
+        "type": "choice",
+        "instructions": "Which statement best describes the measured results in this section? If any measured result lacks both a sample size and a source, choose some_unsourced, even when others are sourced.",
+        "options": [
+          {"name": "no_measured_results", "description": "The section contains no measured results."},
+          {"name": "all_sourced", "description": "Every measured result gives its sample size or links the experiment, run or receipt it comes from."},
+          {"name": "some_unsourced", "description": "At least one measured result has neither a sample size nor a source."},
+          {"name": "illustrative_labelled", "description": "The only numbers are explicitly marked as illustrative, simulated or example values."}
+        ]
+      }
+    ],
+    "samples": {{ default 1 .samples | toJson }}
+  },
+  "state": {
+    "section": {{ default "" .text | toJson }}
+  }
+}

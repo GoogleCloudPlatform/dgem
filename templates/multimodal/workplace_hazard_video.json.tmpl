@@ -1,0 +1,35 @@
+{
+  "schema": {
+    "instructions": "Analyze the sequential video frames from the warehouse loading dock camera for safety violations.",
+    "questions": [
+      {
+        "id": "ppe_compliant",
+        "type": "boolean",
+        "instructions": "Are all visible workers wearing required hardhats and high-visibility safety vests?"
+      },
+      {
+        "id": "primary_hazard",
+        "type": "choice",
+        "instructions": "Most immediate safety hazard observed across the sequence",
+        "options": [
+          {"name": "none", "description": "Safe operating conditions"},
+          {"name": "forklift_pedestrian", "description": "Pedestrian walking within 2 meters of active moving forklift"},
+          {"name": "spill_slip", "description": "Liquid spill or debris obstructing walkway"},
+          {"name": "blocked_egress", "description": "Pallets or cargo blocking marked fire exit"},
+          {"name": "improper_lifting", "description": "Worker lifting heavy crate without mechanical assistance"}
+        ]
+      },
+      {
+        "id": "urgency",
+        "type": "score",
+        "instructions": "Immediate risk level to human life or limb",
+        "levels": ["safe", "cautionary_advisory", "imminent_hazard_stop_work"]
+      }
+    ],
+    "samples": {{ default 1 .samples | toJson }}
+  },
+  "state": {
+    "zone_id": {{ default "Dock-Door-12" .zone | toJson }},
+    "frame_rate_fps": {{ default 1 .fps | toJson }}
+  }
+}
