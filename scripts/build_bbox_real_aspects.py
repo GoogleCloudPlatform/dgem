@@ -15,8 +15,8 @@
 
 """Build multi-aspect ground truth for the real-image suite (bench-vision on RefCOCO + ScreenSpot).
 
-Reads benchmarks/bbox_real.jsonl (images from scripts/fetch_bbox_real.py) and writes
-benchmarks/bbox_real_aspects.jsonl, one row per question set, with "aspects" ground truth and
+Reads third_party/bbox_real/bbox_real.jsonl (images from scripts/fetch_bbox_real.py) and writes
+third_party/bbox_real/bbox_real_aspects.jsonl, one row per question set, with "aspects" ground truth and
 "aspect_sources" saying where each label came from:
 
   grid_cell  geometry: 3x3 cell of the annotated box centre
@@ -31,7 +31,7 @@ benchmarks/bbox_real_aspects.jsonl, one row per question set, with "aspects" gro
   python3 scripts/build_bbox_real_aspects.py build --project <PROJECT> [--model gemini-3.8-flash]
   python3 scripts/build_bbox_real_aspects.py sheet --n 40          # contact sheets for hand labelling
   python3 scripts/build_bbox_real_aspects.py handcheck <labels.json>  # agreement of Gemini with hand labels
-  python3 scripts/build_bbox_real_aspects.py masks     # RefCOCO segmentation polygons -> benchmarks/bbox_real_masks.jsonl
+  python3 scripts/build_bbox_real_aspects.py masks     # RefCOCO segmentation polygons -> third_party/bbox_real/bbox_real_masks.jsonl
 
 Needs scripts/requirements-vision.txt and `gcloud` (Application Default Credentials) for the Gemini calls.
 """
@@ -163,7 +163,7 @@ def others_in_image(man):
 
 def build(args):
     rng = random.Random(args.seed)
-    man = [json.loads(l) for l in open(REPO / "benchmarks/bbox_real.jsonl")]
+    man = [json.loads(l) for l in open(REPO / "third_party/bbox_real/bbox_real.jsonl")]
     others = others_in_image(man)
     pos_schema = {"type": "OBJECT", "properties": {"occluded": {"type": "STRING", "enum": ["yes", "no"]}}, "required": ["occluded"]}
     neg_schema = {"type": "OBJECT", "properties": {"visible": {"type": "STRING", "enum": ["yes", "no", "unsure"]}}, "required": ["visible"]}
@@ -270,7 +270,7 @@ def handcheck(args):
 def masks(args):
     """Ground-truth instance masks for the RefCOCO items: COCO segmentation polygons in pixel coordinates."""
     import pyarrow.parquet as pq
-    man = [json.loads(l) for l in open(REPO / "benchmarks/bbox_real.jsonl") if '"refcoco"' in l]
+    man = [json.loads(l) for l in open(REPO / "third_party/bbox_real/bbox_real.jsonl") if '"refcoco"' in l]
     want = {int(m["notes"].split("ref ")[1].split(",")[0]): m for m in man}
     rows = []
     for r in pq.read_table(CACHE / "validation-00000-of-00001-bfeafdc84ca37aa2.parquet").to_pylist():
@@ -281,10 +281,10 @@ def masks(args):
                 continue
             rows.append({"id": want[r["ref_id"]]["id"], "width": info["width"], "height": info["height"],
                          "polygons": [[round(v, 1) for v in poly] for poly in seg]})
-    with open(REPO / "benchmarks/bbox_real_masks.jsonl", "w") as f:
+    with open(REPO / "third_party/bbox_real/bbox_real_masks.jsonl", "w") as f:
         for r in sorted(rows, key=lambda x: x["id"]):
             f.write(json.dumps(r) + "\n")
-    print(f"wrote {len(rows)} masks to benchmarks/bbox_real_masks.jsonl")
+    print(f"wrote {len(rows)} masks to third_party/bbox_real/bbox_real_masks.jsonl")
 
 
 def main():
@@ -296,7 +296,7 @@ def main():
     ap.add_argument("--seed", type=int, default=18)
     ap.add_argument("--workers", type=int, default=8)
     ap.add_argument("--n", type=int, default=40)
-    ap.add_argument("--out", default="benchmarks/bbox_real_aspects.jsonl")
+    ap.add_argument("--out", default="third_party/bbox_real/bbox_real_aspects.jsonl")
     ap.add_argument("--sheet-dir", default="/tmp/dgem-handcheck")
     args = ap.parse_args()
     {"build": build, "sheet": sheet, "handcheck": handcheck, "masks": masks}[args.cmd](args)

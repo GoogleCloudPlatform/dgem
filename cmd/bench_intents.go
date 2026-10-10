@@ -62,7 +62,7 @@ automatically trigger a focused Pass-2 tie-breaker across the top competing fina
 }
 
 func init() {
-	benchIntentsCmd.Flags().StringVarP(&intentsCorpus, "corpus", "c", "benchmarks/intents/banking77_eval.jsonl", "Path to intent evaluation JSONL file")
+	benchIntentsCmd.Flags().StringVarP(&intentsCorpus, "corpus", "c", "third_party/banking77/banking77_eval.jsonl", "Path to intent evaluation JSONL file")
 	benchIntentsCmd.Flags().StringVarP(&intentsDataset, "dataset", "d", "", "Preset dataset to target ('banking77' or 'clinc150')")
 	benchIntentsCmd.Flags().BoolVarP(&intentsFull, "full", "F", false, "Download (if needed) and evaluate the complete official test dataset (3,080 for banking77; 5,500 for clinc150)")
 	benchIntentsCmd.Flags().StringVarP(&intentsOutput, "output", "o", "", "Export JSON report to file")
@@ -116,7 +116,8 @@ const maxChoiceOptions = 26
 
 // intentBracketSize and intentBracketKeep: with more than 26 candidate intents, round 1 asks one question per
 // group of at most intentBracketSize options and keeps each group's top intentBracketKeep, and a final round
-// picks among the kept ones (the same 2-stage bracket as `dgem systemone serve`).
+// picks among the kept ones. `dgem systemone serve` brackets differently (top 2 per group, at most 24 finalists,
+// fused probabilities over all options).
 const (
 	intentBracketSize = 20
 	intentBracketKeep = 5
@@ -163,8 +164,9 @@ func topOptions(ans client.QuestionAnswer, group []string, k int) []string {
 	return out
 }
 
-// decideIntentBracketed runs one decision when the options fit in one question, otherwise a 2-stage bracket.
-// The returned response is the final round's; stats.WallTime sums all rounds.
+// decideIntentBracketed runs one decision when the options fit in one question, otherwise a 2-stage bracket (more
+// rounds when the kept intents still exceed one question). The returned response is the final round's;
+// stats.WallTime sums all rounds.
 func decideIntentBracketed(ctx context.Context, tmplPath string, vars map[string]interface{}, options []string, decide intentDecideFunc) (*client.StructuredDecisionResponse, *client.RequestStats, error) {
 	withOptions := func(opts []string) map[string]interface{} {
 		v := make(map[string]interface{}, len(vars))
@@ -189,7 +191,16 @@ func decideIntentBracketed(ctx context.Context, tmplPath string, vars map[string
 		}
 		finalists = append(finalists, topOptions(intentAnswer(resp), group, intentBracketKeep)...)
 	}
-	resp, stats, err := decide(withOptions(finalists))
+	// Kept intents can still exceed one question (151 CLINC150 options -> 8 groups x 5 = 40); bracket them again
+	// rather than sending a final the server rejects (#119). Each round keeps at most a quarter, so it terminates.
+	var resp *client.StructuredDecisionResponse
+	var stats *client.RequestStats
+	var err error
+	if len(finalists) > maxChoiceOptions {
+		resp, stats, err = decideIntentBracketed(ctx, tmplPath, vars, finalists, decide)
+	} else {
+		resp, stats, err = decide(withOptions(finalists))
+	}
 	if err != nil {
 		return nil, nil, fmt.Errorf("bracket final: %w", err)
 	}
@@ -271,9 +282,6 @@ func buildFinalists(pass1Guess string, topProbs map[string]float64, allOptions [
 }
 
 func ensureFullDataset(dataset string) (string, error) {
-	if err := os.MkdirAll("benchmarks/intents", 0755); err != nil {
-		return "", err
-	}
 	ds := strings.ToLower(strings.TrimSpace(dataset))
 	if ds == "" {
 		if strings.Contains(strings.ToLower(intentsCorpus), "clinc") {
@@ -284,7 +292,10 @@ func ensureFullDataset(dataset string) (string, error) {
 	}
 
 	if ds == "banking77" {
-		targetPath := "benchmarks/intents/banking77_full_test.jsonl"
+		if err := os.MkdirAll("third_party/banking77", 0755); err != nil {
+			return "", err
+		}
+		targetPath := "third_party/banking77/banking77_full_test.jsonl"
 		if info, err := os.Stat(targetPath); err == nil && info.Size() > 100000 {
 			return targetPath, nil
 		}
@@ -339,7 +350,10 @@ func ensureFullDataset(dataset string) (string, error) {
 	}
 
 	if ds == "clinc150" {
-		targetPath := "benchmarks/intents/clinc150_full_test.jsonl"
+		if err := os.MkdirAll("third_party/clinc_oos", 0755); err != nil {
+			return "", err
+		}
+		targetPath := "third_party/clinc_oos/clinc150_full_test.jsonl"
 		if info, err := os.Stat(targetPath); err == nil && info.Size() > 100000 {
 			return targetPath, nil
 		}
@@ -460,9 +474,9 @@ func runBenchIntents(cmd *cobra.Command, args []string) error {
 	} else if intentsDataset != "" {
 		ds := strings.ToLower(strings.TrimSpace(intentsDataset))
 		if ds == "clinc150" {
-			targetCorpus = filepath.FromSlash("benchmarks/intents/clinc150_eval.jsonl")
+			targetCorpus = filepath.FromSlash("third_party/clinc_oos/clinc150_eval.jsonl")
 		} else if ds == "banking77" {
-			targetCorpus = filepath.FromSlash("benchmarks/intents/banking77_eval.jsonl")
+			targetCorpus = filepath.FromSlash("third_party/banking77/banking77_eval.jsonl")
 		}
 	}
 

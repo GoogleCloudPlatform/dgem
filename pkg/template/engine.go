@@ -136,8 +136,8 @@ func ParseStructuredPayload(rendered string, fallbackState map[string]interface{
 		}
 
 		// Check if it's a flat {"input": ..., "questions": [...]} or {"context": ..., "questions": [...]} object
-		var rawObj map[string]interface{}
-		if err := json.Unmarshal([]byte(trimmed), &rawObj); err == nil {
+		decoded, order, err := decodeOrdered([]byte(trimmed))
+		if rawObj, isObj := decoded.(map[string]interface{}); err == nil && isObj {
 			stateMap := make(map[string]interface{})
 			for k, v := range fallbackState {
 				stateMap[k] = v
@@ -160,7 +160,7 @@ func ParseStructuredPayload(rendered string, fallbackState map[string]interface{
 				}
 				delete(rawObj, "state")
 			}
-			normalizeSchemaMap(rawObj)
+			normalizeSchemaMap(rawObj, order)
 			schemaBytes, _ := json.Marshal(rawObj)
 			stateBytes, _ := json.Marshal(stateMap)
 			return string(schemaBytes), string(stateBytes), nil
@@ -177,11 +177,15 @@ func ParseStructuredPayload(rendered string, fallbackState map[string]interface{
 }
 
 func normalizeSchemaJSON(schemaStr string) string {
-	var m map[string]interface{}
-	if err := json.Unmarshal([]byte(schemaStr), &m); err != nil {
+	decoded, order, err := decodeOrdered([]byte(schemaStr))
+	if err != nil {
 		return schemaStr
 	}
-	normalizeSchemaMap(m)
+	m, ok := decoded.(map[string]interface{})
+	if !ok {
+		return schemaStr
+	}
+	normalizeSchemaMap(m, order)
 	b, err := json.Marshal(m)
 	if err != nil {
 		return schemaStr
@@ -189,10 +193,13 @@ func normalizeSchemaJSON(schemaStr string) string {
 	return string(b)
 }
 
-func normalizeSchemaMap(m map[string]interface{}) {
+// normalizeSchemaMap rewrites legacy question fields in place. Dict-form questions and options become lists in their
+// source order (order, from decodeOrdered), or sorted by key when the order is unknown.
+func normalizeSchemaMap(m map[string]interface{}, order keyOrder) {
 	if qMap, isMap := m["questions"].(map[string]interface{}); isMap {
 		qList := make([]interface{}, 0, len(qMap))
-		for k, v := range qMap {
+		for _, k := range order.keysOf(qMap) {
+			v := qMap[k]
 			if qObj, ok := v.(map[string]interface{}); ok {
 				if _, hasID := qObj["id"]; !hasID {
 					qObj["id"] = k
@@ -247,7 +254,8 @@ func normalizeSchemaMap(m map[string]interface{}) {
 		// 4. Dictionary "options": {"yes": "desc"} -> [{"name": "yes", "description": "desc"}]
 		if optsMap, isMap := q["options"].(map[string]interface{}); isMap {
 			optList := make([]map[string]interface{}, 0, len(optsMap))
-			for k, v := range optsMap {
+			for _, k := range order.keysOf(optsMap) {
+				v := optsMap[k]
 				optList = append(optList, map[string]interface{}{
 					"name":        k,
 					"description": fmt.Sprintf("%v", v),

@@ -434,20 +434,21 @@ func runRemoteMCPProxy(remoteURL string) error {
 								"state": "{{.context}}",
 							})
 							gwReq := GatewayDecideRequest{
-								Template:          "custom_questions",
-								CustomTemplate:    string(tmplBytes),
-								Variables:         map[string]interface{}{"context": customIn.Context},
-								Backend:           customIn.Backend,
-								VertexURL:         customIn.VertexURL,
-								CascadeMode:       customIn.CascadeMode,
-								CascadeThreshold:  customIn.CascadeThreshold,
-								CascadeModel:      customIn.CascadeModel,
-								ExpectedAnswers:   customIn.ExpectedAnswers,
-								SuggestExpansions: customIn.SuggestExpansions,
-								ExpansionEntropy:  customIn.ExpansionEntropy,
-								Layout:            customIn.Layout,
-								Stage2Prior:       customIn.Stage2Prior,
-								Temperature:       mustMCPTemperature(customIn.Temperature, customIn.TemperatureByType),
+								Template:             "custom_questions",
+								CustomTemplate:       string(tmplBytes),
+								Variables:            map[string]interface{}{"context": customIn.Context},
+								Backend:              customIn.Backend,
+								VertexURL:            customIn.VertexURL,
+								CascadeMode:          customIn.CascadeMode,
+								CascadeThreshold:     customIn.CascadeThreshold,
+								CascadeThresholdMode: customIn.CascadeThresholdMode,
+								CascadeModel:         customIn.CascadeModel,
+								ExpectedAnswers:      customIn.ExpectedAnswers,
+								SuggestExpansions:    customIn.SuggestExpansions,
+								ExpansionEntropy:     customIn.ExpansionEntropy,
+								Layout:               customIn.Layout,
+								Stage2Prior:          customIn.Stage2Prior,
+								Temperature:          mustMCPTemperature(customIn.Temperature, customIn.TemperatureByType),
 							}
 							if b, mErr := json.Marshal(gwReq); mErr == nil {
 								reqPayload = b
@@ -1253,8 +1254,12 @@ func TriggerGPUWarmupWithSource(ctx context.Context, waitForReady bool, triggerS
 
 			engine := template.NewEngine()
 			vars := map[string]interface{}{"ticket": "GPU warmup readiness probe"}
-			targetPath, _ := resolveTemplateFile(serveTemplatesDir, "support_triage")
-			rendered, err := engine.RenderFile(targetPath, vars)
+			rendered, err := "", error(nil)
+			if targetPath, _, rErr := resolveTemplateFile(serveTemplatesDir, "support_triage"); rErr != nil {
+				err = rErr
+			} else {
+				rendered, err = engine.RenderFile(targetPath, vars)
+			}
 			if err != nil {
 				rendered = `{"questions":[{"id":"ready","type":"boolean","prompt":"Is the system ready?"}]}`
 			}
@@ -1400,21 +1405,22 @@ type StatusToolInput struct {
 }
 
 type DecidePolicyToolInput struct {
-	Template          string                 `json:"template" jsonschema:"Policy template ID (e.g. 'support_triage', 'taxonomy_discovery', 'code_review', 'secops_conditional_dag', 'calibration/hallucination_judge')."`
-	Variables         map[string]interface{} `json:"variables" jsonschema:"Key-value map of template variables (e.g. {'ticket': 'Double charged on invoice #9481'})."`
-	Image             string                 `json:"image,omitempty" jsonschema:"Optional image URL or base64 data URI for multimodal policies."`
-	Backend           string                 `json:"backend,omitempty" jsonschema:"Optional inference backend selector: 'vertex_first' (default: Vertex AI Dedicated Endpoint primary with Cloud Run GPU failover), 'vertex' (strict Vertex AI /invoke/*), 'cloudrun' (strict Serverless Cloud Run GPU), or 'local' (Apple Silicon Metal diffgemma)."`
-	VertexURL         string                 `json:"vertex_url,omitempty" jsonschema:"Optional Vertex AI Endpoint ID or /invoke/* URL override."`
-	CascadeMode       string                 `json:"cascade_mode,omitempty" jsonschema:"Optional Stage-2 Vertex AI Gemini 3.x cascade mode: 'off' (default), 'entropy' (forward slots with Shannon entropy H >= cascade_threshold), or 'on_miss' (forward slots that miss expected_answers)."`
-	CascadeThreshold  float64                `json:"cascade_threshold,omitempty" jsonschema:"Shannon entropy threshold H in nats for Stage-2 Gemini escalation (default 0.35)."`
-	CascadeModel      string                 `json:"cascade_model,omitempty" jsonschema:"Stage-2 Vertex AI Gemini 3.x model (default 'gemini-3.8-flash'; also supports 'gemini-3.5-flash-lite')."`
-	ExpectedAnswers   map[string]string      `json:"expected_answers,omitempty" jsonschema:"Optional map of slot_id -> expected value for 'on_miss' cascade mode."`
-	SuggestExpansions bool                   `json:"suggest_expansions,omitempty" jsonschema:"If true, dynamically injects an 'other_unclassified' catch-all option into choice slots (if absent) and proposes new {'name', 'description'} options when unclassified or high-entropy."`
-	ExpansionEntropy  float64                `json:"expansion_entropy,omitempty" jsonschema:"Shannon entropy threshold H in nats on choice slots to trigger taxonomy expansion proposals (default 0.35)."`
-	Stage2Prior       string                 `json:"stage2_prior,omitempty" jsonschema:"Optional: how much of Stage 1's answer the Stage-2 Gemini cascade sees: 'soft' (default: only that a fast first stage leaned toward an answer and may be wrong), 'full' (answer, confidence and distribution) or 'none'."`
-	Temperature       float64                `json:"temperature,omitempty" jsonschema:"Optional post-hoc temperature for every answer (T > 1 softens overconfidence). Overrides the template's temperature. Fit it on labelled examples of your own (docs/confidence/calibrate-your-policy.md)."`
-	TemperatureByType map[string]float64     `json:"temperature_by_type,omitempty" jsonschema:"Optional post-hoc temperature per question type, e.g. {'noul': 3.0, 'choice': 1.3}; overrides temperature for those types."`
-	Layout            string                 `json:"layout,omitempty" jsonschema:"Optional prompt layout: 'document_first' (default on serving v0.2.0+: the input first, then the questions) or 'schema_first' (the questions as the system prompt). See docs/policies/prompt-layout.md."`
+	Template             string                 `json:"template" jsonschema:"Policy template ID (e.g. 'support_triage', 'taxonomy_discovery', 'code_review', 'secops_conditional_dag', 'calibration/hallucination_judge')."`
+	Variables            map[string]interface{} `json:"variables" jsonschema:"Key-value map of template variables (e.g. {'ticket': 'Double charged on invoice #9481'})."`
+	Image                string                 `json:"image,omitempty" jsonschema:"Optional image URL or base64 data URI for multimodal policies."`
+	Backend              string                 `json:"backend,omitempty" jsonschema:"Optional inference backend selector: 'vertex_first' (default: Vertex AI Dedicated Endpoint primary with Cloud Run GPU failover), 'vertex' (strict Vertex AI /invoke/*), 'cloudrun' (strict Serverless Cloud Run GPU), or 'local' (Apple Silicon Metal diffgemma)."`
+	VertexURL            string                 `json:"vertex_url,omitempty" jsonschema:"Optional Vertex AI Endpoint ID or /invoke/* URL override."`
+	CascadeMode          string                 `json:"cascade_mode,omitempty" jsonschema:"Optional Stage-2 Vertex AI Gemini 3.x cascade mode: 'off' (default), 'entropy' (forward slots with Shannon entropy H >= cascade_threshold), or 'on_miss' (forward slots that miss expected_answers)."`
+	CascadeThreshold     float64                `json:"cascade_threshold,omitempty" jsonschema:"Escalation threshold for Stage-2 Gemini: Shannon entropy H in nats (default 0.35), or H / ln K when cascade_threshold_mode is 'normalized' (default 0.16)."`
+	CascadeThresholdMode string                 `json:"cascade_threshold_mode,omitempty" jsonschema:"What cascade_threshold is compared with: 'nats' (default, raw entropy, grows with the option count) or 'normalized' (entropy / ln K, the Studio's Hesitation scale)."`
+	CascadeModel         string                 `json:"cascade_model,omitempty" jsonschema:"Stage-2 Vertex AI Gemini 3.x model (default 'gemini-3.8-flash'; also supports 'gemini-3.5-flash-lite')."`
+	ExpectedAnswers      map[string]string      `json:"expected_answers,omitempty" jsonschema:"Optional map of slot_id -> expected value for 'on_miss' cascade mode."`
+	SuggestExpansions    bool                   `json:"suggest_expansions,omitempty" jsonschema:"If true, dynamically injects an 'other_unclassified' catch-all option into choice slots (if absent) and proposes new {'name', 'description'} options when unclassified or high-entropy."`
+	ExpansionEntropy     float64                `json:"expansion_entropy,omitempty" jsonschema:"Shannon entropy threshold H in nats on choice slots to trigger taxonomy expansion proposals (default 0.35)."`
+	Stage2Prior          string                 `json:"stage2_prior,omitempty" jsonschema:"Optional: how much of Stage 1's answer the Stage-2 Gemini cascade sees: 'soft' (default: only that a fast first stage leaned toward an answer and may be wrong), 'full' (answer, confidence and distribution) or 'none'."`
+	Temperature          float64                `json:"temperature,omitempty" jsonschema:"Optional post-hoc temperature for every answer (T > 1 softens overconfidence). Overrides the template's temperature. Fit it on labelled examples of your own (docs/confidence/calibrate-your-policy.md)."`
+	TemperatureByType    map[string]float64     `json:"temperature_by_type,omitempty" jsonschema:"Optional post-hoc temperature per question type, e.g. {'noul': 3.0, 'choice': 1.3}; overrides temperature for those types."`
+	Layout               string                 `json:"layout,omitempty" jsonschema:"Optional prompt layout: 'document_first' (default on serving v0.2.0+: the input first, then the questions) or 'schema_first' (the questions as the system prompt). See docs/policies/prompt-layout.md."`
 }
 
 type LocateBBoxToolInput struct {
@@ -1452,21 +1458,22 @@ type CustomQuestionSpec struct {
 }
 
 type DecideCustomToolInput struct {
-	Context           string               `json:"context" jsonschema:"Input text, document, code diff, or event log to evaluate."`
-	Questions         []CustomQuestionSpec `json:"questions" jsonschema:"List of structured decision slots to evaluate simultaneously in 1 forward pass."`
-	Backend           string               `json:"backend,omitempty" jsonschema:"Optional inference backend selector: 'vertex_first' (default: Vertex AI primary with Cloud Run failover), 'vertex', 'cloudrun', or 'local' (Apple Silicon Metal diffgemma)."`
-	VertexURL         string               `json:"vertex_url,omitempty" jsonschema:"Optional Vertex AI Endpoint ID or /invoke/* URL override."`
-	Image             string               `json:"image,omitempty" jsonschema:"Optional image URL or base64 data URI; the questions are answered about it (and sent to Stage 2 when the cascade escalates)."`
-	CascadeMode       string               `json:"cascade_mode,omitempty" jsonschema:"Optional Stage-2 Vertex AI Gemini 3.x cascade mode: 'off' (default), 'entropy' (forward slots with Shannon entropy H >= cascade_threshold), or 'on_miss' (forward slots that miss expected_answers)."`
-	CascadeThreshold  float64              `json:"cascade_threshold,omitempty" jsonschema:"Shannon entropy threshold H in nats for Stage-2 Gemini escalation (default 0.35)."`
-	CascadeModel      string               `json:"cascade_model,omitempty" jsonschema:"Stage-2 Vertex AI Gemini 3.x model (default 'gemini-3.8-flash'; also supports 'gemini-3.5-flash-lite')."`
-	ExpectedAnswers   map[string]string    `json:"expected_answers,omitempty" jsonschema:"Optional map of slot_id -> expected value for 'on_miss' cascade mode."`
-	SuggestExpansions bool                 `json:"suggest_expansions,omitempty" jsonschema:"If true, dynamically injects an 'other_unclassified' catch-all option into choice slots (if absent) and proposes new {'name', 'description'} options when unclassified or high-entropy."`
-	ExpansionEntropy  float64              `json:"expansion_entropy,omitempty" jsonschema:"Shannon entropy threshold H in nats on choice slots to trigger taxonomy expansion proposals (default 0.35)."`
-	Stage2Prior       string               `json:"stage2_prior,omitempty" jsonschema:"Optional: how much of Stage 1's answer the Stage-2 Gemini cascade sees: 'soft' (default: only that a fast first stage leaned toward an answer and may be wrong), 'full' (answer, confidence and distribution) or 'none'."`
-	Temperature       float64              `json:"temperature,omitempty" jsonschema:"Optional post-hoc temperature for every answer (T > 1 softens overconfidence). Fit it on labelled examples of your own (docs/confidence/calibrate-your-policy.md)."`
-	TemperatureByType map[string]float64   `json:"temperature_by_type,omitempty" jsonschema:"Optional post-hoc temperature per question type, e.g. {'noul': 3.0, 'choice': 1.3}; overrides temperature for those types."`
-	Layout            string               `json:"layout,omitempty" jsonschema:"Optional prompt layout: 'document_first' (default on serving v0.2.0+: the input first, then the questions) or 'schema_first' (the questions as the system prompt). See docs/policies/prompt-layout.md."`
+	Context              string               `json:"context" jsonschema:"Input text, document, code diff, or event log to evaluate."`
+	Questions            []CustomQuestionSpec `json:"questions" jsonschema:"List of structured decision slots to evaluate simultaneously in 1 forward pass."`
+	Backend              string               `json:"backend,omitempty" jsonschema:"Optional inference backend selector: 'vertex_first' (default: Vertex AI primary with Cloud Run failover), 'vertex', 'cloudrun', or 'local' (Apple Silicon Metal diffgemma)."`
+	VertexURL            string               `json:"vertex_url,omitempty" jsonschema:"Optional Vertex AI Endpoint ID or /invoke/* URL override."`
+	Image                string               `json:"image,omitempty" jsonschema:"Optional image URL or base64 data URI; the questions are answered about it (and sent to Stage 2 when the cascade escalates)."`
+	CascadeMode          string               `json:"cascade_mode,omitempty" jsonschema:"Optional Stage-2 Vertex AI Gemini 3.x cascade mode: 'off' (default), 'entropy' (forward slots with Shannon entropy H >= cascade_threshold), or 'on_miss' (forward slots that miss expected_answers)."`
+	CascadeThreshold     float64              `json:"cascade_threshold,omitempty" jsonschema:"Escalation threshold for Stage-2 Gemini: Shannon entropy H in nats (default 0.35), or H / ln K when cascade_threshold_mode is 'normalized' (default 0.16)."`
+	CascadeThresholdMode string               `json:"cascade_threshold_mode,omitempty" jsonschema:"What cascade_threshold is compared with: 'nats' (default, raw entropy, grows with the option count) or 'normalized' (entropy / ln K, the Studio's Hesitation scale)."`
+	CascadeModel         string               `json:"cascade_model,omitempty" jsonschema:"Stage-2 Vertex AI Gemini 3.x model (default 'gemini-3.8-flash'; also supports 'gemini-3.5-flash-lite')."`
+	ExpectedAnswers      map[string]string    `json:"expected_answers,omitempty" jsonschema:"Optional map of slot_id -> expected value for 'on_miss' cascade mode."`
+	SuggestExpansions    bool                 `json:"suggest_expansions,omitempty" jsonschema:"If true, dynamically injects an 'other_unclassified' catch-all option into choice slots (if absent) and proposes new {'name', 'description'} options when unclassified or high-entropy."`
+	ExpansionEntropy     float64              `json:"expansion_entropy,omitempty" jsonschema:"Shannon entropy threshold H in nats on choice slots to trigger taxonomy expansion proposals (default 0.35)."`
+	Stage2Prior          string               `json:"stage2_prior,omitempty" jsonschema:"Optional: how much of Stage 1's answer the Stage-2 Gemini cascade sees: 'soft' (default: only that a fast first stage leaned toward an answer and may be wrong), 'full' (answer, confidence and distribution) or 'none'."`
+	Temperature          float64              `json:"temperature,omitempty" jsonschema:"Optional post-hoc temperature for every answer (T > 1 softens overconfidence). Fit it on labelled examples of your own (docs/confidence/calibrate-your-policy.md)."`
+	TemperatureByType    map[string]float64   `json:"temperature_by_type,omitempty" jsonschema:"Optional post-hoc temperature per question type, e.g. {'noul': 3.0, 'choice': 1.3}; overrides temperature for those types."`
+	Layout               string               `json:"layout,omitempty" jsonschema:"Optional prompt layout: 'document_first' (default on serving v0.2.0+: the input first, then the questions) or 'schema_first' (the questions as the system prompt). See docs/policies/prompt-layout.md."`
 }
 
 type ListTemplatesToolInput struct {
@@ -1553,7 +1560,10 @@ func buildMCPServer() *mcp.Server {
 		if tmplID == "" {
 			tmplID = "support_triage"
 		}
-		targetPath, cleanID := resolveTemplateFile(serveTemplatesDir, tmplID)
+		targetPath, cleanID, err := resolveTemplateFile(serveTemplatesDir, tmplID)
+		if err != nil {
+			return nil, GatewayDecideResponse{}, err
+		}
 
 		engine := template.NewEngine()
 		rendered, err := engine.RenderFile(targetPath, input.Variables)
@@ -1599,9 +1609,13 @@ func buildMCPServer() *mcp.Server {
 
 		var cascadeSummary *CascadeExecutionSummary
 		if input.CascadeMode != "" && input.CascadeMode != "off" && input.CascadeMode != "none" {
+			thresholdMode, terr := NormalizeCascadeThresholdMode(input.CascadeThresholdMode)
+			if terr != nil {
+				return nil, GatewayDecideResponse{}, terr
+			}
 			_, cascadeSpan := gatewayTracer().Start(ctx, "dgem.cascade.gemini")
 			cascadeSummary = ExecuteStage2GeminiCascadeWithImages(
-				WithStage2Prior(ctx, input.Stage2Prior),
+				WithCascadeThresholdMode(WithStage2Prior(ctx, input.Stage2Prior), thresholdMode),
 				input.CascadeMode,
 				input.CascadeThreshold,
 				input.CascadeModel,
@@ -1682,7 +1696,10 @@ func buildMCPServer() *mcp.Server {
 			target = "primary foreground object"
 		}
 		vars := map[string]interface{}{"target": target}
-		targetPath, _ := resolveTemplateFile(serveTemplatesDir, "bbox_localization")
+		targetPath, _, err := resolveTemplateFile(serveTemplatesDir, "bbox_localization")
+		if err != nil {
+			return nil, LocateBBoxToolOutput{}, err
+		}
 		engine := template.NewEngine()
 		rendered, err := engine.RenderFile(targetPath, vars)
 		if err != nil {
@@ -1840,9 +1857,13 @@ func buildMCPServer() *mcp.Server {
 
 		var cascadeSummary *CascadeExecutionSummary
 		if input.CascadeMode != "" && input.CascadeMode != "off" && input.CascadeMode != "none" {
+			thresholdMode, terr := NormalizeCascadeThresholdMode(input.CascadeThresholdMode)
+			if terr != nil {
+				return nil, GatewayDecideResponse{}, terr
+			}
 			_, cascadeSpan := gatewayTracer().Start(ctx, "dgem.cascade.gemini")
 			cascadeSummary = ExecuteStage2GeminiCascadeWithImages(
-				WithStage2Prior(ctx, input.Stage2Prior),
+				WithCascadeThresholdMode(WithStage2Prior(ctx, input.Stage2Prior), thresholdMode),
 				input.CascadeMode,
 				input.CascadeThreshold,
 				input.CascadeModel,
@@ -1935,13 +1956,17 @@ func buildMCPServer() *mcp.Server {
 	return srv
 }
 
-func newMCPHTTPHandler() http.Handler {
+// newMCPHTTPHandler builds the Streamable HTTP /mcp handler. The SDK's DNS rebinding protection (403 for a loopback
+// connection with a non-loopback Host header) stays on. gatewaySecurityHandler applies the same check to the whole
+// gateway; only when the operator lists extra hosts with --allowed-hosts is the SDK check turned off, so those hosts
+// (still enforced by gatewaySecurityHandler) reach /mcp too.
+func newMCPHTTPHandler(extraAllowedHosts bool) http.Handler {
 	mcpServer := buildMCPServer()
 	return mcp.NewStreamableHTTPHandler(func(r *http.Request) *mcp.Server {
 		return mcpServer
 	}, &mcp.StreamableHTTPOptions{
 		Stateless:                  true,
 		JSONResponse:               true,
-		DisableLocalhostProtection: true,
+		DisableLocalhostProtection: extraAllowedHosts,
 	})
 }

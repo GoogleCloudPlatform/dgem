@@ -419,3 +419,7 @@ SUITES = {
     "typed": typed,
     "order": order_cases,
 }
+
+# The builders above that read parquet datasets and so need pyarrow. A run checks for pyarrow before it sends anything
+# when its tier includes one of them (test_parquet_suites_are_registered catches a builder missing here).
+PARQUET_SUITES = frozenset({"di_catchall", "rag_dev", "xnli", "typed", "order"})

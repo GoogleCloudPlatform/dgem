@@ -62,9 +62,11 @@ handles 20% of your traffic and `dgem` answers the other 80% directly, each in o
 **Choosing a threshold.** Start at 16–35% and fit it on a labelled sample of your own decisions, choosing the
 threshold on one half and checking it on the other ([Calibrate your policy](calibrate-your-policy.md)). The gate is
 available on every surface (`cascade_mode`, `cascade_threshold`, `cascade_model`; see
-[authoring and Stage 2 cascades](../policies/authoring.md)). Note that the gateway's `cascade_threshold` is raw entropy
+[authoring and Stage 2 cascades](../policies/authoring.md)). Note that by default the gateway's `cascade_threshold` is raw entropy
 in nats (default 0.35), not hesitation %; multiply hesitation by ln K to convert (16% hesitation ≈ 0.18 nats for 3
-options).
+options), or set `cascade_threshold_mode: "normalized"` to give the threshold as hesitation (0.16 = 16%). The two defaults are not
+the same operating point: on a 341-decision mix, 16% hesitation escalated 31% of decisions against 22% at 0.35 nats,
+mostly extra yes/no hand-offs, so fit the threshold on your own traffic when you switch.
 
 ---
 

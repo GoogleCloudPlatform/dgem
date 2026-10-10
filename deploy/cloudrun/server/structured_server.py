@@ -1,6 +1,18 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
 # Modifications Copyright 2026 Google LLC (see deploy/cloudrun/server/dgem.patch)
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
 """Structured decisions in front of a vLLM DiffusionGemma server.
 
 POST /v1/systemone takes Jev's request body: {"model", "state", "questions"}.
@@ -15,8 +27,8 @@ Answers take Jev's shapes, with this server's diagnostics alongside:
   score:  {"score", "legend", "probabilities", "confidence"}
 The request body may also carry the schema keys "instructions", "samples",
 "auto_max", "auto_threshold", "steps", "think", "ask", "chunk_rows",
-"chunk_prompt", "sequential", "layout" and "isolate" ("auto", "noul", "none" or "all") as
-extensions. Images go ahead of the
+"chunk_prompt", "sequential", "layout", "isolate" ("auto", "noul", "none" or "all") and
+"seed_token" ("random" or "fixed") as extensions. Images go ahead of the
 state, either as multipart/form-data with the JSON body in a part named
 "request" and each image as a file part, or as an "images" array of data
 URLs in the JSON body.
@@ -25,8 +37,8 @@ POST /v1/chat/completions makes the same decision from an OpenAI-shaped
 call. The system message is the schema JSON below and the user message is
 the state. The reply's `content` is the JSON answer set.
 
-POST /v1/raw/chat/completions passes the body to vLLM's chat completions
-unchanged, for plain generation through this port.
+dgem: POST /v1/raw/chat/completions (plain generation passed to vLLM) is
+not served and answers 410: this server returns decisions.
 
 With API_KEY set in the environment, every POST needs "Authorization:
 Bearer <key>". --tls-port adds an HTTPS listener with a self-signed
@@ -110,6 +122,14 @@ MAX_INFLIGHT = int(os.environ.get("MAX_INFLIGHT", "8"))
 # The prompt layout of a request that doesn't name one: "document_first" (the state, then the questions, both in
 # the user turn) or "schema_first" (the questions as the system prompt, the layout before v0.2.0).
 DEFAULT_LAYOUT = os.environ.get("DEFAULT_LAYOUT", "document_first")
+# What sits at each answer slot before the read: "random" (the default, upstream behaviour: a seeded random
+# vocabulary id per slot, so the noise draw depends on the seed) or "fixed" (the PAD id at every slot, the token the
+# canvas already uses for its tail; reads stop depending on the seed, so samples > 1 adds nothing but engine noise).
+# Set per deployment (DEFAULT_SEED_TOKEN or --seed-token) or per request ("seed_token").
+SEED_TOKENS = ("random", "fixed")
+DEFAULT_SEED_TOKEN = os.environ.get("DEFAULT_SEED_TOKEN", "random")
+if DEFAULT_SEED_TOKEN not in SEED_TOKENS:
+    raise SystemExit("DEFAULT_SEED_TOKEN must be random or fixed")
 # Which questions get a read of their own when the request does not say ("alone"): "auto" (the default), "none" (one
 # joint read), "noul" (yes/no questions) or "all". Read jointly, a yes/no question after another one tended to copy
 # its answer in agent/tool-call states, mostly in small requests: with 2 questions an action judgment scored
@@ -289,6 +309,9 @@ def parse_schema(value):
     layout = value.get("layout", DEFAULT_LAYOUT)
     if layout not in LAYOUTS:
         raise SchemaError('schema: layout must be "schema_first" or "document_first"')
+    seed_token = value.get("seed_token", DEFAULT_SEED_TOKEN)  # dgem
+    if seed_token not in SEED_TOKENS:
+        raise SchemaError('schema: seed_token must be "random" or "fixed"')
     think = value.get("think", 0)
     if isinstance(think, bool) or not isinstance(think, int) or not 0 <= think <= 4096:
         raise SchemaError("schema: think must be a thought budget in tokens, 0 to 4096")
@@ -303,6 +326,7 @@ def parse_schema(value):
         "chunk_prompt": chunk_prompt,
         "sequential": sequential,
         "layout": layout,
+        "seed_token": seed_token,
         "format": "lines" if len(qs) <= 10 else "indexed",
     }
 
@@ -502,18 +526,29 @@ def pin_xargs(template, slots, steps):
     }
 
 
-def build_canvas(template, slots, seed):
+def build_canvas(template, slots, seed, seed_token="random"):
     rng = random.Random(seed)
     canvas = list(template) + [TURN_CLOSE]
     canvas += [PAD] * (canvas_width(template) - len(canvas))
     for s in slots:
-        canvas[s["pos"]] = rng.randrange(VOCAB)
+        # dgem: "fixed" seeds every slot with PAD instead of a seeded random id
+        canvas[s["pos"]] = PAD if seed_token == "fixed" else rng.randrange(VOCAB)
     return canvas
+
+
+LOGPROB_TOKEN_IDS_MAX = 128  # dgem: vLLM's cap on logprob_token_ids per request
 
 
 def label_id_union(slots):
     ids = sorted({i for s in slots for i in s["label_ids"]})
-    return ids[:128]  # vLLM's cap per request. A schema needs far fewer.
+    # dgem: refuse rather than truncate (#122). A label past the cap would get the floor logprob and could never win.
+    # Today's labels (A-Z, yes/no, 1-9) stay far below it; a wider label set would not.
+    if len(ids) > LOGPROB_TOKEN_IDS_MAX:
+        raise SchemaError(
+            f"one read needs {len(ids)} distinct label tokens; vLLM returns at most "
+            f"{LOGPROB_TOKEN_IDS_MAX} (logprob_token_ids)"
+        )
+    return ids
 
 
 def _wait_for_upstream(max_wait=180):
@@ -672,7 +707,9 @@ def one_read(
         "return_tokens_as_token_ids": True,
         "chat_template_kwargs": {"enable_thinking": thinking},
         "vllm_xargs": {
-            "diffusion_seed_canvas": build_canvas(template, slots, seed),
+            "diffusion_seed_canvas": build_canvas(
+                template, slots, seed, schema.get("seed_token", "random")
+            ),
             "diffusion_canvas_length": canvas_width(template),
             "diffusion_max_steps": schema["steps"],
             "diffusion_read_only": True,
@@ -703,6 +740,11 @@ def slot_distribution(top, label_ids):
     ex = [math.exp(x - mx) for x in lp_t]
     probs = [e / sum(ex) for e in ex]
     top_p = [math.exp(v) for v in top.values()]
+    # dgem: with constrained reads (the default, vLLM PR #58216) the returned logprobs are normalized over the
+    # request's label ids, so the top-k set is the labels: "entropy" equals the entropy of "probs" and "label_mass"
+    # is 1 by construction (measured: max difference 2e-7 over 683 questions). Only with --no-constrained do they differ: "entropy" is then over the top-k
+    # vocabulary tokens (it can include other questions' labels) and "label_mass" is the share on the labels.
+    # Responses carry diagnostics.constrained so a reader knows which applies.
     return {
         "probs": probs,
         "label_mass": sum(math.exp(x) for x in lp_t),
@@ -722,7 +764,9 @@ def one_read_continuation(schema, template, slots, prompt_ids, seed):
         "logprob_token_ids": label_id_union(slots),
         "return_tokens_as_token_ids": True,
         "vllm_xargs": {
-            "diffusion_seed_canvas": build_canvas(template, slots, seed),
+            "diffusion_seed_canvas": build_canvas(
+                template, slots, seed, schema.get("seed_token", "random")
+            ),
             "diffusion_canvas_length": canvas_width(template),
             "diffusion_max_steps": schema["steps"],
             "diffusion_read_only": True,
@@ -993,6 +1037,7 @@ def decide(schema, state_content, seed):
     diagnostics = {
         "steps": schema["steps"],
         "layout": schema["layout"],
+        "seed_token": schema["seed_token"],
         "isolated": [q["id"] for q in schema["questions"] if q.get("alone")],
         "stages": stages,
         "skipped": skipped,
@@ -1024,6 +1069,7 @@ def decide(schema, state_content, seed):
         or None,
         "questions": diag_q,
         "engine": "vllm",
+        "constrained": ARGS.constrained,  # dgem: what "entropy" and "label_mass" mean (see slot_distribution)
     }
     return {"answers": answers, "diagnostics": diagnostics}, sum(
         rows for _, rows in parts
@@ -1170,6 +1216,7 @@ def decide_group(schema, sys_text, state_content, seed, prefix=None, lead=""):
             "prompt_tokens": prompt_tokens,
             "questions": diag_q,
             "engine": "vllm",
+            "constrained": ARGS.constrained,  # dgem: what "entropy" and "label_mass" mean (see slot_distribution)
         },
     }, len(template) + 1 + (thought["tokens"] if thought else 0)
 
@@ -1191,6 +1238,7 @@ JEV_EXTENSIONS = (
     "sequential",
     "layout",
     "isolate",
+    "seed_token",
 )
 
 
@@ -1359,7 +1407,8 @@ class Handler(BaseHTTPRequestHandler):
     def _json(self, code, obj, headers=None):
         body = json.dumps(obj).encode()
         self.send_response(code)
-        self.send_header("content-type", "application/json")
+        self.send_header("content-type", "application/json; charset=utf-8")
+        self.send_header("x-content-type-options", "nosniff")
         self.send_header("content-length", str(len(body)))
         for k, v in (headers or {}).items():
             self.send_header(k, v)
@@ -1371,8 +1420,6 @@ class Handler(BaseHTTPRequestHandler):
     def do_GET(self):
         if self.path in ("/health", "/invoke/health", "/"):
             return self._json(200, _health_info())
-        if self.path == "/health":
-            return self._json(200, {"status": "ok"})
         return self._json(404, {"error": {"message": "unknown route"}})
 
     def _read_request(self):
@@ -1418,8 +1465,20 @@ class Handler(BaseHTTPRequestHandler):
                     }
                 },
             )
+        # dgem: no free-form generation through this port; decisions only.
         if self.path == "/v1/raw/chat/completions":
-            return self._raw_chat()
+            # read the body so a keep-alive connection stays in step
+            self.rfile.read(int(self.headers.get("content-length", "0")))
+            return self._json(
+                410,
+                {
+                    "error": {
+                        "message": "free-form generation is not served: use "
+                        "/v1/systemone or /v1/chat/completions (decisions)",
+                        "type": "route_removed",
+                    }
+                },
+            )
         try:
             req, images = self._read_request()
         except Exception as e:
@@ -1438,27 +1497,6 @@ class Handler(BaseHTTPRequestHandler):
         if self.path in ("/v1/chat/completions", "/predict", "/rawPredict"):
             return self._chat(req)
         return self._json(404, {"error": {"message": "unknown route"}})
-
-    def _raw_chat(self):
-        """Pass the body and status through to vLLM's chat completions."""
-        raw = self.rfile.read(int(self.headers.get("content-length", "0")))
-        req = urllib.request.Request(
-            ARGS.upstream.rstrip("/") + "/v1/chat/completions",
-            data=raw,
-            headers={
-                "content-type": self.headers.get("content-type", "application/json")
-            },
-        )
-        try:
-            with urllib.request.urlopen(req, timeout=600) as r:
-                code, body = r.status, r.read()
-        except urllib.error.HTTPError as e:
-            code, body = e.code, e.read()
-        self.send_response(code)
-        self.send_header("content-type", "application/json")
-        self.send_header("content-length", str(len(body)))
-        self.end_headers()
-        self.wfile.write(body)
 
     def _decide(self, schema, state, seed):
         """-> (status, body) with the error body already shaped."""
@@ -1680,7 +1718,7 @@ def _watchdog(period=60.0):
 
 
 def main():
-    global ARGS, CANVAS_LEN, CANVAS_STEP
+    global ARGS, CANVAS_LEN, CANVAS_STEP, DEFAULT_SEED_TOKEN
     p = argparse.ArgumentParser()
     p.add_argument("--upstream", default="http://127.0.0.1:8010")
     p.add_argument("--model", default="dgemma")
@@ -1691,6 +1729,12 @@ def main():
         type=int,
         default=16,
         help="request widths round up to a multiple of this",
+    )
+    p.add_argument(
+        "--seed-token",
+        choices=SEED_TOKENS,
+        default=DEFAULT_SEED_TOKEN,
+        help="answer-slot seed for requests without seed_token: random (seeded vocabulary id) or fixed (PAD)",
     )
     p.add_argument(
         "--no-constrained",
@@ -1709,6 +1753,7 @@ def main():
         help="directory for the self-signed certificate",
     )
     ARGS = p.parse_args()
+    DEFAULT_SEED_TOKEN = ARGS.seed_token
     CANVAS_LEN = ARGS.canvas
     CANVAS_STEP = ARGS.canvas_step
     init_tokenizer(AutoTokenizer.from_pretrained(ARGS.tokenizer))

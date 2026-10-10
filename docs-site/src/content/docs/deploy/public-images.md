@@ -178,6 +178,7 @@ docker run --gpus all -p 8080:8080 \
 | **`MAX_MODEL_LEN`** | `4096` (image); deploy scripts set `8192` on RTX PRO 6000 | Longest prompt plus answer, in tokens. Longer prompts are refused. |
 | **`DEFAULT_ISOLATE`**, **`ISOLATE_AUTO_MAX`**, **`ISOLATE_MAX_QUESTIONS`** | `auto`, `3`, `8` | Which questions get a read of their own when a request doesn't say: `auto` (yes/no questions in text requests of 2–3 questions with at least 2 yes/no; from v0.3.0), `none` (one joint read, the behaviour before v0.3.0), `noul` (every yes/no question, requests of 2–8 questions) or `all`. A request can set `"isolate"`, and a question `"alone": true/false`. See [reading yes/no questions alone](/dgem/policies/prompt-layout/#yesno-questions-in-small-requests-are-read-alone). |
 | **`HTTP_IDLE_TIMEOUT`** | `120` | Seconds before an idle keep-alive connection is closed (0 = never). |
+| **`DEFAULT_SEED_TOKEN`** | `random` | What sits at each answer position before the read, for requests without `seed_token`: `random` (a seeded random token, so reads vary with the seed) or `fixed` (the padding token; reads stop depending on the seed). Experimental; keep `random` unless you have measured otherwise. |
 | **`DEFAULT_LAYOUT`** | `document_first` | Prompt layout for requests without `layout`: `document_first` (the state, then the questions) or `schema_first` (the questions as the system prompt, the behaviour before v0.2.0). |
 | **`DISABLE_MM`** | `0` | `1` disables the vision tower (required on an L4 with 32 GiB host RAM). |
 
@@ -186,7 +187,10 @@ docker run --gpus all -p 8080:8080 \
 ## 8. Container lineage
 
 * **Base image**: official `vllm/vllm-openai:nightly`, pinned by commit and digest (`vllm-project/vllm:main` commit
-  `a9eafde59cb`), which includes DiffusionGemma structured generation and constrained reads.
+  `a9eafde59cb`), which includes DiffusionGemma structured generation and constrained reads. Structured mode lets the server send
+  its own seeded canvas and ask for a read-only denoise step with logprobs for chosen token ids (`logprob_token_ids`);
+  constrained reads compute the output layer and sampler over those label ids only, which gives the same answer with
+  about a quarter less GPU time per read. vLLM accepts at most 128 such ids per request.
 * **Patches**: `structured_server.py` is vLLM's upstream example plus `deploy/cloudrun/server/dgem.patch`; the
   upstream revision is tracked in `deploy/cloudrun/server/UPSTREAM`.
 * **Release notes**: [CHANGELOG](https://github.com/GoogleCloudPlatform/dgem/blob/main/CHANGELOG.md).

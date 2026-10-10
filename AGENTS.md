@@ -71,7 +71,8 @@ After changing `studio/src/*`: `npm --prefix studio run build && go build -o bin
   `docs-site/public/visualizer.html` and `docs/glossary.md` consistent.
 
 ## Datasets
-Record the source and licence of every evaluation dataset in `benchmarks/README.md`. Prefer a pinned fetch script
+Record the source and licence of every evaluation dataset in `benchmarks/README.md`. Any committed dataset derived from
+third-party material must live in `third_party/<dataset>/` alongside its `LICENSE` file. Prefer a pinned fetch script
 (with SHA-256 verification) over committing third-party data.
 
 ## Hygiene

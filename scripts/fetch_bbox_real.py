@@ -22,7 +22,7 @@ Sources (images are downloaded, never committed; the manifest records each image
               Windows, macOS, iOS, Android and GitLab screenshots, text and icon targets.
 
   pip install -r scripts/requirements-vision.txt
-  python3 scripts/fetch_bbox_real.py build      # sample, download, write benchmarks/bbox_real.jsonl
+  python3 scripts/fetch_bbox_real.py build      # sample, download, write third_party/bbox_real/bbox_real.jsonl
   python3 scripts/fetch_bbox_real.py fetch      # re-download the images of an existing manifest and verify hashes
 """
 
@@ -190,7 +190,7 @@ def main():
     ap.add_argument("--refcoco", type=int, default=120)
     ap.add_argument("--screenspot", type=int, default=120)
     ap.add_argument("--out-dir", default="fixtures/bbox_real")
-    ap.add_argument("--manifest", default="benchmarks/bbox_real.jsonl")
+    ap.add_argument("--manifest", default="third_party/bbox_real/bbox_real.jsonl")
     ap.add_argument("--cache", default="/tmp/dgem-bbox-real-cache")
     args = ap.parse_args()
     build(args) if args.cmd == "build" else fetch(args)

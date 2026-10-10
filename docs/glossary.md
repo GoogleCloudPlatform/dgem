@@ -25,7 +25,7 @@ Use this page as a **Decoder Ring** to translate between disciplines.
 
 ### Bidirectional Canvas Attention
 * **In Plain English**: Every input word directly inspects every policy rule and every decision blank—and the decision blanks inspect *each other* simultaneously (`slot_1 <-> slot_2`).
-* **Under the Hood**: Standard LLM decoders apply a lower-triangular causal mask ($t$ can only see $<t$). DiffusionGemma uses a hybrid attention mask (`TRITON_ATTN` in vLLM): causal over the prompt prefix (for KV-cache reuse) and **all-to-all bidirectional** over the 256-token diffusion canvas.
+* **Under the Hood**: Standard LLM decoders apply a lower-triangular causal mask ($t$ can only see $<t$). DiffusionGemma uses a hybrid attention mask (`TRITON_ATTN` in vLLM): causal over the prompt prefix (for KV-cache reuse) and **all-to-all bidirectional** over the answer canvas (served with 128 rows, 32 on Cloud Run L4; each request uses the smallest multiple of 16 rows that holds its answer template).
 * **Where You See It in `dgem`**: Enables joint 3-slot triage (`urgent` + `team` + `sentiment`) in one pass.
 
 ### Policy-as-Template (`.json.tmpl`)
@@ -40,7 +40,7 @@ Use this page as a **Decoder Ring** to translate between disciplines.
 
 ### Conditional Policy DAG (`depends_on` & `ask_if`)
 * **In Plain English**: A multi-stage decision flowchart where follow-up questions are only evaluated if an upstream gate question resolves to `true` (or a specific option).
-* **Under the Hood**: Topological sorting in `pkg/schema` partitions questions into stages. If Stage 1 (`is_prompt_injection`) evaluates to `false`, downstream forensic slots are pruned after **1 pass**, saving the second pass on benign traffic.
+* **Under the Hood**: `schedule()` in the serving image's `structured_server.py` sorts questions topologically into stages; each stage after the first is one more sequential read. If Stage 1 (`is_prompt_injection`) evaluates to `false`, downstream forensic slots are pruned after **1 pass**, saving the second pass on benign traffic.
 * **Where You See It in `dgem`**: `templates/secops_conditional_dag.json.tmpl`; [templates guide](policies/templates.md).
 
 ---
@@ -82,7 +82,7 @@ These terms come from [Confidence beyond Shannon: hesitation-gated decisions](co
 ### Hesitation-Gating
 * **In Plain English**: Answer directly when the model is clearly sure; hand the decision to a larger model or a person when it hesitates. Like a triage nurse who treats clear cases and refers the rest.
 * **Under the Hood**: Escalate when hesitation (normalized entropy $H/\ln K$) is at or above a threshold, forwarding `dgem`'s probabilities as a hint. Fit the threshold on labelled examples from your own domain.
-* **Where You See It in `dgem`**: `cascade_mode` / `cascade_threshold` (in nats) / `cascade_model` on the gateway, MCP and Studio; Hesitation % on every Studio answer.
+* **Where You See It in `dgem`**: `cascade_mode` / `cascade_threshold` (in nats, or hesitation with `cascade_threshold_mode: "normalized"`) / `cascade_model` on the gateway, MCP and Studio; Hesitation % on every Studio answer.
 
 ### Answer Template Effects (Letter Collision & Slot Names)
 * **In Plain English**: The model reads the whole answer form, labels and question names included. If two questions use the same letters for different options, it tends to copy the letter across; if a question's name hints the answer should differ, it does.

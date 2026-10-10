@@ -22,7 +22,6 @@
 #
 # Exposed Custom Routes on the Dedicated Endpoint:
 #   POST .../invoke/v1/chat/completions      -> structured_server.py (/v1/chat/completions)
-#   POST .../invoke/v1/raw/chat/completions  -> raw vLLM pass-through (/v1/raw/chat/completions)
 #   POST .../invoke/v1/systemone             -> native SystemOne/JevBench route (/v1/systemone)
 #   GET  .../invoke/health                   -> container & vLLM readiness telemetry (/health)
 # ==============================================================================
@@ -258,7 +257,6 @@ cat <<EOF
 
   Mapped Custom Routes:
   • Structured Decision:  ${INVOKE_BASE_URL}/v1/chat/completions
-  • Raw vLLM Pass-Thru:   ${INVOKE_BASE_URL}/v1/raw/chat/completions
   • SystemOne / JevBench: ${INVOKE_BASE_URL}/v1/systemone
   • Live Health Probe:    ${INVOKE_BASE_URL}/health
 

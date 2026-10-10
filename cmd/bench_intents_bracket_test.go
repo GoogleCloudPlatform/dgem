@@ -87,3 +87,32 @@ func TestDecideIntentBracketed(t *testing.T) {
 		t.Fatalf("26 options should be one call: %v %v", calls, err)
 	}
 }
+
+// TestDecideIntentBracketedWide: 151 options (full CLINC150) keep 8 x 5 = 40 intents after round 1, more than one
+// question holds, so they are bracketed again instead of failing the final (#119).
+func TestDecideIntentBracketedWide(t *testing.T) {
+	opts := make([]string, 151)
+	for i := range opts {
+		opts[i] = fmt.Sprintf("o%02d", i)
+	}
+	var calls []int
+	resp, stats, err := decideIntentBracketed(context.Background(), "", nil, opts, fakeDecide(&calls))
+	if err != nil {
+		t.Fatalf("151 options: %v (calls %v)", err, calls)
+	}
+	if got := intentAnswer(resp).DisplayValue(); got != "o21" {
+		t.Fatalf("final answer %q, want o21", got)
+	}
+	for _, n := range calls {
+		if n > maxChoiceOptions {
+			t.Fatalf("a round sent %d options: %v", n, calls)
+		}
+	}
+	// 8 groups of 18-19, then 40 kept -> 2 groups of 20, then 10 finalists.
+	if len(calls) != 11 || calls[len(calls)-1] != 10 {
+		t.Fatalf("calls %v, want 8 + 2 group reads then a final of 10", calls)
+	}
+	if stats.WallTime != time.Duration(len(calls))*10*time.Millisecond {
+		t.Fatalf("wall time %v, want %d rounds summed", stats.WallTime, len(calls))
+	}
+}

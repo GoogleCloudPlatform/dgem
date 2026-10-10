@@ -104,6 +104,16 @@ def find_dgem(arg):
     raise SystemExit("dgem binary not found: build it (make build) or pass --dgem")
 
 
+def parquet_hint(mx, suites):
+    """Why a run can't start without pyarrow: the suites of this run that read parquet datasets. '' when none do, or
+    when pyarrow is installed. It is checked before the first request, so a missing install does not surface halfway."""
+    need = [s for s in suites if mx["suites"][s].get("cases") in caselib.PARQUET_SUITES]
+    if not need or datasets.have_pyarrow():
+        return ""
+    return (f"pyarrow is not installed, and these suites read parquet datasets: {', '.join(need)}\n"
+            "  pip install -r scripts/requirements-matrix.txt\n(or leave those suites out with --skip)")
+
+
 def cmd_run(a):
     mx = load_matrix(a.matrix or MATRIX)
     tier = a.tier
@@ -127,9 +137,10 @@ def cmd_run(a):
     hint = ("missing files for this tier:\n" + "\n".join(
         f"  {f}: {REQUIRES_HINT.get(f, 'see the suite description in the matrix file')}" for f in missing)
         + "\n(or leave those suites out with --skip)") if missing else ""
+    hint = "\n".join(h for h in (hint, parquet_hint(mx, suites)) if h)
     if a.plan:
         return plan(mx, tier, suites, targets, a, hint)
-    if missing:
+    if hint:
         raise SystemExit(hint)
     run_id = f"{dt.datetime.now(dt.timezone.utc):%Y%m%d}-{a.label or tier.lower()}"
     run_dir = os.path.abspath(a.out_dir or os.path.join(REPO, "benchmarks", "runs", run_id))

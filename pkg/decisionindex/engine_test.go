@@ -288,3 +288,32 @@ func TestNewSystemOneHTTPHandler_CapacityMarkers(t *testing.T) {
 		t.Errorf("expected body to contain capacity marker 'options per choice', got %q", rec.Body.String())
 	}
 }
+
+// TestNewSystemOneHTTPHandler_ServerSchemaError: a server HTTP 400 schema error (here a score question with 30 levels,
+// which the adapter does not bracket) becomes a 422 with the kit's capacity marker, not a 500 (#120).
+func TestNewSystemOneHTTPHandler_ServerSchemaError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = w.Write([]byte(`{"error": {"message": "question 'q1': at most 26 alternatives", "type": "invalid_request_error"}}`))
+	}))
+	defer srv.Close()
+	cli := client.NewClient(srv.URL+"/v1", "dgemma", 2*time.Second)
+	cli.MaxRetries = 0
+	levels := make(map[string]string)
+	for i := 0; i < 30; i++ {
+		levels[fmt.Sprintf("l%02d", i)] = ""
+	}
+	reqBody, _ := json.Marshal(SystemOneRequest{
+		State:     "Sample state",
+		Questions: map[string]SystemOneQuestion{"q1": {Type: "score", Criteria: levels}},
+	})
+	rec := httptest.NewRecorder()
+	NewSystemOneHTTPHandler(cli, DefaultEngineOptions())(rec, httptest.NewRequest("POST", "/v1/systemone", strings.NewReader(string(reqBody))))
+	if rec.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("expected 422, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "options per choice") {
+		t.Fatalf("expected the kit marker in %q", rec.Body.String())
+	}
+}

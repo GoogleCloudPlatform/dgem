@@ -64,10 +64,13 @@ All `dgem` subcommands (`decide`, `ask`, `locate`, `template`, `serve`, `systemo
 | **`--systemone-temperature`** | `DGEM_SYSTEMONE_TEMP` | `1.0` | Post-hoc slot logit temperature scaling $T^*$ for `/v1/systemone` decisions. |
 | **`-u, --url`** | `DGEM_URL` | `http://127.0.0.1:8080/v1` | Upstream Serverless Cloud Run GPU `/v1` URL used by `cloudrun` routing and `vertex_first` failover. |
 | **`-p, --port`** | `PORT` | `8090` | HTTP listener port (the flag overrides `PORT`). |
+| **`--host`** | — | `127.0.0.1` (`0.0.0.0` on Cloud Run/Vertex) | Interface to bind. The default only accepts connections from this machine (Studio at `http://localhost:8090`); pass `--host 0.0.0.0` to accept other machines, and put the gateway behind IAP/IAM. Cloud Run (`K_SERVICE`) and Vertex (`AIP_HTTP_PORT`) default to `0.0.0.0`; the gateway image passes it explicitly. |
 | **`--local`, `--local-url`** | `DGEM_SERVE_LOCAL`, `DGEM_LOCAL_URL` | off | Serve against a local `diffgemma` engine only (backend `local`, no cloud failover). |
 | **`--backends`** | `DGEM_BACKENDS` | derived | Backend allow-list (`vertex_first`, `vertex`, `cloudrun`, `local`); validated at startup. |
 | **`--enable-admin-api`** | `DGEM_ADMIN_API` | off | Allow `POST /api/backend-config` and `/api/vertex/deploy`, `/api/vertex/teardown`. |
 | **`--allowed-vertex-endpoints`** | `DGEM_ALLOWED_VERTEX_ENDPOINTS` | none | Extra Vertex endpoints selectable per request; others are rejected. |
+| **`--cors-origins`** | `DGEM_CORS_ORIGINS` | none | Browser origins allowed to call the gateway cross-origin. Others get no CORS headers, and their `POST`s get `403`. |
+| **`--allowed-hosts`** | `DGEM_ALLOWED_HOSTS` | none | Extra `Host` values accepted on loopback connections (reverse proxy on the same machine). Others get `403`. |
 | **`--wakeup-timeout`** | — | `10m` | How long `cloudrun` requests are held and retried while the service wakes from zero. |
 
 ---
@@ -94,7 +97,7 @@ and the container serves the adapter on its port, in front of its own structured
 | Flag | Env Var | Default | Description |
 | :--- | :--- | :--- | :--- |
 | **`-p, --port`** | `PORT`, then `SYSTEMONE_PORT` | `8080` | Port to listen on. |
-| **`--host`** | — | `0.0.0.0` | Interface to bind. |
+| **`--host`** | — | `127.0.0.1` (`0.0.0.0` on Cloud Run/Vertex) | Interface to bind. The default only accepts connections from this machine; pass `--host 0.0.0.0` to accept others (set `--api-key` then). Cloud Run (`K_SERVICE`) and Vertex (`AIP_HTTP_PORT`) default to `0.0.0.0`, and the serving image's entrypoint passes it explicitly. |
 | **`--upstream`** | `SYSTEMONE_UPSTREAM_URL`, then `UPSTREAM_DGEMMA_URL` | `-u` / `--url` if set, else `http://127.0.0.1:8081/v1` | Upstream `/v1` base URL (local server, Cloud Run, or a Vertex `.../invoke/v1` URL). |
 | **`--temperature`** | — | `1.0` | Post-hoc slot temperature scaling $T^*$ (`1.0` = unscaled). |
 | **`--max-slots`** | — | `8` | Maximum questions per forward pass before batching. |
@@ -106,23 +109,24 @@ and the container serves the adapter on its port, in front of its own structured
 | **`--naive-limits`** | — | `false` | Reproduce the naive 26-option / 10-question rejections (benchmark ablation only). |
 | **`--prompt-layout`** | — | `document_first` | How the upstream prompt is laid out: `document_first` (the state, then the questions, both in the user turn) or `schema_first` (the questions as the system prompt, the layout before v0.2.0). Serving images from v0.2.0 default to `document_first` themselves (`DEFAULT_LAYOUT`); older ones ignore the field. In our tests `document_first` improved accuracy on catch-all intent and hallucination-detection questions, at some cost in out-of-scope recall ([Prompt layout](../policies/prompt-layout.md)). |
 | **`--catch-all`** | — | `off` | Wide-option catch-all handling (`off`, `final`, `both`, `verify`). `final` keeps "none of the listed"-style options out of round-1 brackets and adds them to the final. Opt-in: it trades out-of-scope recall for in-scope accuracy. |
+| **`--option-order`** | — | `alpha` | How each question's options are labelled A, B, C…: `alpha` sorts the option keys (the behaviour so far), `source` keeps the order the request lists them in, through every bracket round. `source` is for measuring first-shown bias; keep `alpha` unless you have measured otherwise. |
 | **`--noul-mode`** | — | `noul` | How yes/no questions are read: `noul`, or `choice` (a 2-option yes/no choice with the true/false criteria as descriptions). Opt-in: it helps hallucination-style questions and costs a little on other yes/no families. |
 
 ---
 
-## 4. HTTP Gateway Endpoints (`/api/decide`, `/v1/systemone`, `/v1/chat/completions`)
+## 4. HTTP Gateway Endpoints (`/api/decide`, `/v1/systemone`)
 
-`/api/decide` also accepts a prompt layout as JSON `"layout": "document_first" | "schema_first"`, header `X-DGem-Layout` or `?layout=`; the server reports the layout it used in `diagnostics.layout` ([Prompt layout](../policies/prompt-layout.md)). `/v1/systemone` and `/v1/chat/completions` pass a `layout` key in the body or schema through unchanged.
+`/api/decide` also accepts a prompt layout as JSON `"layout": "document_first" | "schema_first"`, header `X-DGem-Layout` or `?layout=`; the server reports the layout it used in `diagnostics.layout` ([Prompt layout](../policies/prompt-layout.md)). `/v1/systemone` and the deprecated `/v1/chat/completions` pass a `layout` key in the body or schema through unchanged.
 
 Every inference endpoint on `dgem serve` (`https://<your-dgem-gateway>`) accepts backend selection via HTTP header `X-DGem-Backend: vertex_first | vertex | cloudrun | local`, query parameter `?backend=vertex_first`, or JSON body field `"backend": "vertex_first"`, and returns the **`X-DGem-Backend-Used: vertex | cloudrun | local`** response header (`"backend_target"` in JSON bodies).
 
 | Route | Method | Description |
 | :--- | :---: | :--- |
-| **`/api/decide` & `/api/decide/{template}`** | `POST` | Renders a named or inline (`custom_template`) `.json.tmpl` policy with `variables`, executes Stage 1 `DiffusionGemma` readout on `vertex_first` / `vertex` / `cloudrun`, and optionally runs the **Stage 2 Gemini Cascade** (`cascade_mode`: `"off" \| "entropy" \| "on_miss"`, `cascade_threshold`: `0.35`, `cascade_model`: `"gemini-3.8-flash"`, `stage2_prior`: `"soft" \| "full" \| "none"`, `temperature`: a number or `{"noul": T, "choice": T, "score": T}`). |
+| **`/api/decide` & `/api/decide/{template}`** | `POST` | Renders a named or inline (`custom_template`) `.json.tmpl` policy with `variables`, executes Stage 1 `DiffusionGemma` readout on `vertex_first` / `vertex` / `cloudrun`, and optionally runs the **Stage 2 Gemini Cascade** (`cascade_mode`: `"off" \| "entropy" \| "on_miss"`, `cascade_threshold`: `0.35`, `cascade_threshold_mode`: `"nats" \| "normalized"`, `cascade_model`: `"gemini-3.8-flash"`, `stage2_prior`: `"soft" \| "full" \| "none"`, `temperature`: a number or `{"noul": T, "choice": T, "score": T}`). |
 | **`/api/locate`** | `POST` | Guided locate: `{"image": "<data-uri-or-public-url>", "target": "the checkout button", "mask": false, "gemini_model": "gemini-3.8-flash", "thinking": "low", "skip_h": 0, "hint": false, "backend": "vertex_first"}`. dgem answers presence and 3×3 cell, then Gemini 3.x (LOW thinking) returns `box_1000` / `box_pct` (`path: gemini` or `gemini_absent`). Opt-ins: `skip_h` > 0 (0.16 recommended on photos and mobile UI, not on defect images) returns `path: skipped_absent` without Gemini when dgem is confidently absent; `hint: true` passes dgem's cell to Gemini (neutral on average in our tests). With `mask: true` and `DGEM_SAM_URL` set, a SAM service adds `mask`; otherwise `mask_note` explains why not. Returns per-stage latency (`dgem.ms`, `gemini.ms`, `sam_ms`, `total_ms`). Images must be data: URIs or public http(s) URLs. Spans: `dgem.gateway.locate` → `dgem.locate` → `dgem.locate.dgem` / `.gemini` / `.sam`. |
-| **`/v1/systemone`** | `POST` | The `/v1/systemone` decision protocol, served by the adapter (`--systemone-mode adapter`, default) or passed through to `structured_server.py`'s `/v1/systemone`. Supports both `application/json` (`{"state": ..., "questions": ...}`) and `multipart/form-data` (`image` file + JSON fields), routing to `/invoke/v1/systemone` on Vertex AI or `/v1/systemone` on Cloud Run GPU. |
-| **`/v1/chat/completions`** | `POST` | OpenAI-compatible structured diffusion decision envelope proxy with `vertex_first` auto-failover and automatic GCP token injection. |
-| **`/v1/raw/chat/completions`** | `POST` | Direct pass-through proxy to `vLLM`'s raw `/v1/chat/completions` endpoint. |
+| **`/v1/systemone`** | `POST` | `SystemOne` / `JevBench` decisions (`{"state": ..., "questions": {...}, "images": [...]}`). JSON bodies go through the adapter (`--systemone-mode adapter`, the default: brackets for choices with more than 26 options, batching past 8 questions), which sends `images` (data: URIs or public http(s) URLs; local paths are rejected with `400`) with every sub-request. `multipart/form-data` bodies (a `request` JSON part plus image file parts) and `?raw=1` pass through unchanged to `/invoke/v1/systemone` on Vertex AI or `/v1/systemone` on Cloud Run GPU. |
+| **`/v1/chat/completions`** | `POST` | **Deprecated** (responses carry `Deprecation` and `Link: </v1/systemone>; rel="successor-version"`). Decision-only proxy: the system message is the question schema and the user message the JSON state; anything else is rejected upstream with `400`. Kept for `dgem decide -u https://<your-dgem-gateway>/v1`; new callers use `/api/decide` or `/v1/systemone`. |
+| **`/v1/raw/chat/completions`** | `POST` | **Removed**: returns `410 Gone`. dgem serves decisions, not free-form generation. |
 | **`/api/backend-config`** (live `vertex_status`, `available_backends`, `admin_api`), **`/api/vertex/deploy`**, **`/api/vertex/teardown`** | `GET` / `POST` | Live Vertex endpoint status (`GET`, always allowed). `POST` changes gateway-wide settings or deploys/tears down the endpoint and requires `--enable-admin-api` (otherwise `403`). |
 
 ---
@@ -192,7 +196,7 @@ dgem decide [flags]
 * `-v`, `--var stringArray`: Template variables in `key=value` format (can be specified multiple times).
 * `-d`, `--data string`: Path to a JSON file containing variables.
 * `-f`, `--format string`: Output format: `table` (default) or `json`.
-* `-I`, `--image stringArray`: Attach local image file path or remote image URL (can be specified multiple times for video frame sequences).
+* `-I`, `--image stringArray`: Attach local image file path or remote image URL (can be specified multiple times for video frame sequences). PNG, JPEG, WebP or GIF; SVG is refused with a clear error because the model server can't decode it (convert it first, e.g. `rsvg-convert -o image.png image.svg`).
 * `--temperature T`: Post-hoc temperature for every answer; 0 uses the template's `"temperature"`. See [calibrate your policy](../confidence/calibrate-your-policy.md#5-temperature-scaling-optional).
 * `--layout document_first|schema_first`: Prompt layout for this decision. Empty uses the template's `layout`, or else the server default (`document_first` from serving v0.2.0). See [Prompt layout](../policies/prompt-layout.md).
 * `--suggest-expansions`: Dynamically inject an `other_unclassified` catch-all option into `choice` slots (if absent) and propose new `{"name", "description"}` options when an item resolves to `other*` or exceeds `--expansion-entropy` (see [Unclassified Grouping & Taxonomy Discovery](../policies/taxonomy-discovery.md)).
@@ -231,7 +235,7 @@ Questions with dependencies run in stages; a question whose `ask_if` condition i
 #### Example 3: Multimodal Visual Inspection (`--image` / `-I`)
 ```bash
 ./bin/dgem decide -t templates/multimodal/ui_design_review.json.tmpl \
-  -I fixtures/ui_component.svg \
+  -I fixtures/ui_component.png \
   -v 'component=CheckoutCard' \
   --stats
 ```
@@ -418,7 +422,7 @@ Scores **multi-aspect image decisions**. One template (default `templates/multim
 A harness for the guided locate pipeline (`dgem locate`): it compares Gemini 3.x boxes and masks with and without
 a dgem pass first (skip when confidently absent, crop to dgem's cell, pass the cell as a hint) at different thinking
 levels. Its dataset is not shipped: pass items with ground-truth boxes (`gt_box_continuous`) and presence labels
-(`aspects.present`) with `-d/--dataset` (default path `benchmarks/bbox_real_aspects.jsonl`, which
+(`aspects.present`) with `-d/--dataset` (default path `third_party/bbox_real/bbox_real_aspects.jsonl`, which
 `scripts/fetch_bbox_real.py` and `scripts/build_bbox_real_aspects.py` can build from public datasets). Choose
 conditions with `--conditions` / `--neg-conditions` and the model with `--gemini-model` (default `gemini-3.8-flash`).
 

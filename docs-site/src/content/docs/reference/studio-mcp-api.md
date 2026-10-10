@@ -41,7 +41,7 @@ flowchart LR
 | :--- | :--- | :--- | :--- |
 | **1. Decision Studio Web App** | `dgem serve` $\rightarrow$ `http://localhost:8090/` | Engineers, PMs, Security & AI Researchers | Interactive **Lit WebComponents** playground with live `.json.tmpl` policy catalog (`core`, `calibration`, `multimodal`, `rerank`), `SigLIP` bounding-box SVG canvas, one-click scale-to-zero GPU warmup, and OpenTelemetry span waterfall viewer. |
 | **2. Model Context Protocol (`MCP`)** | `dgem mcp` (`stdio`) or `POST /mcp` (`Streamable HTTP`) | AI Agents (`Gemini CLI`, `Claude Desktop`, `Cursor`, `Antigravity`) | Exposes **7 native MCP tools** (`decide_policy`, `locate_object`, `locate_bounding_boxes`, `decide_custom_questions`, `list_policy_templates`, `get_health_and_gpu_status`, `warmup_gpu`) over both `stdio` and stateless `Streamable HTTP`. |
-| **3. HTTP Gateway REST API** | `POST /api/decide/{template}` & `POST /v1/chat/completions` | Microservices, Web Backends, `curl` / Python scripts | Execute named `.json.tmpl` policies with a simple JSON variable map—no local `dgem` CLI or `.json.tmpl` files required by the caller. Automatically mints GCP IAM/IAP tokens and holds requests while scale-to-zero Cloud Run GPUs wake up. |
+| **3. HTTP Gateway REST API** | `POST /api/decide/{template}` & `POST /v1/systemone` | Microservices, Web Backends, `curl` / Python scripts | Execute named `.json.tmpl` policies with a simple JSON variable map—no local `dgem` CLI or `.json.tmpl` files required by the caller. Automatically mints GCP IAM/IAP tokens and holds requests while scale-to-zero Cloud Run GPUs wake up. |
 | **4. `dgem` CLI & Benchmarks** | `dgem decide`, `dgem ask`, `dgem bench-*` | Terminal workflows, CI/CD pipelines, Reproducible research | Direct single-pass decisions (`--stats`) and full evaluation harnesses (`bench`, `bench-ecotone`, `bench-intents`, `bench-calibration`, `bench-bbox`, `bench-rerank`). |
 
 ---
@@ -214,7 +214,8 @@ Tools appear in opencode as `dgem-local_decide_custom_questions` and so on. Rest
 | Field | Meaning |
 | :--- | :--- |
 | `answers.<slot>` | The chosen value (`label`, plus `choice` or `score`), its `confidence`, the `probabilities` of every allowed answer, and `agreement` / `stderr` across samples. |
-| `diagnostics.questions.<slot>.entropy` | Shannon entropy of that slot in nats. Convert it to **Hesitation %** by dividing by $\ln K$ ($K$ = number of allowed answers); see [2.2](#22-answer-cards-probabilities--hesitation). |
+| `answers.<slot>.entropy` | Shannon entropy of that slot's `probabilities`, in nats. Convert it to **Hesitation %** by dividing by $\ln K$ ($K$ = number of allowed answers); see [2.2](#22-answer-cards-probabilities--hesitation). |
+| `diagnostics.questions.<slot>.entropy`, `.label_mass` | The engine's per-read values. With `diagnostics.constrained: true` (the default serving mode) `entropy` equals the answer's entropy and `label_mass` is always 1, so don't gate on `label_mass`. With `constrained: false` (`--no-constrained`) `entropy` is over the top tokens at the slot and `label_mass` is the share of probability on the allowed labels. |
 | `max_entropy` | The highest slot entropy in the request (nats). Use it as a single "is anything uncertain?" signal, for example to decide whether to ask a person or escalate with `cascade_mode: "entropy"`. |
 | `wall_time_ms` | Total time spent in the tool call. |
 | `gpu_forward_ms` | Time of the successful model call (the round trip to the engine). |
@@ -238,6 +239,7 @@ response.
 | Plain `dgem mcp` calls go to `127.0.0.1:8080` | No endpoints were configured; see Option B, or use `--remote` (Option A). |
 | `validating /properties/backend: enum: vertex does not equal any of: [local]` (MCP), or `backend "vertex" is not enabled on this gateway (available: local)` (HTTP API, and MCP `locate_bounding_boxes` on a local-only server) | The `backend` argument names a backend that isn't configured. It's no longer rerouted silently. Each MCP tool's schema lists the configured backends as an `enum`, so the MCP server rejects any other value before the call runs; the list in brackets is what this server offers. Omit `backend` to use the default, pick one from the list, or configure it: `DGEM_VERTEX_URL` / `--vertex-url` for `vertex` and `vertex_first`, `-u` for `cloudrun`. On a hosted gateway the operator may also restrict backends with `DGEM_BACKENDS`. |
 | `vertex_url "..." is not allowed on this gateway` | `vertex_url` may only name the configured endpoint, or one listed in `--allowed-vertex-endpoints` (`DGEM_ALLOWED_VERTEX_ENDPOINTS`) on `dgem serve`. Drop the argument to use the configured endpoint. |
+| `403 Forbidden: invalid Host header` or `403 Forbidden: cross-origin request` on `/mcp` or `/api/*` | The gateway blocks DNS rebinding and cross-site browser requests. A reverse proxy on the same machine that forwards another host name to `127.0.0.1` needs `--allowed-hosts <name>`; a web app on another origin needs `--cors-origins <origin>`. |
 
 To check what a `dgem` binary advertises without an agent, pipe `initialize` and `tools/list` into it (the
 `sleep` keeps stdin open long enough for the reply; the server exits when stdin closes):
@@ -262,12 +264,12 @@ Any service or script can query `dgem serve` (`https://<your-dgem-gateway>` or l
 | Endpoint | Method | Description |
 | :--- | :---: | :--- |
 | **`/api/decide` & `/api/decide/{template}`** | `POST` | Renders `{template}.json.tmpl` (or inline `custom_template`) with `{"variables": {...}, "backend": "vertex_first", "cascade_mode": "off\|entropy\|on_miss", "cascade_threshold": 0.35, "cascade_model": "gemini-3.8-flash"}`, runs 1-pass `DiffusionGemma` readout, and returns `answers`, `diagnostics`, `backend_target`, `max_entropy`, `gpu_forward_ms`, `cold_start_wait_ms`, and `trace_spans`. |
-| **`/v1/systemone`** | `POST` | The `/v1/systemone` decision protocol (JSON or multipart image + JSON `state`/`questions`), served by the adapter or passed through to `structured_server.py` across Vertex AI (`/invoke/v1/systemone`) or Cloud Run GPU (`/v1/systemone`). Returns HTTP 501 on `local` backend. |
+| **`/v1/systemone`** | `POST` | `SystemOne` / `JevBench` decisions (`state`, `questions`, optional `images` as data: URIs or public http(s) URLs) through the adapter, or passed through unchanged for `multipart/form-data` image uploads and `?raw=1`, to Vertex AI (`/invoke/v1/systemone`) or Cloud Run GPU (`/v1/systemone`). Returns HTTP 501 on `local` backend. |
 | **`/api/templates`** | `GET` | Returns the full JSON catalog of discovered `.json.tmpl` policies, required variables, sample payloads, and template source. |
 | **`/api/status` & `/api/backend-config`** | `GET` | Returns real-time health, `available_backends` (`["vertex_first", "vertex", "cloudrun", "local"]`), and replica state for Cloud Run GPU (`dgemma`), Vertex AI Dedicated Endpoint (`<endpoint-id>`), and local diffgemma (Apple Silicon Metal). |
 | **`/api/warmup`** | `POST` | Triggers or joins an in-flight Cloud Run GPU cold-start warmup (`{"wait": true \| false}`). |
 | **`/api/traces`** | `GET` | Returns recent OpenTelemetry traces (`?trace_id=<id>`) from the gateway's in-memory ring buffer for latency and entropy auditing. |
-| **`/v1/chat/completions` & `/v1/raw/chat/completions`** | `POST` | OpenAI-compatible structured envelope and raw vLLM pass-through proxies with `vertex_first` auto-failover and automatic GCP IAM/OAuth2 token injection. |
+| **`/v1/chat/completions`** | `POST` | **Deprecated** decision-only proxy (schema system message + JSON state) kept for `dgem decide -u <gateway>/v1`; responses carry a `Deprecation` header. Use `/api/decide` or `/v1/systemone`. `/v1/raw/chat/completions` returns `410 Gone`. |
 | **`/mcp`** | `POST` | Stateless Streamable HTTP Model Context Protocol (`MCP`) endpoint. |
 
 ### Example: Calling the REST Gateway API with `curl`

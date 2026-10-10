@@ -36,10 +36,16 @@ JevBench suites (`jev_native`, `jev_systemone`, the JevBench part of `order`) ne
 The image suites (`vision_spot`, `vision`) read a seeded synthetic sweep that the runner generates on first use
 (`pip install -r scripts/requirements-vision.txt`).
 
+The suites that read parquet datasets need `pyarrow` (`pip install -r scripts/requirements-matrix.txt`): `di_catchall`
+(CLINC150) and `rag_dev` (RAGTruth) in T1, plus `xnli`, `typed` and `order` (XNLI, typed-decisions, emotion) in T2. T0
+needs nothing extra. Without it, a T1 or T2 run stops before it sends any request and names those suites: install it,
+or leave them out with `--skip`. `--plan` prints the same message.
+
 ## Run it
 
 ```bash
 make build                                   # bin/dgem: the dgem bench-* suites shell out to it
+pip install -r scripts/requirements-matrix.txt   # pyarrow, for the suites that read parquet (T1 and T2; not T0)
 scripts/bench_matrix.py list                 # tiers and suites
 
 # Compare a candidate with your current deployment in the same session
@@ -49,8 +55,7 @@ scripts/bench_matrix.py run --tier T1 \
 # Smoke-check one target (results are INFO only without a baseline)
 scripts/bench_matrix.py run --tier T0 --target gpu=http://<GPU_HOST>:8080
 
-# Full matrix (reads parquet for some sets)
-pip install -r scripts/requirements-matrix.txt
+# Full matrix
 scripts/bench_matrix.py fetch                # download and verify the pinned datasets once
 scripts/bench_matrix.py run --tier T2 --confirm \
   --target base=<CURRENT_URL> --target new=<CANDIDATE_URL> --baseline base

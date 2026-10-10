@@ -1,2 +1,3 @@
-# Only needed for the T2 suites that read parquet (XNLI, typed-decisions, emotion). T0/T1 use the standard library.
+# pyarrow reads the parquet datasets: CLINC150 and RAGTruth in T1 (di_catchall, rag_dev), and XNLI, typed-decisions
+# and emotion in T2. T0 needs nothing from this file.
 pyarrow>=15

@@ -6,7 +6,7 @@ description: "Put one dgem gateway (dgem serve) in front of Vertex AI and Cloud 
 # Step 5: Gateway and Routing
 
 The gateway (`dgem serve`) is what users and agents talk to. It serves Decision Studio, the HTTP API
-(`/api/decide`, `/v1/systemone`, `/v1/chat/completions`), the MCP server (`/mcp`) and traces, and routes each
+(`/api/decide`, `/v1/systemone`; `/v1/chat/completions` is deprecated), the MCP server (`/mcp`) and traces, and routes each
 request to a GPU backend. Locally it runs on `http://localhost:8090`; in the cloud it runs as the Cloud Run service
 `dgemma-gateway` behind IAP (placeholder `https://<your-dgem-gateway>`).
 
@@ -31,12 +31,18 @@ configured for (`available_backends`); the Studio hides the backend switcher whe
 | :--- | :--- | :--- |
 | `--backends vertex_first,cloudrun,local` (`DGEM_BACKENDS`) | derived from the configured URLs | Explicit allow-list. Startup fails if a listed backend lacks its URL or `--default-backend` is not in the list. |
 | `--enable-admin-api` (`DGEM_ADMIN_API=1`) | **off** | Allows `POST /api/backend-config` (gateway-wide default backend, Vertex URL, local URL) and `POST /api/vertex/deploy` / `teardown`. Off: these return `403`, and the Studio hides endpoint management. |
-| `--allowed-vertex-endpoints <id,...>` (`DGEM_ALLOWED_VERTEX_ENDPOINTS`) | none | Extra Vertex endpoints a request may select with `vertex_url` / `X-DGem-Vertex-Url`. The configured endpoint is always allowed; any other returns `400`. |
+| `--allowed-vertex-endpoints <id,...>` (`DGEM_ALLOWED_VERTEX_ENDPOINTS`) | none | Extra Vertex endpoints a request may select with `vertex_url` / `X-DGem-Vertex-Url`. The configured endpoint is always allowed; any other returns `400`. Endpoints are matched by project, region and endpoint ID (and host for dedicated endpoints), so the same endpoint ID in another project doesn't match. |
+| `--cors-origins <origin,...>` (`DGEM_CORS_ORIGINS`) | none | Browser origins (for example `https://studio.example.com`) that may call the gateway from another site. The embedded Studio is same-origin and needs none. Cross-origin `POST`s from any other site get `403`; `*` is refused. |
+| `--allowed-hosts <host,...>` (`DGEM_ALLOWED_HOSTS`) | none | Extra `Host` header values accepted on loopback connections, for a reverse proxy on the same machine. Without it, a request reaching `127.0.0.1` with a non-loopback `Host` gets `403` (DNS rebinding protection, `/mcp` included). |
 
 Requests naming an unknown backend, or one that is not enabled, get `400` with the list of available backends
 (HTTP header, query, JSON body and MCP alike); a request without a backend uses the gateway default. The Studio's
 backend menu is per browser and sends `X-DGem-Backend` with each request; only an admin-enabled gateway lets it
 change the default for everyone.
+
+Clients that are not browsers (curl, SDKs, MCP clients) send no `Origin` header and are unaffected by
+`--cors-origins`. A web page on another site can neither read gateway responses nor send it `POST` requests unless
+its origin is listed, so it can't use the gateway's cloud credentials through a user's browser.
 
 Keep the admin API off on shared gateways: with it on, any user who passes IAP can change routing for all users
 or deploy and tear down the Vertex endpoint with the gateway's service account. Manage endpoints with

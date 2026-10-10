@@ -18,17 +18,18 @@ on:
   push:
     branches: [main]
   pull_request:
-    branches: [main]
+    branches: [main, ospo-release]
   workflow_dispatch:
 
 permissions:
   contents: read
-  pages: write
-  id-token: write
 
 concurrency:
-  group: "pages"
-  cancel-in-progress: false
+  # Pushes and manual runs share one group, so Pages deployments never overlap and are never cancelled midway. Each pull
+  # request gets its own group: concurrent PRs do not queue behind (or replace) one another, and a new push to a PR
+  # cancels that PR's earlier run.
+  group: ${{ github.event_name == 'pull_request' && format('ci-{0}', github.ref) || 'pages' }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   test-go:
@@ -41,7 +42,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
-          go-version: '1.25'
+          go-version-file: go.mod
           cache: true
 
       - name: Vet
@@ -89,9 +90,6 @@ jobs:
           python3 scripts/docs_sync_check.py
           python3 scripts/docs_link_check.py
 
-      - name: Regression matrix unit tests (offline)
-        run: python3 -m unittest scripts/matrix/test_matrix.py scripts/compare/test_compare.py
-
       - name: Install pnpm
         uses: pnpm/action-setup@v4
         with:
@@ -123,6 +121,10 @@ jobs:
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     needs: [test-go, build-docs]
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}

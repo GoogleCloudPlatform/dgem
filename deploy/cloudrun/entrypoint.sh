@@ -19,7 +19,8 @@ MODEL="${MODEL:-/mnt/gcs/dgemma}"
 CANVAS="${CANVAS:-128}"
 PORT="${AIP_HTTP_PORT:-${PORT:-8080}}"
 ENFORCE_EAGER="${ENFORCE_EAGER:-1}"
-DISABLE_MM="${DISABLE_MM:-1}"
+# Vision tower on by default, as documented (#124); set DISABLE_MM=1 on an L4 with 32 GiB host RAM.
+DISABLE_MM="${DISABLE_MM:-0}"
 export VLLM_WORKER_MULTIPROC_METHOD="${VLLM_WORKER_MULTIPROC_METHOD:-fork}"
 EXTRA_ARGS="${EXTRA_ARGS:-}"
 
@@ -327,6 +328,7 @@ python3 /opt/dgemma/structured_server.py \
 if [ "${ROLE:-default}" = "decision-index" ]; then
   echo "[init] Starting dgem systemone adapter on port $PORT -> http://127.0.0.1:8081/v1 (T*=${TEMPERATURE:-1.0})..."
   /usr/local/bin/dgem systemone serve \
+    --host 0.0.0.0 \
     --port "$PORT" \
     --upstream "http://127.0.0.1:8081/v1" \
     --temperature "${TEMPERATURE:-1.0}" \

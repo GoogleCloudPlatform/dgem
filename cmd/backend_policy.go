@@ -161,17 +161,13 @@ func validateBackendSetup(vx, crURL, loc string, locMode bool, defaultBackend st
 	return list, nil
 }
 
-// normalizedVertexIdentity reduces an invoke URL to its endpoint ID for comparisons.
-func normalizedVertexIdentity(u string) string {
-	if id := extractEndpointIDFromURL(u); id != "" {
-		return id
-	}
-	return strings.TrimRight(strings.TrimSpace(u), "/")
-}
-
 // checkVertexOverride allows a request-supplied Vertex endpoint only if it is the configured endpoint or
 // in --allowed-vertex-endpoints. Without this, any caller could make the gateway call an arbitrary
 // endpoint with the gateway's service-account token.
+//
+// Endpoints are compared by full identity (host for dedicated endpoints, project, region and endpoint ID), parsed
+// strictly from the URL: an endpoint in another project with the same ID, a URL without an endpoint path, or one
+// with "/endpoints/<id>" smuggled into a query or extra path segment does not match.
 func checkVertexOverride(requested, configured string) error {
 	req := strings.TrimSpace(requested)
 	if req == "" {
@@ -181,19 +177,33 @@ func checkVertexOverride(requested, configured string) error {
 	if err != nil {
 		return &backendRequestError{fmt.Sprintf("invalid vertex_url: %v", err)}
 	}
-	want := normalizedVertexIdentity(norm)
-	if configured != "" && normalizedVertexIdentity(configured) == want {
+	want, err := parseVertexEndpointIdentity(norm)
+	if err != nil {
+		return &backendRequestError{fmt.Sprintf("invalid vertex_url: %v", err)}
+	}
+	if configured != "" && vertexURLMatches(configured, want) {
 		return nil
 	}
 	backendConfigMu.RLock()
 	extras := serveAllowedVertexExtras
 	backendConfigMu.RUnlock()
 	for _, a := range extras {
-		if normalizedVertexIdentity(a) == want {
+		if vertexURLMatches(a, want) {
 			return nil
 		}
 	}
 	return &backendRequestError{fmt.Sprintf("vertex_url %q is not allowed on this gateway (use the configured endpoint or add it to --allowed-vertex-endpoints)", req)}
+}
+
+// vertexURLMatches reports whether an allowed endpoint (configured URL, ID or allow-list entry) is the same endpoint
+// as want. An allowed value that does not parse matches nothing.
+func vertexURLMatches(allowed string, want vertexIdentity) bool {
+	norm, err := expandAndValidateVertexURL(allowed)
+	if err != nil || norm == "" {
+		return false
+	}
+	got, err := parseVertexEndpointIdentity(norm)
+	return err == nil && sameVertexEndpoint(got, want)
 }
 
 func parseAllowedVertexEndpoints(s string) ([]string, error) {

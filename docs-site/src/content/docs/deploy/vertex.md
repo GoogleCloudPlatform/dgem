@@ -58,7 +58,6 @@ The script prints the endpoint ID and the invoke URLs:
 https://<ENDPOINT_ID>.<REGION>-<PROJECT_NUMBER>.prediction.vertexai.goog/v1/projects/<PROJECT>/locations/<REGION>/endpoints/<ENDPOINT_ID>/invoke/...
   /v1/chat/completions      structured decisions (what dgem uses)
   /v1/systemone             /v1/systemone decision protocol
-  /v1/raw/chat/completions  raw vLLM pass-through
   /health                   readiness
 ```
 

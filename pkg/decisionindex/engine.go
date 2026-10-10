@@ -18,6 +18,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"math"
 	"net/http"
@@ -45,6 +46,9 @@ type SystemOneQuestion struct {
 	Type         string            `json:"type"`
 	Instructions any               `json:"instructions"`
 	Criteria     map[string]string `json:"criteria"`
+	// Order is the criteria keys in the order the request listed them (set by UnmarshalJSON). Go maps drop order;
+	// with EngineOptions.OptionOrder "source" the adapter labels options in this order instead of alphabetically.
+	Order []string `json:"-"`
 }
 
 // UnmarshalJSON accepts any JSON value as an option description. The Decision Index suite sends objects (POP909
@@ -66,8 +70,100 @@ func (q *SystemOneQuestion) UnmarshalJSON(b []byte) error {
 		for k, v := range raw.Criteria {
 			q.Criteria[k] = criterionText(v)
 		}
+		q.Order = criteriaKeyOrder(b)
 	}
 	return nil
+}
+
+// criteriaKeyOrder returns the keys of the question's "criteria" object in source order, or nil if they can't be
+// read. It walks the question JSON with a token decoder because json.Unmarshal into a map loses order.
+func criteriaKeyOrder(question []byte) []string {
+	dec := json.NewDecoder(bytes.NewReader(question))
+	if t, err := dec.Token(); err != nil || t != json.Delim('{') {
+		return nil
+	}
+	for dec.More() {
+		kt, err := dec.Token()
+		if err != nil {
+			return nil
+		}
+		if k, _ := kt.(string); k != "criteria" {
+			var skip json.RawMessage
+			if err := dec.Decode(&skip); err != nil {
+				return nil
+			}
+			continue
+		}
+		if t, err := dec.Token(); err != nil || t != json.Delim('{') {
+			return nil
+		}
+		var keys []string
+		seen := map[string]bool{}
+		for dec.More() {
+			kt, err := dec.Token()
+			if err != nil {
+				return nil
+			}
+			k, _ := kt.(string)
+			var skip json.RawMessage
+			if err := dec.Decode(&skip); err != nil {
+				return nil
+			}
+			if !seen[k] {
+				seen[k] = true
+				keys = append(keys, k)
+			}
+		}
+		return keys
+	}
+	return nil
+}
+
+// Option orders for EngineOptions.OptionOrder.
+const (
+	OptionOrderAlpha  = "alpha"  // sort option keys (default; the adapter's original behaviour)
+	OptionOrderSource = "source" // keep the order the request listed them
+)
+
+// optionKeys returns q's option keys in the order they are labelled A, B, C…: the request's order with
+// OptionOrderSource when it is known and complete, otherwise sorted.
+func optionKeys(q SystemOneQuestion, order string) []string {
+	if order == OptionOrderSource && len(q.Order) == len(q.Criteria) {
+		ok := true
+		for _, k := range q.Order {
+			if _, in := q.Criteria[k]; !in {
+				ok = false
+				break
+			}
+		}
+		if ok {
+			return append([]string(nil), q.Order...)
+		}
+	}
+	return sortedOptionKeys(q.Criteria)
+}
+
+// subQuestion is a choice question over a subset of q's options (a bracket, the final, a verify read). Its Order
+// follows q's source order, so OptionOrderSource carries through every round.
+func subQuestion(q SystemOneQuestion, keys []string) SystemOneQuestion {
+	pos := make(map[string]int, len(q.Order))
+	for i, k := range q.Order {
+		pos[k] = i
+	}
+	order := append([]string(nil), keys...)
+	sort.SliceStable(order, func(i, j int) bool {
+		pi, iok := pos[order[i]]
+		pj, jok := pos[order[j]]
+		if iok && jok {
+			return pi < pj
+		}
+		return iok && !jok
+	})
+	crit := make(map[string]string, len(keys))
+	for _, k := range keys {
+		crit[k] = q.Criteria[k]
+	}
+	return SystemOneQuestion{Type: "choice", Instructions: FormatInstructions(q.Instructions), Criteria: crit, Order: order}
 }
 
 func criterionText(v json.RawMessage) string {
@@ -87,6 +183,29 @@ type SystemOneRequest struct {
 	Model     string                       `json:"model,omitempty"`
 	State     any                          `json:"state"`
 	Questions map[string]SystemOneQuestion `json:"questions"`
+	// Images are data: URIs or http(s) URLs shown to the model ahead of the state, the same "images" field the
+	// serving image's /v1/systemone accepts. Every sub-request (batches and bracket rounds) carries them.
+	Images []string `json:"images,omitempty"`
+}
+
+// ErrInvalidImage marks an image reference the adapter refuses. Local file paths are rejected because the adapter
+// runs as a network server: a path would read the adapter host's own filesystem.
+var ErrInvalidImage = errors.New("invalid image")
+
+// ValidateImages checks that every image is a data: URI or an http(s) URL (empty entries are skipped, as
+// client.BuildMultimodalContent does).
+func ValidateImages(images []string) error {
+	for i, img := range images {
+		img = strings.TrimSpace(img)
+		if err := client.CheckImageFormat(img, nil); err != nil {
+			return fmt.Errorf("%w: images[%d]: %v", ErrInvalidImage, i, err)
+		}
+		if img == "" || strings.HasPrefix(img, "data:") || strings.HasPrefix(img, "https://") || strings.HasPrefix(img, "http://") {
+			continue
+		}
+		return fmt.Errorf("%w: images[%d] must be a data: URI or an http(s) URL", ErrInvalidImage, i)
+	}
+	return nil
 }
 
 // SystemOneAnswer matches the per-question answer validated by decision_index.engines.base:validate().
@@ -130,6 +249,7 @@ type EngineOptions struct {
 	BracketSize       int     // Max options per Round-1 bracket for wide (>26) choices; <=1 means BracketSize
 	CatchAll          string  // Wide-option catch-all handling: "off" (default), "final", "both" or "verify"; see catchAllKeys
 	NoulMode          string  // How yes/no questions are read: "noul" (default) or "choice" (2-option choice; see noulAsChoice)
+	OptionOrder       string  // How options are labelled A, B, C…: "alpha" (default, sorted keys) or "source" (request order)
 	PromptLayout      string  // Server prompt layout: "document_first" (default: state first, then questions) or "schema_first"/"" (questions as the system prompt)
 }
 
@@ -233,6 +353,9 @@ func ExecuteSystemOne(ctx context.Context, cli *client.Client, req SystemOneRequ
 		}
 	}
 
+	if err := ValidateImages(req.Images); err != nil {
+		return nil, err
+	}
 	stateText := FormatState(req.State)
 	answers := make(map[string]SystemOneAnswer, len(qKeys))
 	var mu sync.Mutex
@@ -261,7 +384,7 @@ func ExecuteSystemOne(ctx context.Context, cli *client.Client, req SystemOneRequ
 		batchKeys := standardKeys[i:end]
 		multiBatches++
 
-		batchAns, passes, err := evaluateStandardBatch(ctx, cli, stateText, batchKeys, req.Questions, opts)
+		batchAns, passes, err := evaluateStandardBatch(ctx, cli, stateText, req.Images, batchKeys, req.Questions, opts)
 		if err != nil {
 			return nil, err
 		}
@@ -277,7 +400,7 @@ func ExecuteSystemOne(ctx context.Context, cli *client.Client, req SystemOneRequ
 	for _, k := range wideKeys {
 		wideQs++
 		q := req.Questions[k]
-		ans, passes, err := evaluateWideQuestionTournament(ctx, cli, stateText, k, q, opts.TemperatureScale, opts.BracketSize, opts.CatchAll, opts.PromptLayout)
+		ans, passes, err := evaluateWideQuestionTournament(ctx, cli, stateText, req.Images, k, q, opts.TemperatureScale, opts.BracketSize, opts.CatchAll, opts.PromptLayout, opts.OptionOrder)
 		if err != nil {
 			return nil, err
 		}
@@ -306,6 +429,7 @@ func evaluateStandardBatch(
 	ctx context.Context,
 	cli *client.Client,
 	stateText string,
+	images []string,
 	batchKeys []string,
 	allQuestions map[string]SystemOneQuestion,
 	opts EngineOptions,
@@ -329,7 +453,7 @@ func evaluateStandardBatch(
 			}
 			questionsPayload = append(questionsPayload, q)
 		} else {
-			optKeys := sortedOptionKeys(qSpec.Criteria)
+			optKeys := optionKeys(qSpec, opts.OptionOrder)
 			optObjs := make([]map[string]string, 0, len(optKeys))
 			for _, ok := range optKeys {
 				optObjs = append(optObjs, map[string]string{
@@ -372,7 +496,7 @@ func evaluateStandardBatch(
 		stateText = "Evaluate the decision questions based on the provided option criteria."
 	}
 
-	resp, _, err := cli.Decide(ctx, schemaJSON, stateText)
+	resp, _, err := cli.Decide(ctx, schemaJSON, stateText, images...)
 	if err != nil {
 		return nil, 1, err
 	}
@@ -485,14 +609,16 @@ func evaluateWideQuestionTournament(
 	ctx context.Context,
 	cli *client.Client,
 	stateText string,
+	images []string,
 	qKey string,
 	qSpec SystemOneQuestion,
 	tempScale float64,
 	bracketSize int,
 	catchAllMode string,
 	layout string,
+	optionOrder string,
 ) (SystemOneAnswer, int, error) {
-	optKeys := sortedOptionKeys(qSpec.Criteria)
+	optKeys := optionKeys(qSpec, optionOrder)
 	numOpts := len(optKeys)
 	// Catch-all options ("none of the listed", "out of scope", ...) are the correct answer inside any Round-1 bracket
 	// that lacks the true option, so a flat tournament sends them to the final too often. Opt-in modes:
@@ -519,7 +645,7 @@ func evaluateWideQuestionTournament(
 		}
 	}
 	if numOpts <= MaxOptionsPerSlot {
-		batchMap, passes, err := evaluateStandardBatch(ctx, cli, stateText, []string{qKey}, map[string]SystemOneQuestion{qKey: qSpec}, EngineOptions{TemperatureScale: tempScale, PromptLayout: layout})
+		batchMap, passes, err := evaluateStandardBatch(ctx, cli, stateText, images, []string{qKey}, map[string]SystemOneQuestion{qKey: qSpec}, EngineOptions{TemperatureScale: tempScale, PromptLayout: layout, OptionOrder: optionOrder})
 		if err != nil {
 			return SystemOneAnswer{}, passes, err
 		}
@@ -537,20 +663,11 @@ func evaluateWideQuestionTournament(
 	for bIdx, bOpts := range brackets {
 		bKey := fmt.Sprintf("%s_b%02d", qKey, bIdx)
 		round1Keys = append(round1Keys, bKey)
-		subCriteria := make(map[string]string, len(bOpts)+len(catchAll))
-		for _, ok := range bOpts {
-			subCriteria[ok] = qSpec.Criteria[ok]
-		}
+		keys := append([]string(nil), bOpts...)
 		if catchAllMode == "both" {
-			for _, k := range catchAll {
-				subCriteria[k] = qSpec.Criteria[k]
-			}
+			keys = append(keys, catchAll...)
 		}
-		round1Questions[bKey] = SystemOneQuestion{
-			Type:         "choice",
-			Instructions: FormatInstructions(qSpec.Instructions),
-			Criteria:     subCriteria,
-		}
+		round1Questions[bKey] = subQuestion(qSpec, keys)
 	}
 
 	round1Results := make(map[string]SystemOneAnswer, len(brackets))
@@ -561,7 +678,7 @@ func evaluateWideQuestionTournament(
 			end = len(round1Keys)
 		}
 		subKeys := round1Keys[i:end]
-		subAns, p, err := evaluateStandardBatch(ctx, cli, stateText, subKeys, round1Questions, EngineOptions{TemperatureScale: 1.0, PromptLayout: layout})
+		subAns, p, err := evaluateStandardBatch(ctx, cli, stateText, images, subKeys, round1Questions, EngineOptions{TemperatureScale: 1.0, PromptLayout: layout, OptionOrder: optionOrder})
 		if err != nil {
 			return SystemOneAnswer{}, passesUsed + p, err
 		}
@@ -615,19 +732,13 @@ func evaluateWideQuestionTournament(
 		}
 	}
 
-	finalCriteria := make(map[string]string, len(finalists))
+	finalKeys := make([]string, 0, len(finalists))
 	for _, f := range finalists {
-		finalCriteria[f.key] = qSpec.Criteria[f.key]
+		finalKeys = append(finalKeys, f.key)
 	}
-	finalQ := map[string]SystemOneQuestion{
-		qKey: {
-			Type:         "choice",
-			Instructions: FormatInstructions(qSpec.Instructions),
-			Criteria:     finalCriteria,
-		},
-	}
+	finalQ := map[string]SystemOneQuestion{qKey: subQuestion(qSpec, finalKeys)}
 
-	finalBatch, p, err := evaluateStandardBatch(ctx, cli, stateText, []string{qKey}, finalQ, EngineOptions{TemperatureScale: 1.0, PromptLayout: layout})
+	finalBatch, p, err := evaluateStandardBatch(ctx, cli, stateText, images, []string{qKey}, finalQ, EngineOptions{TemperatureScale: 1.0, PromptLayout: layout, OptionOrder: optionOrder})
 	if err != nil {
 		return SystemOneAnswer{}, passesUsed + p, err
 	}
@@ -641,13 +752,10 @@ func evaluateWideQuestionTournament(
 				best, bestP = k, v
 			}
 		}
-		vCrit := map[string]string{best: qSpec.Criteria[best]}
-		for _, k := range catchAll {
-			vCrit[k] = qSpec.Criteria[k]
-		}
-		vBatch, p2, err := evaluateStandardBatch(ctx, cli, stateText, []string{qKey},
-			map[string]SystemOneQuestion{qKey: {Type: "choice", Instructions: FormatInstructions(qSpec.Instructions), Criteria: vCrit}},
-			EngineOptions{TemperatureScale: 1.0, PromptLayout: layout})
+		vQ := subQuestion(qSpec, append([]string{best}, catchAll...))
+		vBatch, p2, err := evaluateStandardBatch(ctx, cli, stateText, images, []string{qKey},
+			map[string]SystemOneQuestion{qKey: vQ},
+			EngineOptions{TemperatureScale: 1.0, PromptLayout: layout, OptionOrder: optionOrder})
 		if err != nil {
 			return SystemOneAnswer{}, passesUsed + p2, err
 		}
@@ -763,7 +871,22 @@ func NewSystemOneHTTPHandler(cli *client.Client, opts EngineOptions) http.Handle
 		}
 		resp, err := ExecuteSystemOne(r.Context(), cli, req, opts)
 		if err != nil {
+			if errors.Is(err, ErrInvalidImage) {
+				http.Error(w, err.Error(), http.StatusBadRequest)
+				return
+			}
 			errStr := err.Error()
+			// The server rejects a sub-request it can't represent with HTTP 400 (chat route) or 422 (systemone
+			// route), e.g. "question 'x': at most 26 alternatives" for a score question with more levels. That is
+			// a refusal of this request, not a server failure (#120). Name the Decision Index kit's marker.
+			var he *client.HTTPError
+			if errors.As(err, &he) && (he.StatusCode == http.StatusBadRequest || he.StatusCode == http.StatusUnprocessableEntity) {
+				if strings.Contains(he.Body, "alternatives") && !strings.Contains(errStr, "options per choice") {
+					errStr += " (at most 26 options per choice)"
+				}
+				http.Error(w, errStr, http.StatusUnprocessableEntity)
+				return
+			}
 			if strings.Contains(errStr, "HTTP 422") ||
 				strings.Contains(errStr, "options per choice") ||
 				strings.Contains(errStr, "the canvas holds at most") ||

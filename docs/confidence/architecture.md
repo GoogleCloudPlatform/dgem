@@ -17,8 +17,8 @@ Each forward pass generates exactly **one token**. Even if the model only needs 
 
 **DiffusionGemma (`dgemma`)** breaks this sequential bottleneck by using **discrete block diffusion**:
 
-* **Block-Autoregressive Canvas**: The decoder works on a **32-to-256-token canvas** with **bidirectional self-attention**.
-* **Iterative Denoising**: The entire block of tokens begins as masked slots and is denoised in parallel across a single pass (`steps: 1`, `think: 0`) or a small number of steps.
+* **Block-Autoregressive Canvas**: The decoder works on a short canvas (served with **128 rows**, 32 on Cloud Run L4; each request uses the smallest multiple of 16 that holds its answer template) with **bidirectional self-attention**.
+* **Iterative Denoising**: The answer positions begin as seeded noise tokens and are denoised in parallel across a single pass (`steps: 1`, `think: 0`) or a small number of steps.
 * **Joint Multi-Slot Conditioning (`slot_1 <-> slot_2`)**: Unlike independent classification heads, all masked decision slots attend to the prompt and to *each other* simultaneously in $O(1)$ forward passes.
 
 ---
@@ -27,9 +27,9 @@ Each forward pass generates exactly **one token**. Even if the model only needs 
 
 In a structured decision query (`steps: 1, think: 0`), no conversational prose is generated:
 
-1. **Canvas Seeding**: The known policy template (e.g. `urgent: @\nteam: @\nsentiment: @`) is pre-seeded into the canvas, where `@` represents masked tokens at the candidate decision slots.
+1. **Canvas Seeding**: The known policy template (e.g. `urgent: @\nteam: @\nsentiment: @`) is pre-seeded into the canvas, where `@` marks an answer position. The serving image fills each one with a random token (seeded per sample) and asks vLLM for a read-only step that returns the logprob of every allowed label at that position.
 2. **Single-Pass Readout**: A single forward pass executes across the causal prompt prefix and bidirectional canvas.
-3. **Restricted-Softmax Logit Readout**: Rather than decoding free-form text, the engine extracts the raw logits $z_{m,k}$ restricted to the valid single-token candidate vocabulary $\mathcal{V}_m$ (`{"yes","no"}` for `boolean`, `[A–Z]` for `choice`, `1..5` for `score`) and normalizes via softmax:
+3. **Restricted-Softmax Logit Readout**: Rather than decoding free-form text, the engine extracts the raw logits $z_{m,k}$ restricted to the valid single-token candidate vocabulary $\mathcal{V}_m$ (`{"yes","no"}` for `boolean`, `[A–Z]` for `choice`, `1..9` for `score`; each label must be one token at the same position, hence at most 26 options) and normalizes via softmax:
 
 $$p_{m,k} = \frac{\exp(z_{m,k})}{\sum_{j \in \mathcal{V}_m} \exp(z_{m,j})}$$
 

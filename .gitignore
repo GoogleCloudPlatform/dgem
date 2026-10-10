@@ -66,3 +66,9 @@ fixtures/domain_images/
 
 # downloaded by `dgem bench-jev --sync` (pinned in benchmarks/jevbench/manifest.lock.json)
 benchmarks/jevbench/jevbench_public.jsonl
+
+# downloaded at runtime by `dgem bench-intents --full` / `scripts/build_bbox_real_aspects.py`
+third_party/banking77/banking77_full_test.jsonl
+third_party/clinc_oos/clinc150_full_test.jsonl
+third_party/bbox_real/bbox_real_aspects.jsonl
+third_party/bbox_real/bbox_real_masks.jsonl

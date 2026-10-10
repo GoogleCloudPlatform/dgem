@@ -2318,7 +2318,7 @@ export class DgemStudio extends LitElement {
                     ${this.imageName ? `Loaded: ${this.imageName}` : 'Attach Image (PNG/JPEG)'}
                     <input
                       type="file"
-                      accept="image/*"
+                      accept="image/png,image/jpeg,image/webp,image/gif"
                       style="display:none"
                       @change=${this.handleImageUpload}
                     />
@@ -3208,12 +3208,12 @@ curl -s -X POST -H "Authorization: Bearer $(gcloud auth print-identity-token)" \
 
               <div class="slot-card va-1">
                 <div class="slot-top">
-                  <span class="slot-name">POST /api/decide/{template} &amp; /v1/chat/completions</span>
-                  <span class="slot-type-pill">REST &amp; OpenAI Proxy</span>
+                  <span class="slot-name">POST /api/decide/{template} &amp; /v1/systemone</span>
+                  <span class="slot-type-pill">REST decisions</span>
                 </div>
                 <div style="font-size:0.76rem;color:var(--text-muted);margin-top:0.25rem">
-                  Renders server-side <code>.json.tmpl</code> policies or forwards OpenAI-compatible
-                  requests with automatic cold-start retry orchestration.
+                  Renders server-side <code>.json.tmpl</code> policies or runs SystemOne question sets
+                  (text or images) with automatic cold-start retry orchestration.
                 </div>
               </div>
             </div>

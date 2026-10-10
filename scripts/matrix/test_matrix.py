@@ -16,17 +16,24 @@
 
   cd scripts && python3 -m unittest matrix.test_matrix -v
 """
+import argparse
+import contextlib
+import importlib.util
+import inspect
+import io
 import json
 import os
 import random
 import sys
 import tempfile
 import unittest
+from unittest import mock
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 from matrix import cases as C  # noqa: E402
 from matrix import datasets as D  # noqa: E402
 from matrix import metrics as M  # noqa: E402
+from matrix import net  # noqa: E402
 from matrix import report as R  # noqa: E402
 from matrix import runners  # noqa: E402
 from matrix.targets import Target  # noqa: E402
@@ -411,6 +418,90 @@ class TestReport(unittest.TestCase):
         self.assertEqual(g[("jev_systemone", "gpu")]["verdict"], "INFO")
         self.assertEqual(s["overall"]["gpu"], "PASS")
         self.assertIn("no baseline and no reference ranges", md)
+
+
+class TestPyarrowPreflight(unittest.TestCase):
+    """A run that includes a parquet suite checks for pyarrow before it sends anything, instead of stopping at the
+    first parquet suite after the suites before it have already sent requests. The tests patch `have_pyarrow`, so they
+    give the same result with and without pyarrow installed."""
+
+    @classmethod
+    def setUpClass(cls):
+        import bench_matrix  # scripts/ is on sys.path (above)
+        cls.bm = bench_matrix
+        cls.mx = bench_matrix.load_matrix(MATRIX)
+
+    def _args(self, tier="T1", **kw):
+        a = dict(matrix=None, tier=tier, confirm=False, plan=False, only=None, skip=None, baseline=None,
+                 target=["gpu=http://127.0.0.1:9"], label=None, out_dir=None, resume=False, dgem=None, workers=4,
+                 latency_n=100, fail_fast=False, log_json=False, note=None, upload=None)
+        a.update(kw)
+        return argparse.Namespace(**a)
+
+    def _hint(self, tier, installed, skip=()):
+        suites = [s for s in self.mx["tiers"][tier] if s not in skip]
+        with mock.patch.object(D, "have_pyarrow", return_value=installed):
+            return self.bm.parquet_hint(self.mx, suites)
+
+    @staticmethod
+    def _named(hint):
+        return sorted(hint.split("parquet datasets: ", 1)[1].split("\n", 1)[0].split(", "))
+
+    def _plan(self, installed, **kw):
+        out = io.StringIO()
+        with mock.patch.object(D, "have_pyarrow", return_value=installed), contextlib.redirect_stdout(out):
+            rc = self.bm.cmd_run(self._args(plan=True, **kw))
+        return rc, out.getvalue()
+
+    def test_parquet_suites_are_registered(self):
+        self.assertLessEqual(C.PARQUET_SUITES, set(C.SUITES))
+        for name, build in C.SUITES.items():
+            if "parquet" in inspect.getsource(build):
+                self.assertIn(name, C.PARQUET_SUITES, f"{name} reads parquet: add it to cases.PARQUET_SUITES")
+
+    def test_have_pyarrow_reports_a_failed_import(self):
+        with mock.patch.dict(sys.modules, {"pyarrow": None, "pyarrow.parquet": None}):  # None: import raises
+            self.assertFalse(D.have_pyarrow())
+
+    @unittest.skipUnless(importlib.util.find_spec("pyarrow"), "pyarrow is not installed")
+    def test_have_pyarrow_when_installed(self):
+        self.assertTrue(D.have_pyarrow())
+
+    def test_hint_names_the_suites_that_need_pyarrow(self):
+        hint = self._hint("T1", installed=False)
+        self.assertTrue(hint.startswith("pyarrow is not installed"), hint)
+        self.assertEqual(self._named(hint), ["di_catchall", "rag_dev"])
+        self.assertIn("pip install -r scripts/requirements-matrix.txt", hint)
+        self.assertIn("--skip", hint)
+        self.assertEqual(self._named(self._hint("T2", installed=False)),
+                         ["di_catchall", "order", "rag_dev", "typed", "xnli"])
+
+    def test_no_hint_when_nothing_needs_it(self):
+        self.assertEqual(self._hint("T0", installed=False), "")  # T0 reads no parquet
+        self.assertEqual(self._hint("T1", installed=False, skip=("di_catchall", "rag_dev")), "")
+        for tier in ("T0", "T1", "T2"):
+            self.assertEqual(self._hint(tier, installed=True), "")
+
+    def test_run_stops_before_it_creates_anything_or_sends_a_request(self):
+        # Skip the JevBench suites so that the only reason to stop is pyarrow (their files are not in the repository).
+        # Creating the run directory is the first thing a run does once it has checked its prerequisites.
+        with mock.patch.object(D, "have_pyarrow", return_value=False), \
+                mock.patch.object(os, "makedirs", side_effect=AssertionError("the run started")), \
+                mock.patch.object(net, "request", side_effect=AssertionError("a request was sent")):
+            with self.assertRaises(SystemExit) as stop:
+                self.bm.cmd_run(self._args(skip=["jev_native", "jev_systemone"]))
+        self.assertIn("pyarrow is not installed", str(stop.exception))
+        self.assertNotIn("missing files", str(stop.exception))
+
+    def test_plan_prints_the_same_hint(self):
+        rc, out = self._plan(installed=False)
+        self.assertEqual(rc, 1)
+        self.assertIn("pyarrow is not installed, and these suites read parquet datasets: di_catchall, rag_dev", out)
+
+    def test_skip_and_only_leave_the_parquet_suites_out(self):
+        # No assertion on the return code: without JevBench synced, the files hint of the other suites makes it 1.
+        for kw in ({"skip": ["di_catchall", "rag_dev"]}, {"only": ["massive_spot", "calibration"]}):
+            self.assertNotIn("pyarrow", self._plan(installed=False, **kw)[1])
 
 
 if __name__ == "__main__":

@@ -16,8 +16,8 @@
 
 Files are listed in benchmarks/matrix/datasets.lock.json and cached under $DGEM_MATRIX_CACHE
 (default ~/.cache/dgem-matrix). A file whose hash does not match is deleted and the run stops. MASSIVE
-(.json.gz) needs only the standard library; XNLI, typed-decisions and emotion are parquet and need pyarrow
-(`pip install -r scripts/requirements-matrix.txt`).
+(.json.gz) needs only the standard library; CLINC150, RAGTruth, XNLI, typed-decisions and emotion are parquet and
+need pyarrow (`pip install -r scripts/requirements-matrix.txt`).
 """
 import gzip
 import hashlib
@@ -87,6 +87,15 @@ def _sha(p):
 def jsonl_gz(repo, file):
     with gzip.open(path(repo, file), "rt", encoding="utf-8") as f:
         return [json.loads(l) for l in f if l.strip()]
+
+
+def have_pyarrow():
+    """True when pyarrow, which reads the parquet datasets, can be imported."""
+    try:
+        import pyarrow.parquet  # noqa: F401
+    except ImportError:
+        return False
+    return True
 
 
 def parquet(repo, file):

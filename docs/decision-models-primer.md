@@ -119,7 +119,7 @@ Rather than generating sequential text, DiffusionGemma treats a decision as a **
 ```
 
 ### 1. The Pre-Allocated Canvas
-Instead of starting an open-ended token generation loop, the system sets aside a fixed-width discrete canvas (typically 32 to 256 tokens). Each question in your decision schema ([`templates/support_triage.json.tmpl`](../templates)) is assigned specific token slots on this canvas.
+Instead of starting an open-ended token generation loop, the system sets aside a short discrete canvas (served with 128 rows; a typical request uses 16 to 64). The canvas holds an answer template with one line per question (`urgent: A`), and each question in your decision schema ([`templates/support_triage.json.tmpl`](../templates)) gets exactly one answer token on it.
 
 ### 2. Full Bidirectional Attention
 While autoregressive LLMs apply a causal mask (token 5 cannot look ahead at token 20), DiffusionGemma applies **bidirectional self-attention** across the entire prompt and canvas.
@@ -127,7 +127,7 @@ While autoregressive LLMs apply a causal mask (token 5 cannot look ahead at toke
 * Crucially, **the slot tokens attend to each other**. The model's classification of `team = engineering` directly influences its confidence on `urgent = yes` during the exact same forward pass.
 
 ### 3. Single-Pass Slot Readout (Restricted Softmax)
-At the target slot position, the model projects the latent representation directly against the authorized token vocabulary for that question. For a boolean question (`"type": "boolean"`), the softmax is restricted strictly to `{ "yes", "no" }`. For a categorical question (`"type": "choice"`), the projection is restricted strictly to the declared category options.
+At the target slot position, the model projects the latent representation directly against the authorized token vocabulary for that question. For a boolean question (`"type": "boolean"`), the softmax is restricted strictly to `{ "yes", "no" }`. For a categorical question (`"type": "choice"`), each option is listed in the prompt with a letter (`A: billing`, `B: technical`, …) and the softmax is restricted to those letters. Every label must be a single token at the same canvas position, which is why a choice question has at most 26 options (`A`–`Z`); wider taxonomies go through `dgem systemone serve`, which splits them into brackets.
 
 ### 4. Dual-Mode Uncertainty Telemetry & Epistemic Calibration (`ChaosNLI`)
 Because decision models project onto restricted candidate vocabularies rather than open-ended decoding paths, they expose clean per-slot probabilities. These are a strong *uncertainty signal*, though not automatically *calibrated* probabilities (calibration to a real deployment needs labeled data; see [Confidence beyond Shannon](confidence/overview.md)):

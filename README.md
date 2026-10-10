@@ -160,7 +160,7 @@ Connect to a remote GCE or Cloud Run GPU service:
 Attach local image paths (automatically base64 encoded) or remote URLs:
 ```bash
 ./bin/dgem decide -t templates/multimodal/ui_design_review.json.tmpl \
-  -I fixtures/ui_component.svg \
+  -I fixtures/ui_component.png \
   -v 'component=CheckoutCard' \
   --stats
 ```
@@ -224,7 +224,7 @@ See [`CONTRIBUTING.md`](CONTRIBUTING.md) for contributor license agreement (CLA)
 
 ## License
 
-This project is licensed under the [Apache-2.0 License](LICENSE). Some evaluation datasets under `benchmarks/` are derived from third-party sources under their own licences; see [`benchmarks/README.md`](benchmarks/README.md).
+This project is licensed under the [Apache-2.0 License](LICENSE). Evaluation datasets derived from third-party sources are located in [`third_party/`](third_party/) under their respective licenses; see [`benchmarks/README.md`](benchmarks/README.md).
 
 ## Disclaimer
 

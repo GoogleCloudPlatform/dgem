@@ -43,4 +43,4 @@ COPY templates /app/templates
 ENV PORT=8080
 ENV DGEM_GCP_AUTH=1
 EXPOSE 8080
-ENTRYPOINT ["/app/dgem", "serve", "--templates-dir", "/app/templates"]
+ENTRYPOINT ["/app/dgem", "serve", "--host", "0.0.0.0", "--templates-dir", "/app/templates"]

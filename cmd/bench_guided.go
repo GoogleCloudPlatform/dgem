@@ -71,13 +71,13 @@ var benchGuidedCmd = &cobra.Command{
 low | high. Positive items run every condition; negative items (object_present false) run --neg-conditions, used to
 score skipping Gemini when dgem confidently says the target is absent. Output: a JSON receipt with one record per
 (item, condition); score it with scripts/analyze_guided.py.`,
-	Example: `  dgem bench-guided --vertex-url <ENDPOINT_ID> --gcp-auth -d benchmarks/bbox_real_aspects.jsonl -o guided.json`,
+	Example: `  dgem bench-guided --vertex-url <ENDPOINT_ID> --gcp-auth -d third_party/bbox_real/bbox_real_aspects.jsonl -o guided.json`,
 	RunE:    runBenchGuided,
 }
 
 func init() {
 	f := benchGuidedCmd.Flags()
-	f.StringVarP(&guidedDataset, "dataset", "d", "benchmarks/bbox_real_aspects.jsonl", "Items with gt_box_continuous (positives) and aspects.present")
+	f.StringVarP(&guidedDataset, "dataset", "d", "third_party/bbox_real/bbox_real_aspects.jsonl", "Items with gt_box_continuous (positives) and aspects.present")
 	f.StringVarP(&guidedTemplate, "template", "t", "templates/multimodal/vision_aspects_generic.json.tmpl", "dgem template (present + grid_cell are asked)")
 	f.StringVarP(&guidedOutput, "output", "o", "", "Receipt path")
 	f.StringVar(&guidedModel, "gemini-model", DefaultCascadeGeminiModel, "Gemini 3.x model")

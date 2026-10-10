@@ -240,16 +240,16 @@ When combined with discrete diffusion slot readout, multimodal queries bypass th
 
 ### Running Multimodal Queries with `dgem`
 ```bash
-# Attach local image file (auto-encoded to base64 data URI):
+# Attach local image file (auto-encoded to base64 data URI; PNG, JPEG, WebP or GIF, not SVG):
 ./bin/dgem decide -t templates/multimodal/ui_design_review.json.tmpl \
-  -I fixtures/ui_component.svg \
+  -I fixtures/ui_component.png \
   -v 'component=CheckoutCard' \
   --stats
 
 # Attach multiple video frames:
 ./bin/dgem decide -t templates/multimodal/workplace_hazard_video.json.tmpl \
-  -I fixtures/pcb_board.svg \
-  -I fixtures/id_card.svg \
+  -I fixtures/pcb_board.png \
+  -I fixtures/id_card.png \
   -v 'zone=Dock-12' \
   --stats
 ```

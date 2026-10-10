@@ -35,6 +35,7 @@ var (
 	soBracketSize  int
 	soCatchAll     string
 	soNoulMode     string
+	soOptionOrder  string
 	soPromptLayout string
 	soAPIKey       string
 	soNullPrior    bool
@@ -68,13 +69,14 @@ DiffusionGemma server via /v1/chat/completions.`,
 
 func init() {
 	systemoneServeCmd.Flags().IntVarP(&soPort, "port", "p", 8080, "Port to listen on (overrides PORT or SYSTEMONE_PORT env var)")
-	systemoneServeCmd.Flags().StringVar(&soHost, "host", "0.0.0.0", "Host interface to bind")
+	systemoneServeCmd.Flags().StringVar(&soHost, "host", defaultBindHost(), "Host interface to bind (default 127.0.0.1; 0.0.0.0 on Cloud Run or Vertex, where K_SERVICE or AIP_HTTP_PORT is set)")
 	systemoneServeCmd.Flags().StringVar(&soUpstreamURL, "upstream", "", "Upstream DiffusionGemma /v1 endpoint URL (defaults to -u / --url or http://127.0.0.1:8081/v1)")
 	systemoneServeCmd.Flags().Float64Var(&soTemperature, "temperature", 1.0, "Post-hoc slot logit temperature scaling factor T* (default 1.0 unscaled)")
 	systemoneServeCmd.Flags().IntVar(&soMaxSlots, "max-slots", decisionindex.MaxSlotsPerPass, "Maximum simultaneous questions per forward pass (default 8)")
 	systemoneServeCmd.Flags().IntVar(&soBracketSize, "bracket-size", decisionindex.BracketSize, "Maximum options per Round-1 tournament bracket (default 20)")
 	systemoneServeCmd.Flags().StringVar(&soCatchAll, "catch-all", "off", "Wide-option catch-all handling ('none of the listed', 'out of scope', ...): off, final (skip Round 1, compete in the final), both (every bracket and the final), verify (final over real options, then pick vs catch-all)")
 	systemoneServeCmd.Flags().StringVar(&soPromptLayout, "prompt-layout", "document_first", "Server prompt layout: document_first (the state first, then the questions; servers without the \"layout\" field ignore it), or schema_first (questions as the system prompt, the server default)")
+	systemoneServeCmd.Flags().StringVar(&soOptionOrder, "option-order", decisionindex.OptionOrderAlpha, "How each question's options are labelled A, B, C…: alpha (sorted keys, the default) or source (the order the request lists them)")
 	systemoneServeCmd.Flags().StringVar(&soNoulMode, "noul-mode", "noul", "How yes/no questions are read: noul, or choice (2-option yes/no choice with the true/false criteria as descriptions)")
 	systemoneServeCmd.Flags().StringVar(&soAPIKey, "api-key", "", "Optional secret key to enforce Authorization: Bearer <key> (env: SYSTEMONE_API_KEY or API_KEY)")
 	systemoneServeCmd.Flags().BoolVar(&soNullPrior, "null-prior-debias", false, "Divide out positional 'A'-bias prior")
@@ -94,6 +96,9 @@ func runSystemOneServe(cmd *cobra.Command, args []string) error {
 	}
 	if soPromptLayout != "schema_first" && soPromptLayout != "document_first" {
 		return fmt.Errorf("--prompt-layout must be schema_first or document_first (got %q)", soPromptLayout)
+	}
+	if soOptionOrder != decisionindex.OptionOrderAlpha && soOptionOrder != decisionindex.OptionOrderSource {
+		return fmt.Errorf("--option-order must be alpha or source (got %q)", soOptionOrder)
 	}
 	if soNoulMode != "noul" && soNoulMode != "choice" {
 		return fmt.Errorf("--noul-mode must be noul or choice (got %q)", soNoulMode)
@@ -146,6 +151,7 @@ func runSystemOneServe(cmd *cobra.Command, args []string) error {
 		BracketSize:       soBracketSize,
 		CatchAll:          soCatchAll,
 		NoulMode:          soNoulMode,
+		OptionOrder:       soOptionOrder,
 		PromptLayout:      soPromptLayout,
 	}
 
@@ -181,6 +187,7 @@ func runSystemOneServe(cmd *cobra.Command, args []string) error {
 			"temperature":  soTemperature,
 			"bracket_size": soBracketSize,
 			"max_slots":    soMaxSlots,
+			"option_order": soOptionOrder,
 			"auth_enabled": apiKey != "",
 		})
 	})
