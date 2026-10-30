@@ -23,6 +23,7 @@ import (
 	"io"
 	"math/rand"
 	"net/http"
+	"os"
 	"strconv"
 	"strings"
 	"time"
@@ -41,6 +42,19 @@ type Client struct {
 	// MaxRetries is the number of retries for HTTP 429/503 responses (0 = no retry). Retries use
 	// exponential backoff with jitter and are reported in RequestStats.Retries.
 	MaxRetries int
+	// ServerKey is sent as X-DGem-Key, the serving image's service-to-service secret (DGEM_SERVER_KEY on the
+	// server). Empty sends no header. NewClient fills it from the DGEM_SERVER_KEY environment variable.
+	ServerKey string
+}
+
+// ServerKeyHeader is the header carrying the serving image's service-to-service secret.
+const ServerKeyHeader = "X-DGem-Key"
+
+// ServerKeyFromEnv returns the key a caller sends: DGEM_SERVER_KEY, or its first entry when it holds a
+// comma-separated rotation list (servers accept every listed key; callers send one).
+func ServerKeyFromEnv() string {
+	k, _, _ := strings.Cut(os.Getenv("DGEM_SERVER_KEY"), ",")
+	return strings.TrimSpace(k)
 }
 
 // NewClient creates a new DiffGemma client.
@@ -55,6 +69,7 @@ func NewClient(baseURL, defaultModel string, timeout time.Duration) *Client {
 	}
 
 	return &Client{
+		ServerKey:  ServerKeyFromEnv(),
 		BaseURL:    baseURL,
 		HTTPClient: &http.Client{Timeout: timeout},
 		Model:      defaultModel,
@@ -135,6 +150,9 @@ func (c *Client) Complete(ctx context.Context, req ChatCompletionRequest) (*Chat
 			return nil, nil, fmt.Errorf("failed to create http request: %w", err)
 		}
 		httpReq.Header.Set("Content-Type", "application/json")
+		if c.ServerKey != "" {
+			httpReq.Header.Set(ServerKeyHeader, c.ServerKey)
+		}
 
 		otel.GetTextMapPropagator().Inject(ctx, propagation.HeaderCarrier(httpReq.Header))
 		if sc := trace.SpanContextFromContext(ctx); sc.IsValid() {

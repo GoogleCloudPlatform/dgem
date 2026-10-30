@@ -38,6 +38,13 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
+
+def server_key_header():
+    """X-DGem-Key for the serving image when DGEM_SERVER_KEY is set (first entry of a rotation list)."""
+    key = os.environ.get("DGEM_SERVER_KEY", "").split(",")[0].strip()
+    return {"X-DGem-Key": key} if key else {}
+
+
 REPO = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 
 TICKETS = [
@@ -133,7 +140,7 @@ def call(url, schema, image, ticket, timeout=300):
         user = json.dumps({"ticket": ticket})
     payload = {"model": "dgemma", "messages": [{"role": "system", "content": json.dumps(schema)}, {"role": "user", "content": user}],
                "logprobs": True, "top_logprobs": 5}
-    req = urllib.request.Request(url, json.dumps(payload).encode(), {"Content-Type": "application/json", "Authorization": f"Bearer {token}"})
+    req = urllib.request.Request(url, json.dumps(payload).encode(), {"Content-Type": "application/json", "Authorization": f"Bearer {token}", **server_key_header()})
     t0 = time.perf_counter()
     rec = {"status": None, "error": None}
     try:

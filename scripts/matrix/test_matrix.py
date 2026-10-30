@@ -81,6 +81,53 @@ def _run(tmp, cand_acc, cand_flip):
         return R.build(tmp, json.load(f))
 
 
+class TestServerKey(unittest.TestCase):
+    """X-DGem-Key (the serving image's service key) is sent on every target request when DGEM_SERVER_KEY is set: the
+    first entry of a rotation list, and no header at all when it is unset."""
+
+    def test_header_on_target_requests(self):
+        sent = []
+        orig = net.request
+        net.request = lambda url, body=None, **kw: sent.append((url, kw.get("headers"))) or (200, {}, 1.0, {})
+        old = os.environ.get("DGEM_SERVER_KEY")
+        try:
+            os.environ["DGEM_SERVER_KEY"] = "svc-key,old-key"
+            Target("prod", "https://serving.example/v1").systemone({"questions": {}})
+            Target("prod", "https://serving.example").chat({"questions": []}, {})
+            Target("prod", "https://serving.example").request("/v1/systemone", {"questions": {}})
+            os.environ["DGEM_SERVER_KEY"] = ""
+            Target("prod", "https://serving.example").systemone({"questions": {}})
+        finally:
+            net.request = orig
+            if old is None:
+                os.environ.pop("DGEM_SERVER_KEY", None)
+            else:
+                os.environ["DGEM_SERVER_KEY"] = old
+        self.assertEqual(sent[0][1], {"X-DGem-Key": "svc-key"})
+        self.assertEqual(sent[1][1], {"X-DGem-Key": "svc-key"})
+        self.assertEqual(sent[2][1], {"X-DGem-Key": "svc-key"})
+        self.assertEqual(sent[3][1], {})
+
+    def test_keepalive_runner_sends_key(self):
+        class Conn:
+            def __init__(self):
+                self.headers = None
+
+            def request(self, method, path, body=None, headers=None):
+                self.headers = headers
+
+            def getresponse(self):
+                return mock.Mock(status=401, read=lambda: b'{"error": {"message": "missing or wrong X-DGem-Key"}}')
+
+        conn = Conn()
+        ka = runners._KeepAlive("https://serving.example")
+        ka._conn = lambda: conn
+        with mock.patch.dict(os.environ, {"DGEM_SERVER_KEY": " new-key , old-key "}), \
+                mock.patch.object(net, "token_for", return_value=None):
+            ka.call({"questions": {}})
+        self.assertEqual(conn.headers.get("X-DGem-Key"), "new-key")
+
+
 class TestMetrics(unittest.TestCase):
     def test_ece_perfect_and_off(self):
         self.assertAlmostEqual(M.ece([1.0, 1.0], [1, 1]), 0.0)

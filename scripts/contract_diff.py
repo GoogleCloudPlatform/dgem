@@ -102,7 +102,8 @@ class Target:
     def request(self, path, body=None, method="POST"):
         data = body if isinstance(body, (bytes, type(None))) else json.dumps(body).encode()
         req = urllib.request.Request(self.base + path, data=data, method=method,
-                                     headers={"Content-Type": "application/json", "Authorization": f"Bearer {self.token()}"})
+                                     headers={"Content-Type": "application/json", "Authorization": f"Bearer {self.token()}",
+                                              **ss.server_key_header()})
         try:
             with urllib.request.urlopen(req, timeout=300) as r:
                 return r.status, r.read(), dict(r.headers)
