@@ -19,9 +19,10 @@ readiness details:
 | `vllm_ready` | The engine answers; decisions will succeed |
 | `warmed`, `warmup_s` | The self-warmup (1-sample, 4-sample and image decisions) finished |
 
-The gateway exposes `GET /health`, `GET /api/status?backend=vertex|cloudrun|local` and `GET /api/backend-config`
-(live Vertex state: `deployed`, replica count, machine type), and the MCP tool `get_health_and_gpu_status`.
-Each backend's readiness is tracked separately, so a Vertex probe never marks Cloud Run as warm.
+The gateway exposes `GET /health` (open; liveness and version only), `GET /api/status?backend=vertex|cloudrun|local`
+and `GET /api/backend-config` (live Vertex state: `deployed`, replica count, machine type), and the MCP tool
+`get_health_and_gpu_status`. Each backend's readiness is tracked separately, so a Vertex probe never marks Cloud Run
+as warm.
 
 ## Routine checks
 

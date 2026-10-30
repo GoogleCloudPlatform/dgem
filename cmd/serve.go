@@ -981,6 +981,20 @@ func executeDecideWithWarmup(ctx context.Context, schemaContent, stateContent st
 	}
 }
 
+// gatewayHealth answers GET /health for Cloud Run and load balancer probes. callerAuthHandler lets it through without
+// credentials, so it reports liveness and version only: backends and upstream URLs are on /api/backend-config and
+// /api/status, and body-logging settings are in the startup log.
+func gatewayHealth(w http.ResponseWriter, _ *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]any{
+		"status":       "ok",
+		"service":      "dgem-gateway",
+		"version":      Version,
+		"revision":     buildRevision(),
+		"body_logging": bodyLogStatus(),
+	})
+}
+
 func runServe(cmd *cobra.Command, args []string) error {
 	defaultRetriesForLongRunning()
 	allowLocalImagePaths = false              // image references now come from network requests
@@ -1088,24 +1102,8 @@ func runServe(cmd *cobra.Command, args []string) error {
 
 	mux := http.NewServeMux()
 
-	// 1. Health check endpoint for Cloud Run / Load Balancer probes
-	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		backendConfigMu.RLock()
-		defB := serveDefaultBackend
-		vxURL := serveVertexURL
-		backendConfigMu.RUnlock()
-		_ = json.NewEncoder(w).Encode(map[string]interface{}{
-			"status":          "ok",
-			"service":         "dgem-gateway",
-			"version":         Version,
-			"revision":        buildRevision(),
-			"default_backend": defB,
-			"upstream_url":    viper.GetString("url"),
-			"vertex_url":      vxURL,
-			"body_logging":    bodyLogStatus(),
-		})
-	})
+	// 1. Health check endpoint for Cloud Run / Load Balancer probes (open: liveness and version only)
+	mux.HandleFunc("/health", gatewayHealth)
 
 	// 1a. Runtime Backend Configuration Inspector & Switcher (GET / POST /api/backend-config)
 	mux.HandleFunc("/api/backend-config", func(w http.ResponseWriter, r *http.Request) {

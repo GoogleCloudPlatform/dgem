@@ -106,6 +106,28 @@ func TestCallerAuthIAP(t *testing.T) {
 	}
 }
 
+// A 401 goes to callers that haven't authenticated: the same body whatever is configured, without the IAP audience
+// (the project number on Cloud Run), the number of keys or the accepted methods.
+func TestCallerAuth401RevealsNoConfiguration(t *testing.T) {
+	const aud = "/projects/987654321/locations/us-central1/services/my-gateway"
+	var bodies []string
+	for _, a := range []callerAuth{parseCallerAuth(aud, ""), parseCallerAuth("", "k1,k2"), parseCallerAuth(aud, "k1")} {
+		code, body := do(callerAuthHandler(echoIdentity, a), "POST", "/api/decide", map[string]string{client.GatewayKeyHeader: "wrong"})
+		if code != http.StatusUnauthorized {
+			t.Fatalf("%d, want 401", code)
+		}
+		for _, leak := range []string{"987654321", "my-gateway", "audience", "IAP", "key(s)", client.GatewayKeyHeader} {
+			if strings.Contains(body, leak) {
+				t.Errorf("401 body reveals %q: %s", leak, body)
+			}
+		}
+		bodies = append(bodies, body)
+	}
+	if bodies[0] != bodies[1] || bodies[1] != bodies[2] {
+		t.Errorf("401 bodies differ with the configuration: %q", bodies)
+	}
+}
+
 // The gateway never forwards a caller key to the serving image.
 func TestGatewayKeyNotSentWhenDisabled(t *testing.T) {
 	t.Setenv("DGEM_GATEWAY_KEY", "k1,k2")

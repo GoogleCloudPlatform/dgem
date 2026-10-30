@@ -154,6 +154,36 @@ func TestBodyLogHandler(t *testing.T) {
 	}
 }
 
+// /health is open to callers that haven't authenticated: it says whether body logging is on and nothing else.
+func TestBodyLogStatusShowsOnlyEnabled(t *testing.T) {
+	setBodyLog := func(c *bodyLogConfig) {
+		bodyLogMu.Lock()
+		bodyLog = c
+		bodyLogMu.Unlock()
+	}
+	bodyLogMu.Lock()
+	oldCfg := bodyLog
+	bodyLogMu.Unlock()
+	oldNow := bodyLogNow
+	t.Cleanup(func() { setBodyLog(oldCfg); bodyLogNow = oldNow })
+	bodyLogNow = func() time.Time { return bodyLogT0 }
+	for _, tc := range []struct {
+		name string
+		c    *bodyLogConfig
+		want bool
+	}{
+		{"off", nil, false},
+		{"refused", &bodyLogConfig{err: "DGEM_LOG_BODIES_UNTIL is in the past"}, false},
+		{"on", &bodyLogConfig{mode: "both", until: bodyLogT0.Add(time.Hour), users: []string{"a@x.com"}, sample: 0.5}, true},
+		{"ended", &bodyLogConfig{mode: "both", until: bodyLogT0.Add(-time.Minute), users: []string{"*"}, sample: 1}, false},
+	} {
+		setBodyLog(tc.c)
+		if got := bodyLogStatus(); len(got) != 1 || got["enabled"] != tc.want {
+			t.Errorf("%s: %v, want only enabled=%v", tc.name, got, tc.want)
+		}
+	}
+}
+
 // Non-JSON bodies (or JSON cut before parsing) still get media redacted.
 func TestBodyForLogRedactsNonJSON(t *testing.T) {
 	img := "data:image/png;base64," + strings.Repeat("QUJD", 300)

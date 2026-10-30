@@ -120,9 +120,9 @@ Verify a new gateway revision before moving traffic:
   `DGEM_IAP_AUDIENCE` (`/projects/<PROJECT_NUMBER>/locations/<REGION>/services/<SERVICE>`), so the gateway verifies the
   IAP JWT on every request and takes the caller's identity from it; requests without a valid token get 401, even if
   IAP were bypassed. Self-hosted gateways without IAP can set API keys instead (`DGEM_GATEWAY_KEYS=key1,key2`, sent as
-  `X-DGem-Api-Key`; `dgem` CLI and `dgem mcp --remote` send `DGEM_GATEWAY_KEY`). `GET /health` stays open. With keys
-  only, use the HTTP API and MCP; a browser can't send the key, so the Studio needs IAP or a loopback gateway without
-  keys.
+  `X-DGem-Api-Key`; `dgem` CLI and `dgem mcp --remote` send `DGEM_GATEWAY_KEY`). `GET /health` stays open and reports
+  only liveness and the version. With keys only, use the HTTP API and MCP; a browser can't send the key, so the Studio
+  needs IAP or a loopback gateway without keys.
 - Observability: every gateway decision is traced (`dgem.gateway.decide` and child spans); see
   [Observability](/dgem/operate/observability/).
 

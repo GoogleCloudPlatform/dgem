@@ -41,6 +41,10 @@ After changing `studio/src/*`: `npm --prefix studio run build && go build -o bin
   (`dgem.user`); identity headers sent by clients are discarded. Gateway logs carry status, reason, caller and request
   shape, never request content: content goes only to the opt-in, time-limited body log (`cmd/body_log.go`), with
   media redacted. A new route or failure path records its status and reason with `failSpan`.
+- **Unauthenticated replies reveal no configuration.** The gateway's 401 body is the same whatever is configured, and
+  the open `GET /health` reports liveness, version and `body_logging.enabled` only. Authentication methods, the IAP
+  audience, backends, upstream URLs and body-logging settings go to the startup log or to authenticated routes
+  (`/api/backend-config`, `/api/status`).
 - **Images reach the serving image as data: URIs.** The gateway and the CLI fetch http(s) image URLs themselves with
   the guarded client (public addresses only, checked on every connection and redirect); the serving image refuses
   URLs by default (`DGEM_IMAGE_URLS=deny`). Requests the model server refuses are 4xx (`decisionindex.ErrorStatus`),

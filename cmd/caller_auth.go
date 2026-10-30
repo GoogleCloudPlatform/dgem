@@ -36,7 +36,8 @@ import (
 //
 // The caller's identity then comes from the verified JWT ("accounts.google.com:<email>") or from the key
 // ("apikey:<8 hex of its sha256>"), written to X-Goog-Authenticated-User-Email for the handlers and logs. Client-supplied
-// identity headers are discarded, so they can't be spoofed once verification is on.
+// identity headers are discarded, so they can't be spoofed once verification is on. Refused requests get the same 401
+// whatever is configured; the accepted methods and the IAP audience appear only in the startup log.
 
 var (
 	serveIAPAudience string // --iap-audience / DGEM_IAP_AUDIENCE
@@ -78,6 +79,8 @@ func parseCallerAuth(iapAudience, keys string) callerAuth {
 
 func (a callerAuth) enabled() bool { return a.iapAudience != "" || len(a.keys) > 0 }
 
+// describe lists the accepted methods for the startup log. Never put it in a reply: it includes the IAP audience,
+// which holds the project number on Cloud Run.
 func (a callerAuth) describe() string {
 	var parts []string
 	if a.iapAudience != "" {
@@ -133,8 +136,9 @@ func callerAuthHandler(next http.Handler, a callerAuth) http.Handler {
 		w.Header().Set("Content-Type", "application/json")
 		w.Header().Set("WWW-Authenticate", `DGem realm="dgem gateway"`)
 		w.WriteHeader(http.StatusUnauthorized)
+		// The same body whatever is configured: the caller hasn't authenticated, so it learns nothing about the setup.
 		_ = json.NewEncoder(w).Encode(map[string]any{"error": map[string]string{
-			"message": "caller authentication required: " + a.describe(),
+			"message": "caller authentication required",
 			"type":    "authentication_error",
 		}})
 	})

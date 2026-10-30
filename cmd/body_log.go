@@ -58,7 +58,7 @@ var (
 )
 
 // parseBodyLogConfig reads the DGEM_LOG_BODIES* settings. It returns nil when logging is off; a config with err set
-// when the settings are invalid (logging stays off and the reason is reported at startup and in /health).
+// when the settings are invalid (logging stays off and the reason is reported in the startup log).
 func parseBodyLogConfig(getenv func(string) string, now time.Time) *bodyLogConfig {
 	mode := strings.ToLower(strings.TrimSpace(getenv("DGEM_LOG_BODIES")))
 	switch mode {
@@ -122,19 +122,14 @@ func (c *bodyLogConfig) logs(user string, now time.Time) bool {
 	return false
 }
 
-// bodyLogStatus is the /health view of body logging.
+// bodyLogStatus is the /health view of body logging: whether it is on, nothing else. /health answers callers that
+// haven't authenticated, so the mode, the end time, the callers, the sample rate and the reason a configuration was
+// refused appear only in the startup log.
 func bodyLogStatus() map[string]any {
 	bodyLogMu.Lock()
 	c := bodyLog
 	bodyLogMu.Unlock()
-	switch {
-	case c == nil:
-		return map[string]any{"enabled": false}
-	case c.err != "":
-		return map[string]any{"enabled": false, "error": c.err}
-	}
-	return map[string]any{"enabled": bodyLogNow().Before(c.until), "mode": c.mode, "until": c.until.UTC().Format(time.RFC3339),
-		"callers": len(c.users), "sample": c.sample}
+	return map[string]any{"enabled": c.on() && bodyLogNow().Before(c.until)}
 }
 
 // bodyLogRoute reports whether a request is one whose bodies may be logged: decisions only, never auth or admin routes.
