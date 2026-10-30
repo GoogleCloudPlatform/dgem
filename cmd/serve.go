@@ -1907,18 +1907,9 @@ func runServe(cmd *cobra.Command, args []string) error {
 				cli := GetClientForURL(resolvedURL)
 				soResp, soErr := decisionindex.ExecuteSystemOne(ctx, cli, soReq, soOpts)
 				if soErr != nil {
-					errStr := soErr.Error()
-					if strings.Contains(errStr, "HTTP 422") ||
-						strings.Contains(errStr, "options per choice") ||
-						strings.Contains(errStr, "the canvas holds at most") ||
-						strings.Contains(errStr, "too many tokens") ||
-						strings.Contains(errStr, "maximum context length") ||
-						strings.Contains(errStr, "context window") {
-						w.WriteHeader(http.StatusUnprocessableEntity)
-						_, _ = w.Write([]byte(errStr))
-						return
-					}
-					http.Error(w, soErr.Error(), http.StatusInternalServerError)
+					status, msg := decisionindex.ErrorStatus(soErr)
+					proxySpan.SetAttributes(attribute.Int("http.status_code", status))
+					http.Error(w, msg, status)
 					return
 				}
 				w.Header().Set("Content-Type", "application/json")

@@ -1553,14 +1553,12 @@ class Handler(BaseHTTPRequestHandler):
         except SchemaError as e:
             return 422, {"error": {"message": str(e), "type": "validation_error"}}
         except urllib.error.HTTPError as e:
-            return 502, {
-                "error": {
-                    "message": (
-                        f"upstream {e.code}: {e.read()[:300].decode(errors='replace')}"
-                    ),
-                    "type": "server_error",
-                }
-            }
+            detail = e.read()[:300].decode(errors="replace")
+            if 400 <= e.code < 500:
+                # dgem: the model server refused the request itself (an image URL it can't fetch or decode, a prompt
+                # over the context length): the caller's to fix, so 422, not a server error.
+                return 422, {"error": {"message": f"upstream {e.code}: {detail}", "type": "validation_error"}}
+            return 502, {"error": {"message": f"upstream {e.code}: {detail}", "type": "server_error"}}
         except Exception as e:
             return 500, {"error": {"message": repr(e), "type": "server_error"}}
         finally:

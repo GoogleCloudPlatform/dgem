@@ -22,6 +22,7 @@ import (
 	"fmt"
 	"math"
 	"net/http"
+	"regexp"
 	"sort"
 	"strings"
 	"sync"
@@ -875,33 +876,49 @@ func NewSystemOneHTTPHandler(cli *client.Client, opts EngineOptions) http.Handle
 				http.Error(w, err.Error(), http.StatusBadRequest)
 				return
 			}
-			errStr := err.Error()
-			// The server rejects a sub-request it can't represent with HTTP 400 (chat route) or 422 (systemone
-			// route), e.g. "question 'x': at most 26 alternatives" for a score question with more levels. That is
-			// a refusal of this request, not a server failure (#120). Name the Decision Index kit's marker.
-			var he *client.HTTPError
-			if errors.As(err, &he) && (he.StatusCode == http.StatusBadRequest || he.StatusCode == http.StatusUnprocessableEntity) {
-				if strings.Contains(he.Body, "alternatives") && !strings.Contains(errStr, "options per choice") {
-					errStr += " (at most 26 options per choice)"
-				}
-				http.Error(w, errStr, http.StatusUnprocessableEntity)
-				return
-			}
-			if strings.Contains(errStr, "HTTP 422") ||
-				strings.Contains(errStr, "options per choice") ||
-				strings.Contains(errStr, "the canvas holds at most") ||
-				strings.Contains(errStr, "too many tokens") ||
-				strings.Contains(errStr, "maximum context length") ||
-				strings.Contains(errStr, "context window") {
-				http.Error(w, errStr, http.StatusUnprocessableEntity)
-				return
-			}
-			http.Error(w, errStr, http.StatusInternalServerError)
+			status, msg := ErrorStatus(err)
+			http.Error(w, msg, status)
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(resp)
 	}
+}
+
+// upstreamClientError matches the serving image's wrapping of a model-server 4xx ("upstream 422: Failed to fetch
+// media"), which images before the fix return as HTTP 502.
+var upstreamClientError = regexp.MustCompile(`upstream 4\d\d\b`)
+
+// ErrorStatus maps an ExecuteSystemOne error to the HTTP status and message the adapter answers with. Requests the
+// server refuses (bad schema, too many options, an image it can't fetch or decode, context overflow) are the caller's
+// to fix: 422 with the upstream message (the Decision Index kit scores 422 as a capacity refusal, not a failure).
+// Everything else is 500. Shared by `dgem systemone serve` and the gateway's /v1/systemone route.
+func ErrorStatus(err error) (int, string) {
+	if errors.Is(err, ErrInvalidImage) {
+		return http.StatusBadRequest, err.Error()
+	}
+	msg := err.Error()
+	var he *client.HTTPError
+	if errors.As(err, &he) {
+		switch {
+		case he.StatusCode == http.StatusBadRequest || he.StatusCode == http.StatusUnprocessableEntity:
+			// e.g. "question 'x': at most 26 alternatives" for a score question with more levels (#120)
+			if strings.Contains(he.Body, "alternatives") && !strings.Contains(msg, "options per choice") {
+				msg += " (at most 26 options per choice)"
+			}
+			return http.StatusUnprocessableEntity, msg
+		case he.StatusCode == http.StatusBadGateway && upstreamClientError.MatchString(he.Body):
+			// the model server refused the request itself, e.g. an image URL it can't fetch
+			return http.StatusUnprocessableEntity, msg
+		}
+	}
+	for _, marker := range []string{"HTTP 422", "options per choice", "the canvas holds at most", "too many tokens",
+		"maximum context length", "context window"} {
+		if strings.Contains(msg, marker) {
+			return http.StatusUnprocessableEntity, msg
+		}
+	}
+	return http.StatusInternalServerError, msg
 }
 
 // balancedBrackets splits keys into ceil(K/size) brackets of near-equal size (differing by at most one).
