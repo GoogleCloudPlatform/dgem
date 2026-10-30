@@ -117,15 +117,17 @@ jobs:
         working-directory: docs-site
         run: pnpm build
 
+      # Pushes to main and manual runs on main (Run workflow / gh workflow run) publish the site; pull requests only
+      # build it.
       - name: Upload GitHub Pages Artifact
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
         uses: actions/upload-pages-artifact@56afc609e74202658d3ffba0e8f6dda462b719fa # v3.0.1
         with:
           path: docs-site/dist
 
   deploy-docs:
     name: Deploy to GitHub Pages
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
     needs: [test-go, build-docs]
     runs-on: ubuntu-latest
     permissions:
