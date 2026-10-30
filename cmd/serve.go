@@ -1940,33 +1940,46 @@ func runServe(cmd *cobra.Command, args []string) error {
 			bodyBytes = nb
 		}
 		if reqPath == "/v1/systemone" && serveSystemOneMode != "passthrough" && r.URL.Query().Get("raw") != "1" && !strings.Contains(r.Header.Get("Content-Type"), "multipart") {
-			var soReq decisionindex.SystemOneRequest
-			if err := json.Unmarshal(bodyBytes, &soReq); err == nil && len(soReq.Questions) > 0 {
-				if err := checkSystemOneImages(ctx, soReq.Images); err != nil {
-					proxySpan.SetStatus(codes.Error, "invalid_image")
-					w.Header().Set("Content-Type", "application/json")
-					w.WriteHeader(http.StatusBadRequest)
-					_ = json.NewEncoder(w).Encode(map[string]interface{}{
-						"error": map[string]string{"message": err.Error(), "type": "invalid_request_error"},
-					})
-					return
-				}
-				proxySpan.SetAttributes(attribute.Int("dgem.image_count", len(soReq.Images)))
-				soOpts := decisionindex.DefaultEngineOptions()
-				soOpts.TemperatureScale = serveSystemOneTemp
-				cli := GetClientForURL(resolvedURL)
-				soResp, soErr := decisionindex.ExecuteSystemOne(ctx, cli, soReq, soOpts)
-				if soErr != nil {
-					status, msg := decisionindex.ErrorStatus(soErr)
-					proxySpan.SetAttributes(attribute.Int("http.status_code", status))
-					http.Error(w, msg, status)
-					return
-				}
+			// A body the adapter can't read is refused, never forwarded unbatched: that silent fall-through sent score
+			// questions to the server in one oversized read. ?raw=1 or --systemone-mode passthrough bypass.
+			soReq, status, parseErr := decodeSystemOneAdapterRequest(bodyBytes)
+			if parseErr != nil {
+				proxySpan.SetStatus(codes.Error, "invalid_systemone_request")
+				proxySpan.SetAttributes(attribute.Int("http.status_code", status))
 				w.Header().Set("Content-Type", "application/json")
-				w.Header().Set("X-DGem-Backend-Used", backendTarget)
-				_ = json.NewEncoder(w).Encode(soResp)
+				w.WriteHeader(status)
+				_ = json.NewEncoder(w).Encode(map[string]interface{}{
+					"error": map[string]string{
+						"message": "invalid /v1/systemone request: " + parseErr.Error() + " (send ?raw=1 to forward a body to the serving image unchanged)",
+						"type":    "invalid_request_error",
+					},
+				})
 				return
 			}
+			if err := checkSystemOneImages(ctx, soReq.Images); err != nil {
+				proxySpan.SetStatus(codes.Error, "invalid_image")
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusBadRequest)
+				_ = json.NewEncoder(w).Encode(map[string]interface{}{
+					"error": map[string]string{"message": err.Error(), "type": "invalid_request_error"},
+				})
+				return
+			}
+			proxySpan.SetAttributes(attribute.Int("dgem.image_count", len(soReq.Images)))
+			soOpts := decisionindex.DefaultEngineOptions()
+			soOpts.TemperatureScale = serveSystemOneTemp
+			cli := GetClientForURL(resolvedURL)
+			soResp, soErr := decisionindex.ExecuteSystemOne(ctx, cli, soReq, soOpts)
+			if soErr != nil {
+				status, msg := decisionindex.ErrorStatus(soErr)
+				proxySpan.SetAttributes(attribute.Int("http.status_code", status))
+				http.Error(w, msg, status)
+				return
+			}
+			w.Header().Set("Content-Type", "application/json")
+			w.Header().Set("X-DGem-Backend-Used", backendTarget)
+			_ = json.NewEncoder(w).Encode(soResp)
+			return
 		}
 
 		if reqPath == "/v1/systemone" && backendTarget == "local" {
@@ -2171,4 +2184,26 @@ func rawChatGoneHandler(w http.ResponseWriter, r *http.Request) {
 			"type":    "route_removed",
 		},
 	})
+}
+
+// decodeSystemOneAdapterRequest reads a /v1/systemone body for the gateway's adapter mode, merging "media" into
+// "images". On failure it returns the HTTP status to answer with: 400 for a body that isn't a Jev request (bad JSON,
+// criteria of the wrong shape, no questions) or for unsupported media; such bodies are never forwarded.
+func decodeSystemOneAdapterRequest(body []byte) (decisionindex.SystemOneRequest, int, error) {
+	var req decisionindex.SystemOneRequest
+	err := json.Unmarshal(body, &req)
+	if err == nil && len(req.Questions) == 0 {
+		err = errors.New(`"questions" must be an object with at least one question`)
+	}
+	if err == nil {
+		err = req.MergeMedia()
+	}
+	if err == nil {
+		return req, http.StatusOK, nil
+	}
+	status, _ := decisionindex.ErrorStatus(err)
+	if status == http.StatusInternalServerError {
+		status = http.StatusBadRequest // JSON decoding errors
+	}
+	return req, status, err
 }

@@ -25,6 +25,7 @@ import (
 	"net/http"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -42,12 +43,17 @@ const (
 	MaxSlotsPerPass = 8
 )
 
-// SystemOneQuestion matches apolinario/decision-index's question specification:
-// {"type": "choice", "instructions": "...", "criteria": {"opt_key": "description", ...}}
+// SystemOneQuestion matches the Jev / apolinario/decision-index question specification. "criteria" is an object for
+// choice and noul questions and an array of ordered levels for score questions:
+//
+//	{"type": "choice", "instructions": "...", "criteria": {"opt_key": "description", ...}}
+//	{"type": "score",  "instructions": "...", "criteria": ["lowest level", ..., "highest level"]}
 type SystemOneQuestion struct {
 	Type         string            `json:"type"`
 	Instructions any               `json:"instructions"`
 	Criteria     map[string]string `json:"criteria"`
+	// Levels are a score question's levels, lowest first (criteria given as an array; set by UnmarshalJSON).
+	Levels []string `json:"-"`
 	// Order is the criteria keys in the order the request listed them (set by UnmarshalJSON). Go maps drop order;
 	// with EngineOptions.OptionOrder "source" the adapter labels options in this order instead of alphabetically.
 	Order []string `json:"-"`
@@ -56,23 +62,43 @@ type SystemOneQuestion struct {
 // UnmarshalJSON accepts any JSON value as an option description. The Decision Index suite sends objects (POP909
 // chords, ChessBench moves) and arrays (cfcolor swatches) as well as strings. Strings pass through unchanged; any
 // other value is rendered as compact JSON text for the prompt (a mechanical format conversion, no content change).
+// A "criteria" array is read as score levels, in order. Before this a score question failed to parse and the
+// gateway silently forwarded the whole request unbatched.
 func (q *SystemOneQuestion) UnmarshalJSON(b []byte) error {
 	var raw struct {
-		Type         string                     `json:"type"`
-		Instructions any                        `json:"instructions"`
-		Criteria     map[string]json.RawMessage `json:"criteria"`
+		Type         string          `json:"type"`
+		Instructions any             `json:"instructions"`
+		Criteria     json.RawMessage `json:"criteria"`
 	}
 	if err := json.Unmarshal(b, &raw); err != nil {
 		return err
 	}
 	q.Type, q.Instructions = raw.Type, raw.Instructions
-	q.Criteria = nil
-	if raw.Criteria != nil {
-		q.Criteria = make(map[string]string, len(raw.Criteria))
-		for k, v := range raw.Criteria {
+	q.Criteria, q.Levels, q.Order = nil, nil, nil
+	c := bytes.TrimSpace(raw.Criteria)
+	switch {
+	case len(c) == 0 || bytes.Equal(c, []byte("null")):
+	case c[0] == '{':
+		var obj map[string]json.RawMessage
+		if err := json.Unmarshal(c, &obj); err != nil {
+			return err
+		}
+		q.Criteria = make(map[string]string, len(obj))
+		for k, v := range obj {
 			q.Criteria[k] = criterionText(v)
 		}
 		q.Order = criteriaKeyOrder(b)
+	case c[0] == '[':
+		var arr []json.RawMessage
+		if err := json.Unmarshal(c, &arr); err != nil {
+			return err
+		}
+		q.Levels = make([]string, len(arr))
+		for i, v := range arr {
+			q.Levels[i] = criterionText(v)
+		}
+	default:
+		return fmt.Errorf("criteria must be an object (choice, noul) or an array of levels (score)")
 	}
 	return nil
 }
@@ -188,6 +214,50 @@ type SystemOneRequest struct {
 	// Images are data: URIs or http(s) URLs shown to the model ahead of the state, the same "images" field the
 	// serving image's /v1/systemone accepts. Every sub-request (batches and bracket rounds) carries them.
 	Images []string `json:"images,omitempty"`
+	// Media is an alias for Images in the form some Jev clients send: image/* entries are appended to
+	// Images by MergeMedia; any other type is refused.
+	Media []SystemOneMedia `json:"media,omitempty"`
+}
+
+// SystemOneMedia is one entry of a request's "media" array. Data is a data: URI or raw base64 of MimeType. Other
+// fields (e.g. "name") are ignored.
+type SystemOneMedia struct {
+	MimeType string `json:"mime_type"`
+	Data     string `json:"data"`
+}
+
+// MergeMedia moves the request's image media into Images (after any images already there, in order) and clears
+// Media. Non-image media is ErrUnsupportedMedia; a URL or an empty entry is ErrInvalidImage (URLs go in "images",
+// where the gateway fetches them with its public-host checks). Safe to call more than once.
+func (r *SystemOneRequest) MergeMedia() error {
+	for i, m := range r.Media {
+		mime := strings.ToLower(strings.TrimSpace(m.MimeType))
+		data := strings.TrimSpace(m.Data)
+		if strings.HasPrefix(data, "data:") {
+			// A data: URI's own type wins over mime_type: it is what the server will decode.
+			if end := strings.IndexAny(data, ";,"); end > len("data:") {
+				mime = strings.ToLower(data[len("data:"):end])
+			}
+		}
+		if !strings.HasPrefix(mime, "image/") {
+			if mime == "" {
+				return fmt.Errorf("%w: media[%d] needs a mime_type", ErrInvalidImage, i)
+			}
+			return fmt.Errorf("%w: media[%d] is %s; this model reads text and images only: send video as sampled frames and audio as a transcript in \"state\"", ErrUnsupportedMedia, i, mime)
+		}
+		switch {
+		case data == "":
+			return fmt.Errorf("%w: media[%d] has no data", ErrInvalidImage, i)
+		case strings.HasPrefix(data, "data:"):
+		case strings.HasPrefix(data, "http://") || strings.HasPrefix(data, "https://"):
+			return fmt.Errorf("%w: media[%d]: send image URLs in \"images\"; media data must be a data: URI or base64", ErrInvalidImage, i)
+		default:
+			data = "data:" + mime + ";base64," + data
+		}
+		r.Images = append(r.Images, data)
+	}
+	r.Media = nil
+	return nil
 }
 
 // ErrInvalidImage marks an image reference the adapter refuses. Local file paths are rejected because the adapter
@@ -197,6 +267,83 @@ var ErrInvalidImage = errors.New("invalid image")
 // ErrUnsupportedMedia marks a request carrying media the model can't read (audio, video). DiffusionGemma is text +
 // image only; such fields used to be dropped silently and the request answered as a guess.
 var ErrUnsupportedMedia = errors.New("unsupported media")
+
+// ErrInvalidRequest marks a request body or question the adapter can't read (400): an unknown question type, or
+// criteria of the wrong shape for the type.
+var ErrInvalidRequest = errors.New("invalid request")
+
+// ErrUnsupportedQuestion marks a well-formed question the model can't answer in one read (422, the same class as the
+// server's capacity refusals): a score question with no or more than MaxOptionsPerSlot levels, or repeated levels.
+var ErrUnsupportedQuestion = errors.New("unsupported question")
+
+// Question types after normalizing (see questionKind).
+const (
+	kindChoice = "choice"
+	kindNoul   = "noul"
+	kindScore  = "score"
+)
+
+// questionKind normalizes q's type. An empty type is a choice when criteria is an object (the adapter's behaviour
+// before score support) and a score when it is an array. Unknown types are ErrInvalidRequest: they used to be read
+// as choices.
+func questionKind(qKey string, q SystemOneQuestion) (string, error) {
+	t := strings.ToLower(strings.TrimSpace(q.Type))
+	switch {
+	case isNoulType(t):
+		t = kindNoul
+	case t == "" && q.Levels != nil:
+		t = kindScore
+	case t == "":
+		t = kindChoice
+	}
+	switch t {
+	case kindNoul:
+		if q.Levels != nil {
+			return "", fmt.Errorf("%w: question %q: noul criteria must be an object ({\"true\": ..., \"false\": ...})", ErrInvalidRequest, qKey)
+		}
+	case kindChoice:
+		if q.Levels != nil {
+			return "", fmt.Errorf("%w: question %q: choice criteria must be an object of options; an array is a score question's levels", ErrInvalidRequest, qKey)
+		}
+	case kindScore:
+		if q.Criteria != nil {
+			return "", fmt.Errorf("%w: question %q: score criteria must be an array of levels, lowest first", ErrInvalidRequest, qKey)
+		}
+		if len(q.Levels) == 0 || len(q.Levels) > MaxOptionsPerSlot {
+			return "", fmt.Errorf("%w: question %q: a score question needs 1 to %d levels (got %d)", ErrUnsupportedQuestion, qKey, MaxOptionsPerSlot, len(q.Levels))
+		}
+		seen := make(map[string]bool, len(q.Levels))
+		for _, l := range q.Levels {
+			l = strings.TrimSpace(l)
+			if seen[l] {
+				return "", fmt.Errorf("%w: question %q: score levels must be distinct (%q repeats)", ErrUnsupportedQuestion, qKey, l)
+			}
+			seen[l] = true
+		}
+	default:
+		return "", fmt.Errorf("%w: question %q: unknown type %q (want choice, noul or score)", ErrInvalidRequest, qKey, q.Type)
+	}
+	return t, nil
+}
+
+// trivialAnswer answers a question with a single option or level without a model call: the server refuses them
+// ("needs at least two alternatives") and the answer is certain. Same shape other Jev clients use for this case.
+func trivialAnswer(kind string, q SystemOneQuestion) (SystemOneAnswer, bool) {
+	one := 1.0
+	switch {
+	case kind == kindChoice && len(q.Criteria) == 1:
+		var key string
+		for k := range q.Criteria {
+			key = k
+		}
+		return SystemOneAnswer{Type: kindChoice, Choice: key, Probabilities: map[string]float64{key: 1}, Confidence: &one}, true
+	case kind == kindScore && len(q.Levels) == 1:
+		zero := 0.0
+		return SystemOneAnswer{Type: kindScore, Score: &zero, Legend: map[string]string{"0": q.Levels[0]},
+			Probabilities: map[string]float64{"0": 1}, Confidence: &one}, true
+	}
+	return SystemOneAnswer{}, false
+}
 
 // UnsupportedMediaKeys are top-level request fields refused with ErrUnsupportedMedia.
 var UnsupportedMediaKeys = []string{"audio", "audios", "video", "videos", "input_audio", "video_url", "videos_url"}
@@ -237,14 +384,21 @@ func ValidateImages(images []string) error {
 }
 
 // SystemOneAnswer matches the per-question answer validated by decision_index.engines.base:validate().
+// Score answers follow the serving image's jev_answer: probabilities keyed "0".."n-1" (level index), score the
+// 0-indexed expected level sum(i * p_i), legend the level text per index.
 type SystemOneAnswer struct {
 	Type          string             `json:"type"`
 	Choice        string             `json:"choice,omitempty"`
+	Score         *float64           `json:"score,omitempty"`
+	Legend        map[string]string  `json:"legend,omitempty"`
 	Probabilities map[string]float64 `json:"probabilities,omitempty"`
 	Noul          *float64           `json:"noul,omitempty"`
-	Entropy       float64            `json:"entropy,omitempty"`
-	NormalizedH   float64            `json:"normalized_entropy,omitempty"`
-	PassesUsed    int                `json:"passes_used,omitempty"`
+	// Confidence is the probability of the answer given (choice: the chosen option; score: the most likely level;
+	// noul: max(p, 1-p)), as the serving image's jev_answer reports it.
+	Confidence  *float64 `json:"confidence,omitempty"`
+	Entropy     float64  `json:"entropy,omitempty"`
+	NormalizedH float64  `json:"normalized_entropy,omitempty"`
+	PassesUsed  int      `json:"passes_used,omitempty"`
 }
 
 // SystemOneResponse matches the response envelope validated by decision_index.
@@ -361,13 +515,20 @@ func ExecuteSystemOne(ctx context.Context, cli *client.Client, req SystemOneRequ
 		opts.TemperatureScale = 1.0
 	}
 
+	if err := req.MergeMedia(); err != nil {
+		return nil, err
+	}
 	qKeys := make([]string, 0, len(req.Questions))
 	maxOpts := 0
+	kinds := make(map[string]string, len(req.Questions))
 	for k, q := range req.Questions {
-		qKeys = append(qKeys, k)
-		if len(q.Criteria) > maxOpts {
-			maxOpts = len(q.Criteria)
+		kind, err := questionKind(k, q)
+		if err != nil {
+			return nil, err
 		}
+		kinds[k] = kind
+		qKeys = append(qKeys, k)
+		maxOpts = maxInt(maxOpts, maxInt(len(q.Criteria), len(q.Levels)))
 	}
 	sort.Strings(qKeys)
 
@@ -391,12 +552,17 @@ func ExecuteSystemOne(ctx context.Context, cli *client.Client, req SystemOneRequ
 	wideQs := 0
 	multiBatches := 0
 
-	// Partition questions into standard (K <= 26 or noul) vs wide (K > 26)
+	// Partition questions into trivial (one option or level: answered here, no model call), standard (K <= 26,
+	// noul, score) and wide (choice with K > 26).
 	var standardKeys []string
 	var wideKeys []string
 	for _, k := range qKeys {
 		q := req.Questions[k]
-		if !isNoulType(q.Type) && len(q.Criteria) > opts.MaxOptionsPerSlot {
+		if a, ok := trivialAnswer(kinds[k], q); ok {
+			answers[k] = a
+			continue
+		}
+		if kinds[k] == kindChoice && len(q.Criteria) > opts.MaxOptionsPerSlot {
 			wideKeys = append(wideKeys, k)
 		} else {
 			standardKeys = append(standardKeys, k)
@@ -412,7 +578,7 @@ func ExecuteSystemOne(ctx context.Context, cli *client.Client, req SystemOneRequ
 		batchKeys := standardKeys[i:end]
 		multiBatches++
 
-		batchAns, passes, err := evaluateStandardBatch(ctx, cli, stateText, req.Images, batchKeys, req.Questions, opts)
+		batchAns, passes, err := evaluateStandardBatch(ctx, cli, stateText, req.Images, batchKeys, req.Questions, kinds, opts)
 		if err != nil {
 			return nil, err
 		}
@@ -460,12 +626,22 @@ func evaluateStandardBatch(
 	images []string,
 	batchKeys []string,
 	allQuestions map[string]SystemOneQuestion,
+	kinds map[string]string,
 	opts EngineOptions,
 ) (map[string]SystemOneAnswer, int, error) {
 	questionsPayload := make([]map[string]any, 0, len(batchKeys))
 	for _, qKey := range batchKeys {
 		qSpec := allQuestions[qKey]
-		if isNoulType(qSpec.Type) && opts.NoulMode == "choice" {
+		if kinds[qKey] == kindScore {
+			// "lines" format on the server: batches stay <= MaxSlotsPerPass (8) questions, under its 10-question
+			// switch to the "indexed" format, where ids ending in letters can merge with labels.
+			questionsPayload = append(questionsPayload, map[string]any{
+				"id":           qKey,
+				"type":         kindScore,
+				"instructions": FormatInstructions(qSpec.Instructions),
+				"levels":       qSpec.Levels,
+			})
+		} else if isNoulType(qSpec.Type) && opts.NoulMode == "choice" {
 			questionsPayload = append(questionsPayload, noulAsChoice(qKey, qSpec))
 		} else if isNoulType(qSpec.Type) {
 			q := map[string]any{
@@ -579,13 +755,20 @@ func evaluateStandardBatch(
 			if rawAns.Entropy > 0 {
 				normH = rawAns.Entropy / math.Ln2
 			}
+			conf := math.Max(pYes, 1-pYes)
 			out[qKey] = SystemOneAnswer{
 				Type:        "noul",
 				Noul:        &pYes,
+				Confidence:  &conf,
 				PassesUsed:  1,
 				Entropy:     rawAns.Entropy,
 				NormalizedH: normH,
 			}
+			continue
+		}
+
+		if kinds[qKey] == kindScore {
+			out[qKey] = scoreAnswer(qSpec.Levels, rawAns, exists, tempScale)
 			continue
 		}
 
@@ -616,10 +799,12 @@ func evaluateStandardBatch(
 		}
 
 		scaledProbs, winner, h, normH := NormalizeAndScaleProbabilities(probs, optKeys, tempScale)
+		conf := scaledProbs[winner]
 		out[qKey] = SystemOneAnswer{
 			Type:          "choice",
 			Choice:        winner,
 			Probabilities: scaledProbs,
+			Confidence:    &conf,
 			Entropy:       h,
 			NormalizedH:   normH,
 			PassesUsed:    1,
@@ -627,6 +812,55 @@ func evaluateStandardBatch(
 	}
 
 	return out, 1, nil
+}
+
+// scoreAnswer maps the server's score answer (probabilities keyed by level text) to the Jev wire form: probabilities
+// keyed "0".."n-1", score = sum(i * p_i) (0-indexed), legend, confidence = the most likely level's probability.
+// Temperature scaling applies as for choices. Without probabilities it falls back to the reported level (0.9) or
+// uniform, like choices.
+func scoreAnswer(levels []string, rawAns client.QuestionAnswer, exists bool, tempScale float64) SystemOneAnswer {
+	n := len(levels)
+	idx := make([]string, n)
+	legend := make(map[string]string, n)
+	probs := make(map[string]float64, n)
+	for i, l := range levels {
+		idx[i] = strconv.Itoa(i)
+		legend[idx[i]] = l
+	}
+	switch {
+	case exists && len(rawAns.Probabilities) > 0:
+		for i, l := range levels {
+			probs[idx[i]] = rawAns.Probabilities[l]
+		}
+	case exists && rawAns.Level != "":
+		for i, l := range levels {
+			if l == rawAns.Level {
+				probs[idx[i]] = 0.90
+			} else {
+				probs[idx[i]] = 0.10 / float64(maxInt(1, n-1))
+			}
+		}
+	default:
+		for i := range levels {
+			probs[idx[i]] = 1.0 / float64(n)
+		}
+	}
+	scaled, winner, h, normH := NormalizeAndScaleProbabilities(probs, idx, tempScale)
+	score := 0.0
+	for i := range levels {
+		score += float64(i) * scaled[idx[i]]
+	}
+	conf := scaled[winner]
+	return SystemOneAnswer{
+		Type:          kindScore,
+		Score:         &score,
+		Legend:        legend,
+		Probabilities: scaled,
+		Confidence:    &conf,
+		Entropy:       h,
+		NormalizedH:   normH,
+		PassesUsed:    1,
+	}
 }
 
 // evaluateWideQuestionTournament resolves a choice question with 27..255 options by:
@@ -673,7 +907,7 @@ func evaluateWideQuestionTournament(
 		}
 	}
 	if numOpts <= MaxOptionsPerSlot {
-		batchMap, passes, err := evaluateStandardBatch(ctx, cli, stateText, images, []string{qKey}, map[string]SystemOneQuestion{qKey: qSpec}, EngineOptions{TemperatureScale: tempScale, PromptLayout: layout, OptionOrder: optionOrder})
+		batchMap, passes, err := evaluateStandardBatch(ctx, cli, stateText, images, []string{qKey}, map[string]SystemOneQuestion{qKey: qSpec}, nil, EngineOptions{TemperatureScale: tempScale, PromptLayout: layout, OptionOrder: optionOrder})
 		if err != nil {
 			return SystemOneAnswer{}, passes, err
 		}
@@ -706,7 +940,7 @@ func evaluateWideQuestionTournament(
 			end = len(round1Keys)
 		}
 		subKeys := round1Keys[i:end]
-		subAns, p, err := evaluateStandardBatch(ctx, cli, stateText, images, subKeys, round1Questions, EngineOptions{TemperatureScale: 1.0, PromptLayout: layout, OptionOrder: optionOrder})
+		subAns, p, err := evaluateStandardBatch(ctx, cli, stateText, images, subKeys, round1Questions, nil, EngineOptions{TemperatureScale: 1.0, PromptLayout: layout, OptionOrder: optionOrder})
 		if err != nil {
 			return SystemOneAnswer{}, passesUsed + p, err
 		}
@@ -766,7 +1000,7 @@ func evaluateWideQuestionTournament(
 	}
 	finalQ := map[string]SystemOneQuestion{qKey: subQuestion(qSpec, finalKeys)}
 
-	finalBatch, p, err := evaluateStandardBatch(ctx, cli, stateText, images, []string{qKey}, finalQ, EngineOptions{TemperatureScale: 1.0, PromptLayout: layout, OptionOrder: optionOrder})
+	finalBatch, p, err := evaluateStandardBatch(ctx, cli, stateText, images, []string{qKey}, finalQ, nil, EngineOptions{TemperatureScale: 1.0, PromptLayout: layout, OptionOrder: optionOrder})
 	if err != nil {
 		return SystemOneAnswer{}, passesUsed + p, err
 	}
@@ -782,7 +1016,7 @@ func evaluateWideQuestionTournament(
 		}
 		vQ := subQuestion(qSpec, append([]string{best}, catchAll...))
 		vBatch, p2, err := evaluateStandardBatch(ctx, cli, stateText, images, []string{qKey},
-			map[string]SystemOneQuestion{qKey: vQ},
+			map[string]SystemOneQuestion{qKey: vQ}, nil,
 			EngineOptions{TemperatureScale: 1.0, PromptLayout: layout, OptionOrder: optionOrder})
 		if err != nil {
 			return SystemOneAnswer{}, passesUsed + p2, err
@@ -812,10 +1046,12 @@ func evaluateWideQuestionTournament(
 	combined := fuseBracketProbabilities(brackets, round1, finalistSet, finalAns.Probabilities)
 
 	scaledProbs, winner, h, normH := NormalizeAndScaleProbabilities(combined, optKeys, tempScale)
+	conf := scaledProbs[winner]
 	return SystemOneAnswer{
 		Type:          "choice",
 		Choice:        winner,
 		Probabilities: scaledProbs,
+		Confidence:    &conf,
 		Entropy:       h,
 		NormalizedH:   normH,
 		PassesUsed:    passesUsed,
@@ -925,13 +1161,20 @@ func NewSystemOneHTTPHandler(cli *client.Client, opts EngineOptions) http.Handle
 // media"), which images before the fix return as HTTP 502.
 var upstreamClientError = regexp.MustCompile(`upstream 4\d\d\b`)
 
+// atMostAlternatives matches the server's upper-limit schema error, capturing the limit.
+var atMostAlternatives = regexp.MustCompile(`at most (\d+) alternatives`)
+
 // ErrorStatus maps an ExecuteSystemOne error to the HTTP status and message the adapter answers with. Requests the
 // server refuses (bad schema, too many options, an image it can't fetch or decode, context overflow) are the caller's
 // to fix: 422 with the upstream message (the Decision Index kit scores 422 as a capacity refusal, not a failure).
 // Everything else is 500. Shared by `dgem systemone serve` and the gateway's /v1/systemone route.
 func ErrorStatus(err error) (int, string) {
-	if errors.Is(err, ErrInvalidImage) || errors.Is(err, ErrUnsupportedMedia) || errors.Is(err, client.ErrUnsupportedImageFormat) {
+	if errors.Is(err, ErrInvalidImage) || errors.Is(err, ErrUnsupportedMedia) || errors.Is(err, client.ErrUnsupportedImageFormat) ||
+		errors.Is(err, ErrInvalidRequest) {
 		return http.StatusBadRequest, err.Error()
+	}
+	if errors.Is(err, ErrUnsupportedQuestion) {
+		return http.StatusUnprocessableEntity, err.Error()
 	}
 	if errors.Is(err, client.ErrImageFetch) {
 		return http.StatusUnprocessableEntity, err.Error() // an image URL that can't be fetched or isn't an image
@@ -941,9 +1184,10 @@ func ErrorStatus(err error) (int, string) {
 	if errors.As(err, &he) {
 		switch {
 		case he.StatusCode == http.StatusBadRequest || he.StatusCode == http.StatusUnprocessableEntity:
-			// e.g. "question 'x': at most 26 alternatives" for a score question with more levels (#120)
-			if strings.Contains(he.Body, "alternatives") && !strings.Contains(msg, "options per choice") {
-				msg += " (at most 26 options per choice)"
+			// e.g. "question 'x': at most 26 alternatives" for a score question with more levels (#120). Only the
+			// upper limit gets the hint; "needs at least two alternatives" is not a capacity problem.
+			if m := atMostAlternatives.FindStringSubmatch(he.Body); m != nil && !strings.Contains(msg, "options per choice") {
+				msg += fmt.Sprintf(" (at most %s options per choice or levels per score)", m[1])
 			}
 			return http.StatusUnprocessableEntity, msg
 		case he.StatusCode == http.StatusBadGateway && upstreamClientError.MatchString(he.Body):
