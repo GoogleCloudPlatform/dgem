@@ -18,7 +18,8 @@ Guidance for people and coding agents changing this repository. User documentati
 make build                      # ./bin/dgem
 go vet ./... && go test ./...   # unset DGEM_VERTEX_URL first if it is set in your shell
 python3 -m unittest scripts/matrix/test_matrix.py
-python3 -m unittest deploy/cloudrun/server/test_server_key.py
+python3 -m unittest deploy/cloudrun/server/test_server_key.py deploy/cloudrun/server/test_media_fields.py \
+  deploy/cloudrun/server/test_upstream_errors.py
 ```
 After changing `studio/src/*`: `npm --prefix studio run build && go build -o bin/dgem .`, then
 `rm -rf studio/dist/* && touch studio/dist/.gitkeep` before committing (build output is not tracked).
@@ -29,6 +30,14 @@ After changing `studio/src/*`: `npm --prefix studio run build && go build -o bin
   and the Studio (`studio/src/dgem-studio.ts`).
 - **Tracing.** Anything that triggers another model pass or a Stage 2 call runs in its own OpenTelemetry child span
   under `dgem.gateway.decide` (for example `dgem.cascade.gemini`, `dgem.taxonomy.expand`).
+- **Gateway callers and logs.** `callerAuthHandler` (`cmd/caller_auth.go`) is the only source of the caller identity
+  (`dgem.user`); identity headers sent by clients are discarded. Gateway logs carry status, reason, caller and request
+  shape, never request content: content goes only to the opt-in, time-limited body log (`cmd/body_log.go`), with
+  media redacted. A new route or failure path records its status and reason with `failSpan`.
+- **Images reach the serving image as data: URIs.** The gateway and the CLI fetch http(s) image URLs themselves with
+  the guarded client (public addresses only, checked on every connection and redirect); the serving image refuses
+  URLs by default (`DGEM_IMAGE_URLS=deny`). Requests the model server refuses are 4xx (`decisionindex.ErrorStatus`),
+  never 500/502.
 - **Stage 2 models.** Only generally available Gemini models: `gemini-3.8-flash` (default) and
   `gemini-3.5-flash-lite`. `SanitizeCascadeModel` maps older or pre-GA names to these.
 - **Backend telemetry stays separate.** Use `RecordVertexReadoutLatency` for Vertex AI, `RecordLocalReadoutLatency`
@@ -56,7 +65,8 @@ After changing `studio/src/*`: `npm --prefix studio run build && go build -o bin
   paths (no timestamps), and check that it re-applies to the upstream file.
 - Keep in the patch: `/health` merging `/tmp/dgemma/warmup_state.json`, HTTP/1.1 keep-alive with listen backlog 256,
   `MAX_INFLIGHT`, `DEFAULT_SAMPLES`, `DEFAULT_LAYOUT` (default `document_first`), `DEFAULT_ISOLATE` (default `auto`),
-  the `/predict` / `/rawPredict` aliases, and the `X-DGem-Key` check.
+  the `/predict` / `/rawPredict` aliases, the `X-DGem-Key` check, model-server 4xx answered as 422 (400 on the chat
+  route), the audio/video refusal (400), and `DGEM_IMAGE_URLS` (default `deny`).
 - **Service key.** With `DGEM_SERVER_KEY` set (comma-separated to rotate), the serving image refuses every `POST`
   without a matching `X-DGem-Key` header; `GET /health` stays open. Callers send the first entry of their own
   `DGEM_SERVER_KEY`: `pkg/client`, the gateway proxy in `cmd/serve.go` (which never forwards a caller's header),
