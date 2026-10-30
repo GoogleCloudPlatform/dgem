@@ -76,6 +76,9 @@ jobs:
       - name: Run matrix unit tests
         run: python -m unittest scripts/matrix/test_matrix.py
 
+      - name: Run serving image service key tests
+        run: python -m unittest -v deploy/cloudrun/server/test_server_key.py
+
       - name: Check the serving patch re-applies to the upstream file
         run: |
           cp deploy/cloudrun/server/structured_server.upstream.py /tmp/ss.py

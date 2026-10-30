@@ -98,6 +98,7 @@ then run this in front of it:
 """
 
 import argparse
+import hmac
 import json
 import math
 import os
@@ -117,6 +118,27 @@ from transformers import AutoTokenizer
 ARGS = None
 TOK = None
 API_KEY = os.environ.get("API_KEY", "")
+# dgem: service-to-service secret. With DGEM_SERVER_KEY set (comma-separated to rotate; every listed key is accepted),
+# every POST needs header X-DGem-Key equal to one of the keys; GET /health stays open. It is for services that call
+# this server (a gateway, batch jobs, probes), never for people: people go through an authenticated gateway, where
+# access is tracked. The Authorization header can't carry it on Vertex or Cloud Run, where it holds the Google token.
+SERVER_KEYS = [k.strip().encode() for k in os.environ.get("DGEM_SERVER_KEY", "").split(",") if k.strip()]
+# dgem: the largest body of a refused request that is read (and dropped) to keep a keep-alive connection in step; a
+# larger one closes the connection instead.
+REFUSED_BODY_LIMIT = 16 << 20
+
+
+def server_key_ok(header_value):
+    """True when no key is configured, or the header matches one of the configured keys (constant time)."""
+    if not SERVER_KEYS:
+        return True
+    got = (header_value or "").strip().encode()
+    ok = False
+    for k in SERVER_KEYS:
+        ok |= hmac.compare_digest(got, k)
+    return ok
+
+
 DEFAULT_SAMPLES = os.environ.get("DEFAULT_SAMPLES", "1")
 MAX_INFLIGHT = int(os.environ.get("MAX_INFLIGHT", "8"))
 # The prompt layout of a request that doesn't name one: "document_first" (the state, then the questions, both in
@@ -1453,7 +1475,31 @@ class Handler(BaseHTTPRequestHandler):
             )
         return body, images
 
+    def _discard_body(self):
+        """dgem: read and drop a refused request's body in small chunks, so a keep-alive connection stays in step
+        without buffering the body. A body over REFUSED_BODY_LIMIT, or one without a usable content-length, closes
+        the connection instead."""
+        try:
+            n = int(self.headers.get("content-length", "0") or 0)
+        except ValueError:
+            n = -1
+        if self.headers.get("transfer-encoding") or not 0 <= n <= REFUSED_BODY_LIMIT:
+            self.close_connection = True
+            return
+        while n > 0:
+            chunk = self.rfile.read(min(n, 1 << 16))
+            if not chunk:
+                self.close_connection = True
+                return
+            n -= len(chunk)
+
     def do_POST(self):
+        if not server_key_ok(self.headers.get("x-dgem-key")):
+            self._discard_body()
+            return self._json(
+                401,
+                {"error": {"message": "missing or wrong X-DGem-Key", "type": "authentication_error"}},
+            )
         if API_KEY and self.headers.get("authorization", "") != f"Bearer {API_KEY}":
             self.close_connection = True  # dgem: body left unread; don't reuse this keep-alive connection
             return self._json(
