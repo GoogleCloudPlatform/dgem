@@ -80,6 +80,21 @@ The gateway and the `dgem` CLI fetch http(s) image URLs themselves and send the 
 - Keep service and API keys in Secret Manager (the deploy scripts read `dgem-server-key` from it); never commit them
   or build them into images.
 
+## Upgrading an existing deployment
+
+When you move a gateway and serving image deployed from an earlier build to one with these controls:
+
+1. **Deploy the gateway first.** The new serving image refuses image URLs (`DGEM_IMAGE_URLS=deny`), and an older
+   gateway forwards them unchanged. The new gateway sends images as data: URIs, so deploy it before the serving image.
+2. **Expect IAP verification after a gateway redeploy.** `deploy_cloudrun_gateway.sh` sets `DGEM_IAP_AUDIENCE`, so the
+   redeployed gateway verifies the IAP JWT on every request (`IAP_AUDIENCE` names a load-balancer backend service
+   instead; `VERIFY_IAP=0` skips verification). Deploy with `GATEWAY_TAG`, then check `GET /health` and one signed-in
+   request on the tagged revision before moving traffic
+   ([verify a new gateway revision](../deploy/gateway.md#deploy-the-gateway-on-cloud-run)).
+3. **Body logging stays off** unless you configure it.
+4. **CLI callers with an API key** add `DGEM_GATEWAY_URL` (the gateway's URL) next to `DGEM_GATEWAY_KEY`: without it
+   the CLI sends no key, and its error on the gateway's `401` says so. `dgem mcp --remote` needs no change.
+
 ## Reporting a vulnerability
 
 Report security issues through Google's [vulnerability reporting process](https://g.co/vulnz), not in public issues.

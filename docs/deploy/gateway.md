@@ -105,7 +105,8 @@ GATEWAY_TAG=candidate \
   then `gcloud run services update-traffic dgemma-gateway --to-tags=<tag>=100`. Roll back by moving traffic to
   the previous revision.
 
-Verify a new gateway revision before moving traffic:
+Verify a new gateway revision before moving traffic (upgrading from an earlier build? Follow the
+[upgrade order](../operate/security.md#upgrading-an-existing-deployment) too):
 
 1. `GET /health` and `GET /api/backend-config` (expected `available_backends`, Vertex `state: deployed`).
 2. One `/api/decide` call per backend, checking `X-DGem-Backend-Used`.
