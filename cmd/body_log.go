@@ -24,6 +24,7 @@ import (
 	"math/rand"
 	"net/http"
 	"os"
+	"regexp"
 	"strings"
 	"sync"
 	"time"
@@ -240,10 +241,29 @@ func bodyForLog(body []byte, contentType string) (any, bool) {
 	if strings.HasPrefix(contentType, "multipart/") || !isText(body) {
 		return map[string]any{"content_type": contentType, "bytes": len(body), "omitted": "not JSON"}, false
 	}
-	if len(body) > bodyLogCap {
-		return string(body[:bodyLogCap]), true
+	// Not JSON (or JSON cut at bodyLogReadLimit): redact media in the raw text too.
+	text := redactMediaText(string(body))
+	if len(text) > bodyLogCap {
+		return text[:bodyLogCap], true
 	}
-	return string(body), false
+	return text, false
+}
+
+var (
+	dataURIRun = regexp.MustCompile(`data:[a-zA-Z0-9.+/-]*(;[a-zA-Z0-9=.+-]+)*,[A-Za-z0-9+/=_%-]*`)
+	base64Run  = regexp.MustCompile(`[A-Za-z0-9+/=_-]{512,}`)
+)
+
+// redactMediaText replaces data: URIs and base64 runs of 512+ characters in free text with a digest marker.
+func redactMediaText(s string) string {
+	mark := func(kind string) func(string) string {
+		return func(m string) string {
+			sum := sha256.Sum256([]byte(m))
+			return fmt.Sprintf("[redacted %s chars=%d sha256=%s]", kind, len(m), hex.EncodeToString(sum[:8]))
+		}
+	}
+	s = dataURIRun.ReplaceAllStringFunc(s, mark("data_uri"))
+	return base64Run.ReplaceAllStringFunc(s, mark("base64"))
 }
 
 // redactMedia replaces data: URIs and long base64 strings anywhere in a JSON value with {redacted, mime, chars, sha256}.

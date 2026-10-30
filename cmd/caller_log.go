@@ -41,6 +41,10 @@ func mcpSpanHandler(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		ctx, span := gatewayTracer().Start(extractTraceContextFromRequest(r), "dgem.gateway.mcp")
 		defer span.End()
+		// Same response header as /v1/systemone and /api/decide, so body-log entries and callers can link to the span.
+		if tid := span.SpanContext().TraceID(); tid.IsValid() {
+			w.Header().Set("X-Dgem-Trace-Id", tid.String())
+		}
 		attrs := []attribute.KeyValue{attribute.String("dgem.route", "/mcp"), attribute.String("http.method", r.Method)}
 		if u := callerEmail(r); u != "" {
 			attrs = append(attrs, attribute.String("dgem.user", u))

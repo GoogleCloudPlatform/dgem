@@ -153,3 +153,19 @@ func TestBodyLogHandler(t *testing.T) {
 		t.Error("off config must return the handler")
 	}
 }
+
+// Non-JSON bodies (or JSON cut before parsing) still get media redacted.
+func TestBodyForLogRedactsNonJSON(t *testing.T) {
+	img := "data:image/png;base64," + strings.Repeat("QUJD", 300)
+	b64 := strings.Repeat("Zm9v", 200)
+	got, trunc := bodyForLog([]byte(`server said: bad image `+img+` and blob `+b64+` (end`), "text/plain")
+	s, _ := got.(string)
+	if trunc || strings.Contains(s, "QUJDQUJD") || strings.Contains(s, "Zm9vZm9v") ||
+		!strings.Contains(s, "[redacted data_uri") || !strings.Contains(s, "[redacted base64") || !strings.Contains(s, "server said") {
+		t.Errorf("not redacted: %q", s)
+	}
+	cut := []byte(`{"state": "x", "images": ["` + img) // unparsable JSON, as when cut at the read limit
+	if s, _ := bodyForLog(cut, "application/json"); strings.Contains(s.(string), "QUJDQUJD") {
+		t.Error("cut JSON not redacted")
+	}
+}

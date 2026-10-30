@@ -84,3 +84,17 @@ func TestMCPRPCMethod(t *testing.T) {
 		}
 	}
 }
+
+// /mcp responses carry X-Dgem-Trace-Id like the other decision routes.
+func TestMCPSpanHandlerTraceHeader(t *testing.T) {
+	oldTP := otel.GetTracerProvider()
+	tp := sdktrace.NewTracerProvider()
+	otel.SetTracerProvider(tp)
+	defer otel.SetTracerProvider(oldTP)
+	rec := httptest.NewRecorder()
+	mcpSpanHandler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {})).
+		ServeHTTP(rec, httptest.NewRequest("POST", "/mcp", strings.NewReader(`{"method":"tools/list"}`)))
+	if id := rec.Header().Get("X-Dgem-Trace-Id"); len(id) != 32 {
+		t.Errorf("X-Dgem-Trace-Id = %q", id)
+	}
+}
