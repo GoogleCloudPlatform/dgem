@@ -374,9 +374,11 @@ func handleLocate(w http.ResponseWriter, r *http.Request) {
 	if req.Image == "" {
 		req.Image = req.ImageURL
 	}
-	if err := checkRequestImages(ctx, []string{req.Image}); err != nil {
-		writeErr(http.StatusBadRequest, err.Error())
+	if prepared, err := prepareRequestImages(ctx, []string{req.Image}); err != nil {
+		writeErr(imageErrorStatus(err), err.Error())
 		return
+	} else {
+		req.Image = prepared[0] // the guided-locate dgem read, Gemini and SAM all get the image bytes, not the URL
 	}
 	backendTarget, targetURL, err := resolveBackendTarget(r, req.Backend, req.VertexURL)
 	if err != nil {

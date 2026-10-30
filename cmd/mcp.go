@@ -1592,8 +1592,9 @@ func buildMCPServer() *mcp.Server {
 		if input.Image != "" {
 			imgs = append(imgs, input.Image)
 		}
-		if err := checkRequestImages(ctx, imgs); err != nil {
-			return nil, GatewayDecideResponse{}, err
+		imgs, imgErr := prepareRequestImages(ctx, imgs)
+		if imgErr != nil {
+			return nil, GatewayDecideResponse{}, imgErr
 		}
 		backendTarget, targetURL, bErr := resolveBackendTargetFromParams(ctx, input.Backend, input.VertexURL)
 		if bErr != nil {
@@ -1688,8 +1689,10 @@ func buildMCPServer() *mcp.Server {
 		if strings.TrimSpace(input.Image) == "" {
 			return nil, LocateBBoxToolOutput{}, fmt.Errorf("'image' URL or data URI is required")
 		}
-		if err := checkRequestImages(ctx, []string{input.Image}); err != nil {
+		if prepared, err := prepareRequestImages(ctx, []string{input.Image}); err != nil {
 			return nil, LocateBBoxToolOutput{}, err
+		} else {
+			input.Image = prepared[0]
 		}
 		target := strings.TrimSpace(input.Target)
 		if target == "" {
@@ -1778,8 +1781,10 @@ func buildMCPServer() *mcp.Server {
 			"locate_bounding_boxes for precise boxes.",
 		InputSchema: visionBackendChoicesSchema[LocateRequest](),
 	}, func(ctx context.Context, req *mcp.CallToolRequest, input LocateRequest) (*mcp.CallToolResult, LocateResult, error) {
-		if err := checkRequestImages(ctx, []string{input.Image}); err != nil {
+		if prepared, err := prepareRequestImages(ctx, []string{input.Image}); err != nil {
 			return nil, LocateResult{}, err
+		} else {
+			input.Image = prepared[0]
 		}
 		backendTarget, targetURL, bErr := resolveBackendTargetFromParams(ctx, input.Backend, input.VertexURL)
 		if bErr != nil {
@@ -1845,7 +1850,8 @@ func buildMCPServer() *mcp.Server {
 		if input.Image != "" {
 			customImgs = append(customImgs, input.Image)
 		}
-		if err := checkRequestImages(ctx, customImgs); err != nil {
+		customImgs, err := prepareRequestImages(ctx, customImgs)
+		if err != nil {
 			return nil, GatewayDecideResponse{}, err
 		}
 		resp, stats, attempts, err := executeDecideWithWarmup(ctx, schemaStr, stateStr, customImgs, targetURL)

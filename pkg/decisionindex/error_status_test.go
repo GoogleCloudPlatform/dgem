@@ -40,6 +40,7 @@ func TestErrorStatus(t *testing.T) {
 		{"server crash", &client.HTTPError{StatusCode: 500, Body: `boom`}, 500},
 		{"invalid image ref", fmt.Errorf("%w: local path", ErrInvalidImage), 400},
 		{"network error", errors.New("dial tcp: connection refused"), 500},
+		{"image URL the client couldn't fetch", fmt.Errorf("failed to process multimodal content: %w", fmt.Errorf("%w https://x: HTTP 404", client.ErrImageFetch)), 422},
 	} {
 		if got, msg := ErrorStatus(tc.err); got != tc.want || msg == "" {
 			t.Errorf("%s: status %d (%q), want %d", tc.name, got, msg, tc.want)
@@ -58,7 +59,7 @@ func TestSystemOneHandlerUnfetchableImage(t *testing.T) {
 	defer srv.Close()
 	cli := client.NewClient(srv.URL+"/v1", "dgemma", 5*time.Second)
 	cli.MaxRetries = 0
-	body := `{"state": "x", "images": ["https://example.com/x.png"], "questions": {"q": {"type": "choice", "criteria": {"a": "", "b": ""}}}}`
+	body := `{"state": "x", "images": ["data:image/png;base64,iVBORw0KGgo="], "questions": {"q": {"type": "choice", "criteria": {"a": "", "b": ""}}}}`
 	rec := httptest.NewRecorder()
 	NewSystemOneHTTPHandler(cli, DefaultEngineOptions())(rec, httptest.NewRequest("POST", "/v1/systemone", strings.NewReader(body)))
 	if rec.Code != http.StatusUnprocessableEntity || !strings.Contains(rec.Body.String(), "Failed to fetch media") {

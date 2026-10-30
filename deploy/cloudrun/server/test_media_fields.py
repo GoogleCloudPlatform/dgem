@@ -67,5 +67,27 @@ class MediaFieldsTest(unittest.TestCase):
         self.assertEqual(self.decided, [])
 
 
+    def test_chat_image_urls_denied_by_default(self):
+        schema = {"questions": [{"id": "q", "type": "noul"}]}
+        def chat(url, kind="image_url"):
+            part = {"type": "image_url", "image_url": {"url": url}} if kind == "image_url" else {"type": "image", "image": url}
+            return self.post("/v1/chat/completions", {"messages": [
+                {"role": "system", "content": json.dumps(schema)},
+                {"role": "user", "content": [part, {"type": "text", "text": "{}"}]}]})
+        for url, kind in (("https://example.com/a.png", "image_url"), ("http://169.254.169.254/x", "image_url"),
+                          ("https://example.com/a.png", "image")):
+            status, body = chat(url, kind)
+            self.assertEqual(status, 400, url)
+            self.assertIn("data: URIs", body["error"]["message"])
+        self.assertEqual(self.decided, [])
+        chat("data:image/png;base64,AAAA")  # data URIs still reach the decision step
+        self.assertEqual(self.decided, [1])
+
+    def test_allow_mode(self):
+        m = load_server("")
+        m.IMAGE_URLS = "allow"
+        m.check_content_parts([{"type": "image_url", "image_url": {"url": "https://example.com/a.png"}}])
+
+
 if __name__ == "__main__":
     unittest.main()

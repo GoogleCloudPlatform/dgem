@@ -16,6 +16,8 @@ package client
 
 import (
 	"errors"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -38,7 +40,7 @@ func TestBuildMultimodalContentRejectsSVG(t *testing.T) {
 			t.Errorf("%s: err = %v, want ErrUnsupportedImageFormat with a PNG hint", ref, err)
 		}
 	}
-	for _, ref := range []string{png, "data:image/png;base64,AAAA", "https://example.com/a.svg"} {
+	for _, ref := range []string{png, "data:image/png;base64,AAAA"} {
 		if _, err := BuildMultimodalContent("{}", []string{ref}); err != nil {
 			t.Errorf("%s: unexpected error %v", ref, err)
 		}
@@ -54,6 +56,34 @@ func TestFixtureImages(t *testing.T) {
 		}
 		if _, err := BuildMultimodalContent("{}", []string{base + ".svg"}); !errors.Is(err, ErrUnsupportedImageFormat) {
 			t.Errorf("%s.svg: err = %v, want refusal", name, err)
+		}
+	}
+}
+
+// Image URLs are fetched by the client and inlined; an SVG or non-image behind a URL is refused, a 404 errors.
+func TestBuildMultimodalContentFetchesURLs(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/a.png":
+			w.Header().Set("Content-Type", "image/png")
+			_, _ = w.Write([]byte("\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR"))
+		case "/a.svg":
+			w.Header().Set("Content-Type", "image/svg+xml")
+			_, _ = w.Write([]byte(`<svg xmlns="http://www.w3.org/2000/svg"></svg>`))
+		case "/page":
+			_, _ = w.Write([]byte("<html></html>"))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer srv.Close()
+	out, err := BuildMultimodalContent("{}", []string{srv.URL + "/a.png"})
+	if err != nil || !strings.HasPrefix(out.([]ContentPart)[0].ImageURL.URL, "data:image/png;base64,") {
+		t.Fatalf("png: %v %v", out, err)
+	}
+	for _, bad := range []string{"/a.svg", "/page", "/missing"} {
+		if _, err := BuildMultimodalContent("{}", []string{srv.URL + bad}); err == nil {
+			t.Errorf("%s accepted", bad)
 		}
 	}
 }

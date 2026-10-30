@@ -966,7 +966,8 @@ func executeDecideWithWarmup(ctx context.Context, schemaContent, stateContent st
 
 func runServe(cmd *cobra.Command, args []string) error {
 	defaultRetriesForLongRunning()
-	allowLocalImagePaths = false // image references now come from network requests
+	allowLocalImagePaths = false              // image references now come from network requests
+	client.ImageHTTPClient = imageFetchClient // pkg/client fetches (if any) also connect to public addresses only
 	if envPort := os.Getenv("PORT"); envPort != "" && !cmd.Flags().Changed("port") {
 		if p, err := fmt.Sscanf(envPort, "%d", &servePort); err == nil && p == 1 {
 			// parsed from PORT
@@ -1626,10 +1627,11 @@ func runServe(cmd *cobra.Command, args []string) error {
 			images = append(images, payload.ImageURL)
 		}
 		images = append(images, payload.Images...)
-		if err := checkRequestImages(ctx, images); err != nil {
-			rootSpan.SetStatus(codes.Error, err.Error())
+		images, imgErr := prepareRequestImages(ctx, images) // URLs fetched here and sent as data: URIs
+		if imgErr != nil {
+			rootSpan.SetStatus(codes.Error, imgErr.Error())
 			rootSpan.End()
-			writeErr(http.StatusBadRequest, err.Error())
+			writeErr(imageErrorStatus(imgErr), imgErr.Error())
 			return
 		}
 
@@ -1911,6 +1913,21 @@ func runServe(cmd *cobra.Command, args []string) error {
 				})
 				return
 			}
+		}
+		// Image URLs are fetched by the gateway (public addresses only) and forwarded as data: URIs, on every path:
+		// adapter, ?raw=1, pass-through and the chat proxy. The serving image never fetches a caller's URL.
+		if !strings.Contains(r.Header.Get("Content-Type"), "multipart") {
+			nb, err := inlineProxyBodyImages(ctx, reqPath, bodyBytes)
+			if err != nil {
+				proxySpan.SetStatus(codes.Error, "invalid_image")
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(imageErrorStatus(err))
+				_ = json.NewEncoder(w).Encode(map[string]interface{}{
+					"error": map[string]string{"message": err.Error(), "type": "invalid_request_error"},
+				})
+				return
+			}
+			bodyBytes = nb
 		}
 		if reqPath == "/v1/systemone" && serveSystemOneMode != "passthrough" && r.URL.Query().Get("raw") != "1" && !strings.Contains(r.Header.Get("Content-Type"), "multipart") {
 			var soReq decisionindex.SystemOneRequest

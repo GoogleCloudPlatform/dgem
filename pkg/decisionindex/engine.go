@@ -930,8 +930,11 @@ var upstreamClientError = regexp.MustCompile(`upstream 4\d\d\b`)
 // to fix: 422 with the upstream message (the Decision Index kit scores 422 as a capacity refusal, not a failure).
 // Everything else is 500. Shared by `dgem systemone serve` and the gateway's /v1/systemone route.
 func ErrorStatus(err error) (int, string) {
-	if errors.Is(err, ErrInvalidImage) || errors.Is(err, ErrUnsupportedMedia) {
+	if errors.Is(err, ErrInvalidImage) || errors.Is(err, ErrUnsupportedMedia) || errors.Is(err, client.ErrUnsupportedImageFormat) {
 		return http.StatusBadRequest, err.Error()
+	}
+	if errors.Is(err, client.ErrImageFetch) {
+		return http.StatusUnprocessableEntity, err.Error() // an image URL that can't be fetched or isn't an image
 	}
 	msg := err.Error()
 	var he *client.HTTPError

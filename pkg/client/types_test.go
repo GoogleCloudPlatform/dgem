@@ -15,6 +15,8 @@
 package client
 
 import (
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -105,8 +107,13 @@ func TestBuildMultimodalContent(t *testing.T) {
 		t.Errorf("expected plain text string, got %v", textOnly)
 	}
 
-	// Case 2: Remote URL -> places image first, text second
-	urlOutput, err := BuildMultimodalContent("query text", []string{"https://example.com/test.jpg"})
+	// Case 2: Remote URL -> fetched and inlined as a data: URI (serving images refuse URLs), image first, text second
+	imgSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "image/png")
+		_, _ = w.Write([]byte("\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR"))
+	}))
+	defer imgSrv.Close()
+	urlOutput, err := BuildMultimodalContent("query text", []string{imgSrv.URL + "/test.png"})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -114,7 +121,7 @@ func TestBuildMultimodalContent(t *testing.T) {
 	if !ok || len(parts) != 2 {
 		t.Fatalf("expected 2 content parts, got %v", urlOutput)
 	}
-	if parts[0].Type != "image_url" || parts[0].ImageURL.URL != "https://example.com/test.jpg" {
+	if parts[0].Type != "image_url" || !strings.HasPrefix(parts[0].ImageURL.URL, "data:image/png;base64,") {
 		t.Errorf("expected first part to be image_url, got %+v", parts[0])
 	}
 	if parts[1].Type != "text" || parts[1].Text != "query text" {

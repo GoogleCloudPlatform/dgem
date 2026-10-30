@@ -452,7 +452,7 @@
          },
      }, len(template) + 1 + (thought["tokens"] if thought else 0)
  
-@@ -1065,11 +1258,42 @@
+@@ -1065,11 +1258,60 @@
      "chunk_rows",
      "chunk_prompt",
      "sequential",
@@ -464,6 +464,12 @@
  
 +# dgem: media this model can't read. DiffusionGemma is text + image only (no audio encoder, no video token), so a
 +# request carrying these keys or content parts is refused instead of answered as if they were absent.
++# dgem: whether vLLM may fetch http(s) image URLs from requests. "deny" (default) accepts images only as data: URIs
++# (or multipart uploads): the serving image runs with VPC egress, so a URL could rebind or redirect to the metadata
++# server or internal hosts. The dgem gateway fetches URLs itself (public addresses only) and forwards data: URIs.
++IMAGE_URLS = os.environ.get("DGEM_IMAGE_URLS", "deny")
++if IMAGE_URLS not in ("deny", "allow"):
++    raise SystemExit("DGEM_IMAGE_URLS must be deny or allow")
 +UNSUPPORTED_MEDIA_KEYS = ("audio", "audios", "video", "videos", "input_audio", "video_url", "videos_url")
 +UNSUPPORTED_MEDIA_MSG = "this model reads text and images only; send video as sampled frames in \"images\" and audio as a transcript in \"state\""
 +
@@ -487,6 +493,18 @@
 +                  if isinstance(p, dict) and p.get("type") not in ("text", "image_url", "image")})
 +    if bad:
 +        raise UnsupportedMediaError(f"content part type {', '.join(bad)}: not supported; {UNSUPPORTED_MEDIA_MSG}")
++    if IMAGE_URLS == "deny":
++        for p in content:
++            if not isinstance(p, dict):
++                continue
++            ref = p.get("image_url") if p.get("type") == "image_url" else p.get("image") if p.get("type") == "image" else None
++            if isinstance(ref, dict):
++                ref = ref.get("url")
++            if isinstance(ref, str) and not ref.strip().lower().startswith("data:"):
++                raise UnsupportedMediaError(
++                    "image URLs are not fetched by this server (DGEM_IMAGE_URLS=deny): send images as data: URIs; the "
++                    "dgem gateway fetches URLs for you"
++                )
 +
 +
  def jev_schema(body):
@@ -495,7 +513,7 @@
      qs = body.get("questions")
      if not isinstance(qs, dict) or not qs:
          raise SchemaError("questions: needs a non-empty map of id -> question")
-@@ -1160,7 +1384,8 @@
+@@ -1160,7 +1402,8 @@
      state = body.get("state")
      if state is None:
          raise SchemaError("state: required")
@@ -505,7 +523,7 @@
      if not image_parts:
          return text
      return list(image_parts) + [{"type": "text", "text": text}]
-@@ -1170,7 +1395,13 @@
+@@ -1170,7 +1413,13 @@
      if a is None:
          return None
      if q["type"] == "noul":
@@ -520,7 +538,7 @@
      if q["type"] == "choice":
          return {
              "type": "choice",
-@@ -1201,21 +1432,44 @@
+@@ -1201,21 +1450,44 @@
      return c if isinstance(c, str) else ""
  
  
@@ -569,7 +587,7 @@
          return self._json(404, {"error": {"message": "unknown route"}})
  
      def _read_request(self):
-@@ -1249,8 +1503,33 @@
+@@ -1249,8 +1521,33 @@
              )
          return body, images
  
@@ -603,7 +621,7 @@
              return self._json(
                  401,
                  {
-@@ -1260,8 +1539,20 @@
+@@ -1260,8 +1557,20 @@
                      }
                  },
              )
@@ -625,7 +643,7 @@
          try:
              req, images = self._read_request()
          except Exception as e:
-@@ -1276,53 +1567,41 @@
+@@ -1276,53 +1585,41 @@
              )
          if self.path == "/v1/systemone":
              return self._systemone(req, images)
@@ -697,7 +715,7 @@
          except SchemaError as e:
              return self._json(
                  422, {"error": {"message": str(e), "type": "validation_error"}}
-@@ -1362,6 +1641,7 @@
+@@ -1362,6 +1659,7 @@
                  },
                  "diagnostics": body["diagnostics"],
              },
@@ -705,7 +723,7 @@
          )
  
      def _chat(self, req):
-@@ -1387,6 +1667,7 @@
+@@ -1387,6 +1685,7 @@
              schema_value = json.loads(message_text(msgs[0]))
              schema = parse_schema(schema_value)
              content = msgs[1].get("content", "")
@@ -713,7 +731,7 @@
              has_image = isinstance(content, list) and any(
                  isinstance(p, dict) and p.get("type") in ("image_url", "image")
                  for p in content
-@@ -1451,9 +1732,18 @@
+@@ -1451,9 +1750,18 @@
                      "total_tokens": completion_tokens,
                  },
              },
@@ -732,7 +750,7 @@
  def self_signed(cert_dir):
      """Paths of a self-signed certificate and key in cert_dir, made with
      openssl on first use."""
-@@ -1487,14 +1777,23 @@
+@@ -1487,14 +1795,23 @@
      cert, key = self_signed(cert_dir)
      ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
      ctx.load_cert_chain(cert, key)
@@ -758,7 +776,7 @@
      p = argparse.ArgumentParser()
      p.add_argument("--upstream", default="http://127.0.0.1:8010")
      p.add_argument("--model", default="dgemma")
-@@ -1507,6 +1806,12 @@
+@@ -1507,6 +1824,12 @@
          help="request widths round up to a multiple of this",
      )
      p.add_argument(
@@ -771,7 +789,7 @@
          "--no-constrained",
          dest="constrained",
          action="store_false",
-@@ -1523,6 +1828,7 @@
+@@ -1523,6 +1846,7 @@
          help="directory for the self-signed certificate",
      )
      ARGS = p.parse_args()
@@ -779,7 +797,7 @@
      CANVAS_LEN = ARGS.canvas
      CANVAS_STEP = ARGS.canvas_step
      init_tokenizer(AutoTokenizer.from_pretrained(ARGS.tokenizer))
-@@ -1537,7 +1843,8 @@
+@@ -1537,7 +1861,8 @@
          f"(canvas {CANVAS_LEN})",
          flush=True,
      )

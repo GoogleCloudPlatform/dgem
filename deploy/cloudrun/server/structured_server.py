@@ -1266,6 +1266,12 @@ JEV_EXTENSIONS = (
 
 # dgem: media this model can't read. DiffusionGemma is text + image only (no audio encoder, no video token), so a
 # request carrying these keys or content parts is refused instead of answered as if they were absent.
+# dgem: whether vLLM may fetch http(s) image URLs from requests. "deny" (default) accepts images only as data: URIs
+# (or multipart uploads): the serving image runs with VPC egress, so a URL could rebind or redirect to the metadata
+# server or internal hosts. The dgem gateway fetches URLs itself (public addresses only) and forwards data: URIs.
+IMAGE_URLS = os.environ.get("DGEM_IMAGE_URLS", "deny")
+if IMAGE_URLS not in ("deny", "allow"):
+    raise SystemExit("DGEM_IMAGE_URLS must be deny or allow")
 UNSUPPORTED_MEDIA_KEYS = ("audio", "audios", "video", "videos", "input_audio", "video_url", "videos_url")
 UNSUPPORTED_MEDIA_MSG = "this model reads text and images only; send video as sampled frames in \"images\" and audio as a transcript in \"state\""
 
@@ -1289,6 +1295,18 @@ def check_content_parts(content):
                   if isinstance(p, dict) and p.get("type") not in ("text", "image_url", "image")})
     if bad:
         raise UnsupportedMediaError(f"content part type {', '.join(bad)}: not supported; {UNSUPPORTED_MEDIA_MSG}")
+    if IMAGE_URLS == "deny":
+        for p in content:
+            if not isinstance(p, dict):
+                continue
+            ref = p.get("image_url") if p.get("type") == "image_url" else p.get("image") if p.get("type") == "image" else None
+            if isinstance(ref, dict):
+                ref = ref.get("url")
+            if isinstance(ref, str) and not ref.strip().lower().startswith("data:"):
+                raise UnsupportedMediaError(
+                    "image URLs are not fetched by this server (DGEM_IMAGE_URLS=deny): send images as data: URIs; the "
+                    "dgem gateway fetches URLs for you"
+                )
 
 
 def jev_schema(body):
