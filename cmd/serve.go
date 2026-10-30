@@ -1867,6 +1867,11 @@ func runServe(cmd *cobra.Command, args []string) error {
 			w.Header().Set("X-Dgem-Trace-Id", tid)
 		}
 
+		if u := callerEmail(r); u != "" {
+			proxySpan.SetAttributes(attribute.String("dgem.user", u))
+		}
+		proxySpan.SetAttributes(attribute.String("dgem.route", r.URL.Path))
+
 		bodyBytes, err := io.ReadAll(r.Body)
 		if err != nil {
 			failSpan(proxySpan, http.StatusBadRequest, "failed to read request body: "+err.Error())
@@ -2095,8 +2100,8 @@ func runServe(cmd *cobra.Command, args []string) error {
 
 	// 8. Model Context Protocol (MCP) Streamable HTTP Server at /mcp
 	mcpHandler := newMCPHTTPHandler(len(allowedHosts) > 0)
-	mux.Handle("/mcp", mcpHandler)
-	mux.Handle("/mcp/", mcpHandler)
+	mux.Handle("/mcp", mcpSpanHandler(mcpHandler))
+	mux.Handle("/mcp/", mcpSpanHandler(mcpHandler))
 
 	// 9. Serve Lit WebComponents Studio (from --ui-dir on disk if available, else embedded studio/dist)
 	var uiFS fs.FS
