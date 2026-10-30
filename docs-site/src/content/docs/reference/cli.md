@@ -68,6 +68,8 @@ All `dgem` subcommands (`decide`, `ask`, `locate`, `template`, `serve`, `systemo
 | **`--enable-admin-api`** | `DGEM_ADMIN_API` | off | Allow `POST /api/backend-config` and `/api/vertex/deploy`, `/api/vertex/teardown`. |
 | **`--allowed-vertex-endpoints`** | `DGEM_ALLOWED_VERTEX_ENDPOINTS` | none | Extra Vertex endpoints selectable per request; others are rejected. |
 | **`--cors-origins`** | `DGEM_CORS_ORIGINS` | none | Browser origins allowed to call the gateway cross-origin. Others get no CORS headers, and their `POST`s get `403`. |
+| **`--iap-audience`** | `DGEM_IAP_AUDIENCE` | none | Verify the IAP JWT (`X-Goog-IAP-JWT-Assertion`: signature, audience, expiry) on every request except `GET /health`; the caller's identity comes from the verified token. Cloud Run IAP: `/projects/<PROJECT_NUMBER>/locations/<REGION>/services/<SERVICE>`. Missing or invalid token: `401`. |
+| **`--api-keys`** | `DGEM_GATEWAY_KEYS` | none | Comma-separated API keys (rotate with `new,old`) accepted in `X-DGem-Api-Key`, for self-hosted gateways without IAP. Callers (`dgem` CLI, `dgem mcp --remote`) send `DGEM_GATEWAY_KEY`. With `--iap-audience` too, either is enough. Prefer the env var over the flag. |
 | **`--allowed-hosts`** | `DGEM_ALLOWED_HOSTS` | none | Extra `Host` values accepted on loopback connections (reverse proxy on the same machine). Others get `403`. |
 | **`--wakeup-timeout`** | — | `10m` | How long `cloudrun` requests are held and retried while the service wakes from zero. |
 

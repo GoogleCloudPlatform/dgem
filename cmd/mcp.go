@@ -284,6 +284,10 @@ func runRemoteMCPProxy(remoteURL string) error {
 		if tok != "" {
 			req.Header.Set("Authorization", "Bearer "+tok)
 		}
+		gwKey := client.GatewayKeyFromEnv() // a self-hosted gateway started with --api-keys
+		if gwKey != "" {
+			req.Header.Set(client.GatewayKeyHeader, gwKey)
+		}
 
 		// If get_health_and_gpu_status is called with a specific backend parameter,
 		// query /api/status?backend=<backend> directly so backend-specific telemetry is returned
@@ -303,6 +307,9 @@ func runRemoteMCPProxy(remoteURL string) error {
 				if sErr == nil {
 					if tok != "" {
 						sReq.Header.Set("Authorization", "Bearer "+tok)
+					}
+					if gwKey != "" {
+						sReq.Header.Set(client.GatewayKeyHeader, gwKey)
 					}
 					if sResp, doErr := httpClient.Do(sReq); doErr == nil {
 						sBody, _ := io.ReadAll(sResp.Body)
@@ -461,6 +468,9 @@ func runRemoteMCPProxy(remoteURL string) error {
 						fbReq.Header.Set("Content-Type", "application/json")
 						if tok != "" {
 							fbReq.Header.Set("Authorization", "Bearer "+tok)
+						}
+						if gwKey != "" {
+							fbReq.Header.Set(client.GatewayKeyHeader, gwKey)
 						}
 						if fbResp, doErr := httpClient.Do(fbReq); doErr == nil {
 							fbBody, _ := io.ReadAll(fbResp.Body)

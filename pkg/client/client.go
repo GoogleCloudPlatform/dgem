@@ -47,6 +47,22 @@ type Client struct {
 	ServerKey string
 }
 
+// GatewayKeyHeader carries a caller's API key for a `dgem serve` gateway started with --api-keys.
+const GatewayKeyHeader = "X-DGem-Api-Key"
+
+// SendGatewayKey controls whether clients send DGEM_GATEWAY_KEY as GatewayKeyHeader. The gateway itself turns it off,
+// so its calls to the serving image never carry a caller key.
+var SendGatewayKey = true
+
+// GatewayKeyFromEnv returns the API key a caller sends to a gateway: DGEM_GATEWAY_KEY (first entry of a list).
+func GatewayKeyFromEnv() string {
+	if !SendGatewayKey {
+		return ""
+	}
+	k, _, _ := strings.Cut(os.Getenv("DGEM_GATEWAY_KEY"), ",")
+	return strings.TrimSpace(k)
+}
+
 // ServerKeyHeader is the header carrying the serving image's service-to-service secret.
 const ServerKeyHeader = "X-DGem-Key"
 
@@ -152,6 +168,9 @@ func (c *Client) Complete(ctx context.Context, req ChatCompletionRequest) (*Chat
 		httpReq.Header.Set("Content-Type", "application/json")
 		if c.ServerKey != "" {
 			httpReq.Header.Set(ServerKeyHeader, c.ServerKey)
+		}
+		if k := GatewayKeyFromEnv(); k != "" {
+			httpReq.Header.Set(GatewayKeyHeader, k)
 		}
 
 		otel.GetTextMapPropagator().Inject(ctx, propagation.HeaderCarrier(httpReq.Header))

@@ -23,6 +23,7 @@ import (
 	"io"
 	"io/fs"
 	"math"
+	"net"
 	"net/http"
 	"net/url"
 	"os"
@@ -99,6 +100,8 @@ func init() {
 	serveCmd.Flags().BoolVar(&serveAdminAPI, "enable-admin-api", false, "Allow POST /api/backend-config and /api/vertex/deploy|teardown (changes gateway-wide settings and Vertex deployments; env: DGEM_ADMIN_API=1)")
 	serveCmd.Flags().StringVar(&serveAllowedVertexFlag, "allowed-vertex-endpoints", "", "Extra Vertex endpoint IDs/URLs a request may select via vertex_url; the configured endpoint is always allowed (env: DGEM_ALLOWED_VERTEX_ENDPOINTS)")
 	serveCmd.Flags().StringVar(&serveCORSOriginsFlag, "cors-origins", "", "Comma-separated browser origins allowed to call the gateway cross-origin (e.g. https://studio.example.com); default none, the embedded Studio is same-origin (env: DGEM_CORS_ORIGINS)")
+	serveCmd.Flags().StringVar(&serveIAPAudience, "iap-audience", "", "Verify the IAP JWT (X-Goog-IAP-JWT-Assertion) on every request against this audience, e.g. /projects/<PROJECT_NUMBER>/locations/<REGION>/services/<SERVICE> for Cloud Run IAP; callers' identity then comes from the verified token (env: DGEM_IAP_AUDIENCE)")
+	serveCmd.Flags().StringVar(&serveAPIKeys, "api-keys", "", "Comma-separated API keys accepted in the X-DGem-Api-Key header, for self-hosted gateways without IAP (env: DGEM_GATEWAY_KEYS). Never put keys on the command line in shared environments; prefer the env var")
 	serveCmd.Flags().StringVar(&serveAllowedHostsFlag, "allowed-hosts", "", "Extra Host header values accepted on loopback connections, for a reverse proxy on the same machine; default only localhost/127.0.0.1/::1 (DNS rebinding protection; env: DGEM_ALLOWED_HOSTS)")
 	serveCmd.Flags().BoolVar(&serveLocalMode, "local", false, "Run gateway targeting local diffgemma (Apple Silicon Metal) without cloud failover (env: DGEM_SERVE_LOCAL)")
 	serveCmd.Flags().StringVar(&serveCascadeModel, "cascade-model", DefaultCascadeGeminiModel, "Default Stage-2 Vertex AI Gemini 3.x model for cascade escalation (e.g. 'gemini-3.8-flash', 'gemini-3.5-flash-lite'; env: DGEM_CASCADE_MODEL)")
@@ -968,6 +971,7 @@ func runServe(cmd *cobra.Command, args []string) error {
 	defaultRetriesForLongRunning()
 	allowLocalImagePaths = false              // image references now come from network requests
 	client.ImageHTTPClient = imageFetchClient // pkg/client fetches (if any) also connect to public addresses only
+	client.SendGatewayKey = false             // never forward a caller key (DGEM_GATEWAY_KEY) to the serving image
 	if envPort := os.Getenv("PORT"); envPort != "" && !cmd.Flags().Changed("port") {
 		if p, err := fmt.Sscanf(envPort, "%d", &servePort); err == nil && p == 1 {
 			// parsed from PORT
@@ -1038,6 +1042,12 @@ func runServe(cmd *cobra.Command, args []string) error {
 	}
 	if env := os.Getenv("DGEM_CORS_ORIGINS"); env != "" && !cmd.Flags().Changed("cors-origins") {
 		serveCORSOriginsFlag = env
+	}
+	if env := os.Getenv("DGEM_IAP_AUDIENCE"); env != "" && !cmd.Flags().Changed("iap-audience") {
+		serveIAPAudience = env
+	}
+	if env := os.Getenv("DGEM_GATEWAY_KEYS"); env != "" && !cmd.Flags().Changed("api-keys") {
+		serveAPIKeys = env
 	}
 	if env := os.Getenv("DGEM_ALLOWED_HOSTS"); env != "" && !cmd.Flags().Changed("allowed-hosts") {
 		serveAllowedHostsFlag = env
@@ -2111,7 +2121,8 @@ func runServe(cmd *cobra.Command, args []string) error {
 		http.NotFound(w, r)
 	})
 
-	secured, err := gatewaySecurityHandler(mux, corsOrigins, allowedHosts)
+	auth := parseCallerAuth(serveIAPAudience, serveAPIKeys)
+	secured, err := gatewaySecurityHandler(callerAuthHandler(mux, auth), corsOrigins, allowedHosts)
 	if err != nil {
 		return err
 	}
@@ -2128,6 +2139,11 @@ func runServe(cmd *cobra.Command, args []string) error {
 	fmt.Printf("   • Studio Assets:       %s\n", uiSource)
 	if len(corsOrigins) > 0 {
 		fmt.Printf("   • CORS Origins:        %s\n", strings.Join(corsOrigins, ", "))
+	}
+	if auth.enabled() {
+		fmt.Printf("   • Caller auth:         %s\n", auth.describe())
+	} else if !isLoopbackHost(net.JoinHostPort(serveHost, "0")) {
+		fmt.Printf("   ⚠ Caller auth:         none: listening on %s without --iap-audience or --api-keys; put the gateway behind IAP/IAM\n", serveHost)
 	}
 	return http.ListenAndServe(addr, secured)
 }
