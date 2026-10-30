@@ -1881,7 +1881,7 @@ func runServe(cmd *cobra.Command, args []string) error {
 
 		bodyBytes, err := io.ReadAll(r.Body)
 		if err != nil {
-			proxySpan.SetStatus(codes.Error, err.Error())
+			failSpan(proxySpan, http.StatusBadRequest, "failed to read request body: "+err.Error())
 			http.Error(w, `{"error": "failed to read request body"}`, http.StatusBadRequest)
 			return
 		}
@@ -1894,7 +1894,7 @@ func runServe(cmd *cobra.Command, args []string) error {
 
 		backendTarget, resolvedURL, bErr := resolveBackendTarget(r, bodyMeta.Backend, bodyMeta.VertexURL)
 		if bErr != nil {
-			proxySpan.SetStatus(codes.Error, bErr.Error())
+			failSpan(proxySpan, http.StatusBadRequest, bErr.Error())
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusBadRequest)
 			_ = json.NewEncoder(w).Encode(map[string]interface{}{
@@ -1915,7 +1915,7 @@ func runServe(cmd *cobra.Command, args []string) error {
 		if reqPath == "/v1/systemone" && !strings.Contains(r.Header.Get("Content-Type"), "multipart") {
 			// Audio/video fields are refused before any routing, adapter or pass-through.
 			if err := decisionindex.CheckMediaKeys(bodyBytes); err != nil {
-				proxySpan.SetStatus(codes.Error, "unsupported_media")
+				failSpan(proxySpan, http.StatusBadRequest, err.Error())
 				w.Header().Set("Content-Type", "application/json")
 				w.WriteHeader(http.StatusBadRequest)
 				_ = json.NewEncoder(w).Encode(map[string]interface{}{
@@ -1929,7 +1929,7 @@ func runServe(cmd *cobra.Command, args []string) error {
 		if !strings.Contains(r.Header.Get("Content-Type"), "multipart") {
 			nb, err := inlineProxyBodyImages(ctx, reqPath, bodyBytes)
 			if err != nil {
-				proxySpan.SetStatus(codes.Error, "invalid_image")
+				failSpan(proxySpan, imageErrorStatus(err), err.Error())
 				w.Header().Set("Content-Type", "application/json")
 				w.WriteHeader(imageErrorStatus(err))
 				_ = json.NewEncoder(w).Encode(map[string]interface{}{
@@ -1942,10 +1942,10 @@ func runServe(cmd *cobra.Command, args []string) error {
 		if reqPath == "/v1/systemone" && serveSystemOneMode != "passthrough" && r.URL.Query().Get("raw") != "1" && !strings.Contains(r.Header.Get("Content-Type"), "multipart") {
 			// A body the adapter can't read is refused, never forwarded unbatched: that silent fall-through sent score
 			// questions to the server in one oversized read. ?raw=1 or --systemone-mode passthrough bypass.
+			proxySpan.SetAttributes(systemOneBodyAttrs(bodyBytes)...)
 			soReq, status, parseErr := decodeSystemOneAdapterRequest(bodyBytes)
 			if parseErr != nil {
-				proxySpan.SetStatus(codes.Error, "invalid_systemone_request")
-				proxySpan.SetAttributes(attribute.Int("http.status_code", status))
+				failSpan(proxySpan, status, "invalid /v1/systemone request: "+parseErr.Error())
 				w.Header().Set("Content-Type", "application/json")
 				w.WriteHeader(status)
 				_ = json.NewEncoder(w).Encode(map[string]interface{}{
@@ -1956,8 +1956,9 @@ func runServe(cmd *cobra.Command, args []string) error {
 				})
 				return
 			}
+			proxySpan.SetAttributes(systemOneShapeAttrs(soReq)...)
 			if err := checkSystemOneImages(ctx, soReq.Images); err != nil {
-				proxySpan.SetStatus(codes.Error, "invalid_image")
+				failSpan(proxySpan, http.StatusBadRequest, err.Error())
 				w.Header().Set("Content-Type", "application/json")
 				w.WriteHeader(http.StatusBadRequest)
 				_ = json.NewEncoder(w).Encode(map[string]interface{}{
@@ -1965,17 +1966,20 @@ func runServe(cmd *cobra.Command, args []string) error {
 				})
 				return
 			}
-			proxySpan.SetAttributes(attribute.Int("dgem.image_count", len(soReq.Images)))
 			soOpts := decisionindex.DefaultEngineOptions()
 			soOpts.TemperatureScale = serveSystemOneTemp
 			cli := GetClientForURL(resolvedURL)
 			soResp, soErr := decisionindex.ExecuteSystemOne(ctx, cli, soReq, soOpts)
 			if soErr != nil {
 				status, msg := decisionindex.ErrorStatus(soErr)
-				proxySpan.SetAttributes(attribute.Int("http.status_code", status))
+				failSpan(proxySpan, status, msg)
 				http.Error(w, msg, status)
 				return
 			}
+			if soResp.EvaluationTrace != nil {
+				proxySpan.SetAttributes(attribute.Int("dgem.systemone.forward_passes", soResp.EvaluationTrace.ForwardPasses))
+			}
+			proxySpan.SetAttributes(attribute.Int("http.status_code", http.StatusOK))
 			w.Header().Set("Content-Type", "application/json")
 			w.Header().Set("X-DGem-Backend-Used", backendTarget)
 			_ = json.NewEncoder(w).Encode(soResp)
@@ -2068,6 +2072,11 @@ func runServe(cmd *cobra.Command, args []string) error {
 					attemptSpan.End()
 					time.Sleep(6 * time.Second)
 					continue
+				}
+				proxySpan.SetAttributes(attribute.Int("http.status_code", resp.StatusCode))
+				if resp.StatusCode >= 400 {
+					// Pass-through (?raw=1, multipart, chat): record the upstream's reason, not just its status.
+					failSpan(proxySpan, resp.StatusCode, fmt.Sprintf("upstream %d: %s", resp.StatusCode, strings.TrimSpace(string(respBody))))
 				}
 				if resp.StatusCode == http.StatusOK {
 					attemptSpan.SetStatus(codes.Ok, "ok")
