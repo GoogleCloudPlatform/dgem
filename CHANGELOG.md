@@ -17,10 +17,15 @@ image for a release in your own project with `make cloudrun-build`.
 - **Gateway: caller authentication.** `dgem serve --iap-audience` (`DGEM_IAP_AUDIENCE`) verifies the IAP JWT on every
   request (signature, audience, expiry) and takes the caller's identity from it, discarding identity headers sent by
   the client; `--api-keys` (`DGEM_GATEWAY_KEYS`, header `X-DGem-Api-Key`) serves self-hosted gateways without IAP.
-  With either set, requests without valid credentials get 401 (`GET /health` stays open). `deploy_cloudrun_gateway.sh`
-  sets the Cloud Run IAP audience by default (`VERIFY_IAP=0` to skip). The CLI and `dgem mcp --remote` send
-  `DGEM_GATEWAY_KEY`; the gateway never forwards it upstream. Without either option the gateway warns at startup when
-  it listens on a non-loopback address.
+  With either set, requests without valid credentials get 401, with the same body whatever is configured (the
+  accepted methods are printed at startup). `GET /health` stays open and reports only liveness, the version and
+  whether body logging is on. **Behaviour change:** it no longer lists `default_backend`, `upstream_url` or
+  `vertex_url`; `GET /api/backend-config` reports them, the upstream URL as `cloudrun_url`.
+  `deploy_cloudrun_gateway.sh` sets the Cloud Run IAP audience by default (`VERIFY_IAP=0` to skip). Callers set
+  `DGEM_GATEWAY_KEY`: the CLI sends it only to the gateway in `DGEM_GATEWAY_URL` (same scheme, host and port) and
+  `dgem mcp --remote` to its remote. No dgem client keeps `X-DGem-Api-Key` or `X-DGem-Key` on a redirect to another
+  origin, and the gateway never forwards a caller's key upstream. Without either option the gateway warns at startup
+  when it listens on a non-loopback address.
 - **Image URLs are fetched by dgem, never by the serving image.** The gateway (`/api/decide`, MCP, `/api/locate`,
   `/v1/systemone` including `?raw=1`, and the `/v1/chat/completions` proxy) fetches http(s) image URLs with its
   public-address-only client and forwards data: URIs (unfetchable or non-image URLs: 422); the CLI fetches from the
@@ -54,8 +59,9 @@ image for a release in your own project with `make cloudrun-build`.
   `DGEM_LOG_BODIES_UNTIL` (RFC3339, at most 7 days ahead) and `DGEM_LOG_BODIES_USERS` (caller identities, or `*`),
   optional `DGEM_LOG_BODIES_SAMPLE`. Logs `/v1/systemone`, `/api/decide` and MCP `tools/call` bodies as
   `log_type: "dgem.bodies"` lines (96 KB cap per body; `data:` URIs and long base64 replaced by a digest, in JSON and
-  non-JSON bodies; no headers or tokens). Invalid settings leave it off; startup and `/health` (`body_logging`) report
-  its state. Setup, including a separate log bucket: [Observability](docs/operate/observability.md).
+  non-JSON bodies; no headers or tokens). Invalid settings leave it off; the startup log shows the settings or why they
+  were refused, and `/health` shows only `body_logging.enabled`. Setup, including a separate log bucket:
+  [Observability](docs/operate/observability.md).
 - **GCP tokens are cached only until they expire.** Access and ID tokens were cached for a flat 45 minutes, so an
   expired metadata-server token could be served: Vertex AI control-plane checks got 401 and a warm endpoint read as
   quiesced.

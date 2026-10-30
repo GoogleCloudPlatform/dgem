@@ -69,7 +69,7 @@ All `dgem` subcommands (`decide`, `ask`, `locate`, `template`, `serve`, `systemo
 | **`--allowed-vertex-endpoints`** | `DGEM_ALLOWED_VERTEX_ENDPOINTS` | none | Extra Vertex endpoints selectable per request; others are rejected. |
 | **`--cors-origins`** | `DGEM_CORS_ORIGINS` | none | Browser origins allowed to call the gateway cross-origin. Others get no CORS headers, and their `POST`s get `403`. |
 | **`--iap-audience`** | `DGEM_IAP_AUDIENCE` | none | Verify the IAP JWT (`X-Goog-IAP-JWT-Assertion`: signature, audience, expiry) on every request except `GET /health`; the caller's identity comes from the verified token. Cloud Run IAP: `/projects/<PROJECT_NUMBER>/locations/<REGION>/services/<SERVICE>`. Missing or invalid token: `401`. |
-| **`--api-keys`** | `DGEM_GATEWAY_KEYS` | none | Comma-separated API keys (rotate with `new,old`) accepted in `X-DGem-Api-Key`, for self-hosted gateways without IAP. Callers (`dgem` CLI, `dgem mcp --remote`) send `DGEM_GATEWAY_KEY`. With `--iap-audience` too, either is enough. Prefer the env var over the flag. |
+| **`--api-keys`** | `DGEM_GATEWAY_KEYS` | none | Comma-separated API keys (rotate with `new,old`) accepted in `X-DGem-Api-Key`, for self-hosted gateways without IAP. Callers send `DGEM_GATEWAY_KEY`: the `dgem` CLI only to the gateway in `DGEM_GATEWAY_URL`, `dgem mcp --remote` to its remote. With `--iap-audience` too, either is enough. Prefer the env var over the flag. |
 | **`--allowed-hosts`** | `DGEM_ALLOWED_HOSTS` | none | Extra `Host` values accepted on loopback connections (reverse proxy on the same machine). Others get `403`. |
 | **`--wakeup-timeout`** | — | `10m` | How long `cloudrun` requests are held and retried while the service wakes from zero. |
 
@@ -173,6 +173,8 @@ has an endpoint for: Vertex from `--vertex-url` or `DGEM_VERTEX_URL` (a bare end
 | **`DGEM_CASCADE_MODELS`** | `gemini-3.8-flash,gemini-3.5-flash-lite` | List of enabled Gemini cascade models. |
 | **`DGEM_SAM_URL`**, **`DGEM_SAM_TOKEN`** | `""` | Optional SAM service for `locate` masks: `POST {"image", "box_pct"}` → `{"png_base64", "polygon_pct", "score"}`; the token is sent as a Bearer header. Unset: masks are unavailable. |
 | **`DGEM_GATEWAY_HOSTS`** | `""` | Comma-separated extra hostnames recognized as remote GCP endpoints for token injection. |
+| **`DGEM_GATEWAY_KEY`** | `""` | API key for a gateway started with `--api-keys`, sent as `X-DGem-Api-Key` (the first entry of a comma-separated list). The CLI sends it only to `DGEM_GATEWAY_URL`; `dgem mcp --remote` sends it to its remote. |
+| **`DGEM_GATEWAY_URL`** | `""` | The gateway `DGEM_GATEWAY_KEY` belongs to. The CLI sends the key only to URLs with the same scheme, host and port, and sends none while this is unset. If it names another gateway than `--remote`, `dgem mcp --remote` sends no key. |
 | **`DGEM_REMOTE_URL`** | `""` | Upstream `/v1` URL used by plain `dgem mcp` (no `--local` / `--remote`); overrides `-u`. |
 | **`DGEM_MCP_LOCAL`** | `""` | Set to `1` or `true` to behave like `dgem mcp --local`. |
 | **`DGEM_BACKENDS`**, **`DGEM_ALLOWED_VERTEX_ENDPOINTS`**, **`DGEM_ADMIN_API`** | `""` | `dgem serve` only: backend allow-list, extra selectable Vertex endpoints, and admin API ([Gateway and routing](/dgem/deploy/gateway/#restrict-backends-and-admin-actions)). Not read by stdio `dgem mcp`. |

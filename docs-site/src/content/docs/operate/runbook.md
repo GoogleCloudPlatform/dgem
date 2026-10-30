@@ -19,9 +19,10 @@ readiness details:
 | `vllm_ready` | The engine answers; decisions will succeed |
 | `warmed`, `warmup_s` | The self-warmup (1-sample, 4-sample and image decisions) finished |
 
-The gateway exposes `GET /health`, `GET /api/status?backend=vertex|cloudrun|local` and `GET /api/backend-config`
-(live Vertex state: `deployed`, replica count, machine type), and the MCP tool `get_health_and_gpu_status`.
-Each backend's readiness is tracked separately, so a Vertex probe never marks Cloud Run as warm.
+The gateway exposes `GET /health` (open; liveness and version only), `GET /api/status?backend=vertex|cloudrun|local`
+and `GET /api/backend-config` (live Vertex state: `deployed`, replica count, machine type), and the MCP tool
+`get_health_and_gpu_status`. Each backend's readiness is tracked separately, so a Vertex probe never marks Cloud Run
+as warm.
 
 ## Routine checks
 
@@ -77,9 +78,9 @@ Per-item answers can shift a few percent between vLLM versions even when accurac
 agreement, not individual answers, across images.
 
 When changing `deploy/cloudrun/server/structured_server.py`, keep it as vLLM's upstream example plus
-`dgem.patch`: edit the file, regenerate the patch with `diff -u` against `structured_server.upstream.py`, and check it
-re-applies. The patch must keep the `/health` readiness fields, HTTP/1.1 keep-alive with backlog 256,
-`MAX_INFLIGHT`, `DEFAULT_SAMPLES` and the `/predict` / `/rawPredict` aliases.
+`dgem.patch`: edit the file, then run `scripts/regen_serving_patch.sh`, which regenerates the patch against
+`structured_server.upstream.py` and checks it re-applies. The patch must keep the `/health` readiness fields, HTTP/1.1
+keep-alive with backlog 256, `MAX_INFLIGHT`, `DEFAULT_SAMPLES` and the `/predict` / `/rawPredict` aliases.
 
 ## Versions
 

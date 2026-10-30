@@ -41,6 +41,14 @@ After changing `studio/src/*`: `npm --prefix studio run build && go build -o bin
   (`dgem.user`); identity headers sent by clients are discarded. Gateway logs carry status, reason, caller and request
   shape, never request content: content goes only to the opt-in, time-limited body log (`cmd/body_log.go`), with
   media redacted. A new route or failure path records its status and reason with `failSpan`.
+- **Unauthenticated replies reveal no configuration.** The gateway's 401 body is the same whatever is configured, and
+  the open `GET /health` reports liveness, version and `body_logging.enabled` only. Authentication methods, the IAP
+  audience, backends, upstream URLs and body-logging settings go to the startup log or to authenticated routes
+  (`/api/backend-config`, `/api/status`).
+- **Each credential goes only to its own service.** `X-DGem-Key` (`DGEM_SERVER_KEY`) goes to the serving image, and
+  `X-DGem-Api-Key` (`DGEM_GATEWAY_KEY`) only to the gateway in `DGEM_GATEWAY_URL` (`client.GatewayKeyFor`) or to the
+  `dgem mcp --remote` URL (`client.GatewayKeyForRemote`). HTTP clients that send either use
+  `client.StripKeysOnCrossOriginRedirect`, and the gateway never forwards a caller's key.
 - **Images reach the serving image as data: URIs.** The gateway and the CLI fetch http(s) image URLs themselves with
   the guarded client (public addresses only, checked on every connection and redirect); the serving image refuses
   URLs by default (`DGEM_IMAGE_URLS=deny`). Requests the model server refuses are 4xx (`decisionindex.ErrorStatus`),
@@ -67,9 +75,9 @@ After changing `studio/src/*`: `npm --prefix studio run build && go build -o bin
 
 ## Serving image
 - `deploy/cloudrun/server/structured_server.py` is vLLM's upstream example (`structured_server.upstream.py`, kept
-  byte-identical) plus `dgem.patch`. Edit `structured_server.py`, then regenerate the patch:
-  `diff -u structured_server.upstream.py structured_server.py` with the two header lines set to the repository
-  paths (no timestamps), and check that it re-applies to the upstream file.
+  byte-identical) plus `dgem.patch`. Edit `structured_server.py`, then run `scripts/regen_serving_patch.sh`: it
+  regenerates the patch in GNU `diff -u` form and checks that it re-applies to the upstream file, as CI does (plain
+  `diff -u` on macOS produces different hunks).
 - Keep in the patch: `/health` merging `/tmp/dgemma/warmup_state.json`, HTTP/1.1 keep-alive with listen backlog 256,
   `MAX_INFLIGHT`, `DEFAULT_SAMPLES`, `DEFAULT_LAYOUT` (default `document_first`), `DEFAULT_ISOLATE` (default `auto`),
   the `/predict` / `/rawPredict` aliases, the `X-DGem-Key` check, model-server 4xx answered as 422 (400 on the chat

@@ -183,10 +183,11 @@ recorded by type and size only. Headers, tokens and other routes (`/api/auth/*`,
 | `DGEM_LOG_BODIES_SAMPLE` | no | Fraction of matching requests to log, `(0, 1]`, default `1` |
 
 An invalid combination (missing or past `UNTIL`, more than 7 days ahead, no callers) leaves logging off. The gateway
-prints the reason at startup, and `GET /health` reports it under `body_logging`:
+prints the reason, or the active settings, at startup. `GET /health` is open to callers that haven't authenticated,
+so it reports only whether logging is on:
 
 ```json
-"body_logging": {"enabled": true, "mode": "both", "until": "2026-10-22T18:00:00Z", "callers": 1, "sample": 1}
+"body_logging": {"enabled": true}
 ```
 
 **Keep the content out of your normal logs.** Bodies are your callers' data. Route them to a separate log bucket with
@@ -204,8 +205,8 @@ gcloud logging sinks update _Default --project=$PROJECT \
 ```
 
 **Turn it on and off.** Setting the variables deploys a new Cloud Run revision. Deploy it with `--no-traffic --tag`
-first and check `/health`, then move traffic. Logging stops by itself at `UNTIL`; to stop earlier, remove
-`DGEM_LOG_BODIES` (another revision). Read entries with:
+first and check its startup log and `body_logging.enabled` in `/health`, then move traffic. Logging stops by itself at
+`UNTIL`; to stop earlier, remove `DGEM_LOG_BODIES` (another revision). Read entries with:
 
 ```text
 jsonPayload.log_type="dgem.bodies" AND jsonPayload.dgem_user="<caller>"

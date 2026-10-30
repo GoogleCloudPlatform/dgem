@@ -218,8 +218,14 @@ var (
 // To prevent "subscriptions/listen" from head-of-line blocking "tools/list" for 180s (httpClient.Timeout),
 // non-initialization requests are dispatched concurrently and SSE streams are read line-by-line.
 func runRemoteMCPProxy(remoteURL string) error {
-	httpClient := &http.Client{Timeout: 180 * time.Second}
-	sseClient := &http.Client{Timeout: 0} // Long-lived SSE streams (subscriptions/listen) have no fixed client timeout
+	// Both clients carry X-DGem-Api-Key; a redirect to another origin drops it.
+	httpClient := &http.Client{Timeout: 180 * time.Second, CheckRedirect: client.StripKeysOnCrossOriginRedirect}
+	// Long-lived SSE streams (subscriptions/listen) have no fixed client timeout
+	sseClient := &http.Client{Timeout: 0, CheckRedirect: client.StripKeysOnCrossOriginRedirect}
+	if os.Getenv(client.GatewayURLEnv) != "" && client.GatewayKeyFromEnv() != "" && client.GatewayKeyForRemote(remoteURL) == "" {
+		fmt.Fprintf(os.Stderr, "dgem mcp: DGEM_GATEWAY_KEY is not sent to --remote: %s names another gateway. "+
+			"Set %s to the --remote URL, or unset it, to send the key.\n", client.GatewayURLEnv, client.GatewayURLEnv)
+	}
 	scanner := bufio.NewScanner(os.Stdin)
 	scanner.Buffer(make([]byte, 64*1024), 16*1024*1024)
 
@@ -284,7 +290,9 @@ func runRemoteMCPProxy(remoteURL string) error {
 		if tok != "" {
 			req.Header.Set("Authorization", "Bearer "+tok)
 		}
-		gwKey := client.GatewayKeyFromEnv() // a self-hosted gateway started with --api-keys
+		// A self-hosted gateway started with --api-keys: the key goes to --remote unless DGEM_GATEWAY_URL names
+		// another gateway.
+		gwKey := client.GatewayKeyForRemote(remoteURL)
 		if gwKey != "" {
 			req.Header.Set(client.GatewayKeyHeader, gwKey)
 		}
