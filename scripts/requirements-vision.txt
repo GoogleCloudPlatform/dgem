@@ -1,4 +1,4 @@
 # synthetic image generation (scripts/generate_bbox_sweep.py)
 pillow==13.0.0
 numpy==2.3.3
-pyarrow==21.0.0
+pyarrow==23.0.1

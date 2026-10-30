@@ -11,16 +11,24 @@
     "astro": "astro"
   },
   "dependencies": {
-    "@astrojs/markdown-remark": "^7.3.1",
-    "@astrojs/starlight": "^0.42.2",
+    "@astrojs/markdown-remark": "^7.3.4",
+    "@astrojs/starlight": "^0.42.6",
     "@catppuccin/starlight": "^2.1.0",
-    "astro": "^7.3.3",
-    "katex": "^0.18.7",
+    "astro": "^7.4.2",
+    "katex": "^0.19.0",
     "rehype-katex": "^7.0.1",
     "remark-math": "^6.0.0"
   },
   "devDependencies": {
-    "sharp": "^0.35.4",
+    "sharp": "^0.35.5",
     "typescript": "^5.8.2"
+  },
+  "pnpm": {
+    "overrides": {
+      "katex": "^0.19.0"
+    }
+  },
+  "engines": {
+    "node": ">=22.23.4"
   }
 }
