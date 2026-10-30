@@ -21,9 +21,11 @@ image for a release in your own project with `make cloudrun-build`.
   accepted methods are printed at startup). `GET /health` stays open and reports only liveness, the version and
   whether body logging is on. **Behaviour change:** it no longer lists `default_backend`, `upstream_url` or
   `vertex_url`; `GET /api/backend-config` reports them, the upstream URL as `cloudrun_url`.
-  `deploy_cloudrun_gateway.sh` sets the Cloud Run IAP audience by default (`VERIFY_IAP=0` to skip). The CLI and
-  `dgem mcp --remote` send `DGEM_GATEWAY_KEY`; the gateway never forwards it upstream. Without either option the
-  gateway warns at startup when it listens on a non-loopback address.
+  `deploy_cloudrun_gateway.sh` sets the Cloud Run IAP audience by default (`VERIFY_IAP=0` to skip). Callers set
+  `DGEM_GATEWAY_KEY`: the CLI sends it only to the gateway in `DGEM_GATEWAY_URL` (same scheme, host and port) and
+  `dgem mcp --remote` to its remote. No dgem client keeps `X-DGem-Api-Key` or `X-DGem-Key` on a redirect to another
+  origin, and the gateway never forwards a caller's key upstream. Without either option the gateway warns at startup
+  when it listens on a non-loopback address.
 - **Image URLs are fetched by dgem, never by the serving image.** The gateway (`/api/decide`, MCP, `/api/locate`,
   `/v1/systemone` including `?raw=1`, and the `/v1/chat/completions` proxy) fetches http(s) image URLs with its
   public-address-only client and forwards data: URIs (unfetchable or non-image URLs: 422); the CLI fetches from the

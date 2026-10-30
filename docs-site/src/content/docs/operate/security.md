@@ -31,6 +31,11 @@ deploys with `--no-allow-unauthenticated` and grants `ALLOW_GROUP`). A browser c
 needs IAP or a loopback gateway without keys. Setup:
 [Gateway and Routing](/dgem/deploy/gateway/#access-for-people-and-agents).
 
+Each key goes only to its own service. The `dgem` CLI sends its API key (`DGEM_GATEWAY_KEY`) only to the gateway in
+`DGEM_GATEWAY_URL` (same scheme, host and port), never to Vertex AI, Cloud Run or another URL it is pointed at;
+`dgem mcp --remote` sends it to its remote. No dgem client carries an API key or a service key (`X-DGem-Key`) across
+a redirect to another origin, and the gateway never forwards a caller's key.
+
 Template names can't leave the templates directory: `/api/decide/{template}`, the `template` field and the MCP
 `decide_policy` tool accept template IDs only (`400` otherwise).
 

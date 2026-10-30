@@ -2076,7 +2076,7 @@ func runServe(cmd *cobra.Command, args []string) error {
 				req.Header.Set("Authorization", "Bearer "+tok)
 			}
 
-			hc := &http.Client{Timeout: 90 * time.Second}
+			hc := &http.Client{Timeout: 90 * time.Second, CheckRedirect: client.StripKeysOnCrossOriginRedirect}
 			resp, err := hc.Do(req)
 			if err == nil {
 				respBody, _ := io.ReadAll(resp.Body)

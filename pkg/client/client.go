@@ -19,10 +19,12 @@ import (
 	"context"
 	"encoding/binary"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"math/rand"
 	"net/http"
+	"net/url"
 	"os"
 	"strconv"
 	"strings"
@@ -50,17 +52,104 @@ type Client struct {
 // GatewayKeyHeader carries a caller's API key for a `dgem serve` gateway started with --api-keys.
 const GatewayKeyHeader = "X-DGem-Api-Key"
 
+// GatewayURLEnv names the environment variable holding the URL of the gateway that DGEM_GATEWAY_KEY belongs to.
+// Clients send the key only to requests with that URL's scheme, host and port.
+const GatewayURLEnv = "DGEM_GATEWAY_URL"
+
 // SendGatewayKey controls whether clients send DGEM_GATEWAY_KEY as GatewayKeyHeader. The gateway itself turns it off,
 // so its calls to the serving image never carry a caller key.
 var SendGatewayKey = true
 
-// GatewayKeyFromEnv returns the API key a caller sends to a gateway: DGEM_GATEWAY_KEY (first entry of a list).
+// GatewayKeyFromEnv returns the API key a caller sends to a gateway: DGEM_GATEWAY_KEY (first entry of a list). Whether
+// a request gets it is decided by GatewayKeyFor or GatewayKeyForRemote.
 func GatewayKeyFromEnv() string {
 	if !SendGatewayKey {
 		return ""
 	}
 	k, _, _ := strings.Cut(os.Getenv("DGEM_GATEWAY_KEY"), ",")
 	return strings.TrimSpace(k)
+}
+
+// GatewayKeyFor returns the gateway API key to send with a request to rawURL: GatewayKeyFromEnv when rawURL has the
+// scheme, host and port of DGEM_GATEWAY_URL, "" otherwise. Without DGEM_GATEWAY_URL the key is never sent, so a key
+// meant for one gateway doesn't reach Vertex AI, Cloud Run or any other URL the CLI is pointed at.
+func GatewayKeyFor(rawURL string) string {
+	return gatewayKeyFor(rawURL, "")
+}
+
+// GatewayKeyForRemote is GatewayKeyFor for a URL the user named as their gateway (`dgem mcp --remote`): without
+// DGEM_GATEWAY_URL, that URL is the gateway.
+func GatewayKeyForRemote(remoteURL string) string {
+	return gatewayKeyFor(remoteURL, remoteURL)
+}
+
+func gatewayKeyFor(rawURL, defaultGateway string) string {
+	k := GatewayKeyFromEnv()
+	if k == "" {
+		return ""
+	}
+	gw := strings.TrimSpace(os.Getenv(GatewayURLEnv))
+	if gw == "" {
+		gw = defaultGateway
+	}
+	if gw == "" || !sameOrigin(gw, rawURL) {
+		return ""
+	}
+	return k
+}
+
+// sameOrigin reports whether two http(s) URLs have the same scheme, host (case-insensitive) and port (443 or 80 when
+// omitted). Unparsable URLs, other schemes and URLs without a host never match.
+func sameOrigin(a, b string) bool {
+	ua, errA := url.Parse(strings.TrimSpace(a))
+	ub, errB := url.Parse(strings.TrimSpace(b))
+	return errA == nil && errB == nil && sameOriginURL(ua, ub)
+}
+
+func sameOriginURL(a, b *url.URL) bool {
+	if a == nil || b == nil || a.Hostname() == "" {
+		return false
+	}
+	scheme := strings.ToLower(a.Scheme)
+	if scheme != "http" && scheme != "https" {
+		return false
+	}
+	return strings.EqualFold(a.Scheme, b.Scheme) && strings.EqualFold(a.Hostname(), b.Hostname()) &&
+		effectivePort(a) == effectivePort(b)
+}
+
+// effectivePort is u's port, or the default port of its scheme (http or https).
+func effectivePort(u *url.URL) string {
+	if p := u.Port(); p != "" {
+		return p
+	}
+	if strings.EqualFold(u.Scheme, "https") {
+		return "443"
+	}
+	return "80"
+}
+
+// StripKeysOnCrossOriginRedirect is the CheckRedirect policy of clients that send dgem keys. It follows up to 10
+// redirects, as the default policy does. Once a redirect leaves the origin of the first request, it removes
+// GatewayKeyHeader and ServerKeyHeader from that request and every later one, including a redirect back to the first
+// origin. Go's client drops Authorization and cookies on redirects to another domain, but copies other headers from the
+// first request to every redirect target.
+func StripKeysOnCrossOriginRedirect(req *http.Request, via []*http.Request) error {
+	if len(via) >= 10 {
+		return errors.New("stopped after 10 redirects")
+	}
+	if len(via) == 0 {
+		return nil
+	}
+	left := !sameOriginURL(via[0].URL, req.URL)
+	for _, r := range via[1:] {
+		left = left || !sameOriginURL(via[0].URL, r.URL)
+	}
+	if left {
+		req.Header.Del(GatewayKeyHeader)
+		req.Header.Del(ServerKeyHeader)
+	}
+	return nil
 }
 
 // ServerKeyHeader is the header carrying the serving image's service-to-service secret.
@@ -87,7 +176,7 @@ func NewClient(baseURL, defaultModel string, timeout time.Duration) *Client {
 	return &Client{
 		ServerKey:  ServerKeyFromEnv(),
 		BaseURL:    baseURL,
-		HTTPClient: &http.Client{Timeout: timeout},
+		HTTPClient: &http.Client{Timeout: timeout, CheckRedirect: StripKeysOnCrossOriginRedirect},
 		Model:      defaultModel,
 	}
 }
@@ -153,6 +242,8 @@ func (c *Client) Complete(ctx context.Context, req ChatCompletionRequest) (*Chat
 	if err != nil {
 		return nil, nil, fmt.Errorf("failed to marshal request: %w", err)
 	}
+	// Sent only when the endpoint is the gateway in DGEM_GATEWAY_URL.
+	gatewayKey := GatewayKeyFor(endpoint)
 
 	var (
 		resp      *http.Response
@@ -169,8 +260,8 @@ func (c *Client) Complete(ctx context.Context, req ChatCompletionRequest) (*Chat
 		if c.ServerKey != "" {
 			httpReq.Header.Set(ServerKeyHeader, c.ServerKey)
 		}
-		if k := GatewayKeyFromEnv(); k != "" {
-			httpReq.Header.Set(GatewayKeyHeader, k)
+		if gatewayKey != "" {
+			httpReq.Header.Set(GatewayKeyHeader, gatewayKey)
 		}
 
 		otel.GetTextMapPropagator().Inject(ctx, propagation.HeaderCarrier(httpReq.Header))
@@ -214,7 +305,13 @@ func (c *Client) Complete(ctx context.Context, req ChatCompletionRequest) (*Chat
 	}
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return nil, nil, &HTTPError{StatusCode: resp.StatusCode, Body: string(bodyBytes), Retries: retries}
+		he := &HTTPError{StatusCode: resp.StatusCode, Body: string(bodyBytes), Retries: retries}
+		if resp.StatusCode == http.StatusUnauthorized && gatewayKey == "" && GatewayKeyFromEnv() != "" &&
+			strings.HasPrefix(resp.Header.Get("WWW-Authenticate"), "DGem ") {
+			he.Hint = "DGEM_GATEWAY_KEY is set but was not sent: set " + GatewayURLEnv +
+				" to this gateway's URL (the key goes only to that scheme, host and port)"
+		}
+		return nil, nil, he
 	}
 
 	var chatResp ChatCompletionResponse
@@ -292,10 +389,16 @@ type HTTPError struct {
 	StatusCode int
 	Body       string
 	Retries    int
+	// Hint, when set, tells the user how to fix the request (for example a gateway key that wasn't sent).
+	Hint string
 }
 
 func (e *HTTPError) Error() string {
-	return fmt.Sprintf("server returned error HTTP %d: %s", e.StatusCode, e.Body)
+	msg := fmt.Sprintf("server returned error HTTP %d: %s", e.StatusCode, e.Body)
+	if e.Hint != "" {
+		msg += " (hint: " + e.Hint + ")"
+	}
+	return msg
 }
 
 // NormalizeSchemaSamples turns a digit-string "samples" value (template variables such as `-v samples=4`
