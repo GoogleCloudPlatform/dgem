@@ -274,6 +274,18 @@ Any service or script can query `dgem serve` (`https://<your-dgem-gateway>` or l
 | **`/v1/chat/completions`** | `POST` | **Deprecated** decision-only proxy (schema system message + JSON state) kept for `dgem decide -u <gateway>/v1`; responses carry a `Deprecation` header. Use `/api/decide` or `/v1/systemone`. `/v1/raw/chat/completions` returns `410 Gone`. |
 | **`/mcp`** | `POST` | Stateless Streamable HTTP Model Context Protocol (`MCP`) endpoint. |
 
+**Errors and logging.** `/api/decide` and `/v1/systemone` use the same status codes:
+
+| Status | Meaning | Gateway log severity |
+| :---: | :--- | :--- |
+| `400` | The gateway can't read the request: bad JSON, unknown template name, unknown question type, unsupported media (audio/video), an image URL it refuses | WARNING |
+| `401` | Caller authentication required (IAP or `X-DGem-Api-Key`, when enabled) | — |
+| `422` | The model server refused the request: e.g. more than 26 options in one choice on `/api/decide` (`/v1/systemone` brackets wider choices itself), an answer template too long for the canvas, an image it can't fetch, or the input over the context window. The message is the server's, with `(at most N options per choice or levels per score)` added for capacity limits | WARNING |
+| `502` | The model server was unreachable or failed (5xx, timeouts after cold-start retries) | ERROR |
+
+Requests the server refused are never retried by the gateway. Every failure is logged with the reason (`error`) and
+the caller (`dgem.user`); filter with `severity>=WARNING` for caller errors and `severity>=ERROR` for server faults.
+
 ### Example: Calling the REST Gateway API with `curl`
 
 ```bash

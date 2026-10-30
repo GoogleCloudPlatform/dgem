@@ -357,6 +357,11 @@ func isColdStartRetryable(err error) bool {
 	if err == nil {
 		return false
 	}
+	// The serving image refused the request itself (schema, too many options): retrying can't help.
+	var he *client.HTTPError
+	if errors.As(err, &he) && he.StatusCode >= 400 && he.StatusCode < 500 && he.StatusCode != http.StatusTooManyRequests {
+		return false
+	}
 	s := err.Error()
 	return strings.Contains(s, "ConnectionRefusedError") ||
 		strings.Contains(s, "Connection refused") ||
@@ -948,12 +953,21 @@ func executeDecideWithWarmup(ctx context.Context, schemaContent, stateContent st
 			return resp, stats, attempts, nil
 		}
 
-		attemptSpan.SetStatus(codes.Error, err.Error())
 		attemptSpan.SetAttributes(attribute.String("dgem.error", err.Error()))
+		if status := decideUpstreamStatus(err); status < 500 {
+			// The serving image refused the request: the caller's error, logged at WARNING.
+			failSpan(attemptSpan, status, err.Error())
+		} else {
+			attemptSpan.SetStatus(codes.Error, err.Error())
+		}
 		attemptSpan.End(trace.WithTimestamp(attemptEnd))
 
 		if !isColdStartRetryable(err) || time.Now().After(deadline) || ctx.Err() != nil {
-			orchSpan.SetStatus(codes.Error, err.Error())
+			if status := decideUpstreamStatus(err); status < 500 {
+				failSpan(orchSpan, status, err.Error())
+			} else {
+				orchSpan.SetStatus(codes.Error, err.Error())
+			}
 			return nil, nil, attempts, err
 		}
 		_, backoffSpan := gatewayTracer().Start(ctx, "dgem.gpu.cold_start_backoff")
@@ -1488,6 +1502,10 @@ func runServe(cmd *cobra.Command, args []string) error {
 		if traceID != "" {
 			w.Header().Set("X-Dgem-Trace-Id", traceID)
 		}
+		// The caller is recorded before any validation so refused requests are attributable too.
+		if u := callerEmail(r); u != "" {
+			rootSpan.SetAttributes(attribute.String("dgem.user", u))
+		}
 
 		writeErr := func(status int, msg string) {
 			w.Header().Set("Content-Type", "application/json")
@@ -1680,7 +1698,13 @@ func runServe(cmd *cobra.Command, args []string) error {
 			}
 		}
 		if err != nil {
-			failDecide(http.StatusBadGateway, err.Error(), fmt.Sprintf("upstream (%s) decision failed after %d attempt(s): %s", backendTarget, attempts, err.Error()))
+			if status := decideUpstreamStatus(err); status < 500 {
+				// Refused by the serving image: same status and message (with the capacity hint) as /v1/systemone.
+				_, msg := decisionindex.ErrorStatus(err)
+				failDecide(status, err.Error(), msg)
+			} else {
+				failDecide(http.StatusBadGateway, err.Error(), fmt.Sprintf("upstream (%s) decision failed after %d attempt(s): %s", backendTarget, attempts, err.Error()))
+			}
 			return
 		}
 

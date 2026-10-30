@@ -21,6 +21,7 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/GoogleCloudPlatform/dgem/pkg/decisionindex"
 	"go.opentelemetry.io/otel/attribute"
 )
 
@@ -108,3 +109,14 @@ func (s *statusRecorder) Flush() {
 }
 
 func (s *statusRecorder) Unwrap() http.ResponseWriter { return s.ResponseWriter }
+
+// decideUpstreamStatus is the status /api/decide answers when the serving image call fails: the adapter's mapping
+// (decisionindex.ErrorStatus) for requests the server refused (400/422: schema, too many options, image it can't
+// read, context overflow), 502 for everything else (unreachable, 5xx, timeouts). It used to be 502 for all of them,
+// so a caller's mistake looked like a server fault and logged at ERROR.
+func decideUpstreamStatus(err error) int {
+	if status, _ := decisionindex.ErrorStatus(err); status >= 400 && status < 500 {
+		return status
+	}
+	return http.StatusBadGateway
+}
