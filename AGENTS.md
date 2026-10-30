@@ -3,6 +3,13 @@
 Guidance for people and coding agents changing this repository. User documentation is in `docs/`
 (published at https://googlecloudplatform.github.io/dgem/).
 
+## Source of truth
+This repository (module `github.com/GoogleCloudPlatform/dgem`) is where dgem is developed, released and built.
+Earlier development happened in a previous repository, which is frozen and will be archived. Open issues and pull
+requests here. Changes from the previous repository are brought over as rewritten ports (module path
+`github.com/GoogleCloudPlatform/dgem`); nothing is ported back. Don't port its move notice (README callout, docs
+banner, issue-template redirect, `go.mod` `Deprecated` line).
+
 ## Layout
 - `cmd/`: CLI, HTTP gateway (`dgem serve`), MCP server (`dgem mcp`), Stage 2 cascade, bench harnesses.
 - `pkg/client`: client for the serving backends (Vertex AI `/invoke/*`, Cloud Run / vLLM, local Metal `diffgemma`).
