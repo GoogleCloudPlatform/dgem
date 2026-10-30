@@ -77,6 +77,17 @@ cp -R "${REPO_ROOT}/fixtures/bbox" "${CTX}/fixtures/"
 cp "${REPO_ROOT}/deploy/probe/Dockerfile" "${CTX}/Dockerfile"
 gcloud builds submit "${CTX}" --project="${PROJECT}" --tag="${IMAGE}" --suppress-logs --quiet
 
+# Service-to-service key for the serving image (X-DGem-Key; see docs/deploy/public-images.md): probe.py and
+# serving_speed.py send it when DGEM_SERVER_KEY is set. Held only by services, never given to people. Skipped when the
+# secret doesn't exist.
+SERVER_KEY_SECRET="${SERVER_KEY_SECRET:-dgem-server-key}"
+JOB_SECRET_FLAGS=()
+if gcloud secrets describe "${SERVER_KEY_SECRET}" --project "${PROJECT}" >/dev/null 2>&1; then
+  gcloud secrets add-iam-policy-binding "${SERVER_KEY_SECRET}" --project "${PROJECT}" \
+    --member="serviceAccount:${SA}" --role=roles/secretmanager.secretAccessor --quiet >/dev/null
+  JOB_SECRET_FLAGS=(--set-secrets="DGEM_SERVER_KEY=${SERVER_KEY_SECRET}:latest")
+fi
+
 deploy_job() {  # name targets task-timeout
   local job="$1" targets="$2" timeout="$3"
   local extra="PROBE_LATENCY_REQUESTS=${N}"
@@ -84,7 +95,8 @@ deploy_job() {  # name targets task-timeout
   echo "==> Cloud Run job ${job} (${targets%%=*}...)"
   gcloud run jobs deploy "${job}" --project="${PROJECT}" --region="${REGION}" --image="${IMAGE}" \
     --service-account="${SA}" --tasks=1 --max-retries=0 --task-timeout="${timeout}" --cpu=1 --memory=512Mi \
-    --set-env-vars="^|^PROBE_TARGETS=${targets}|${extra}" --quiet >/dev/null
+    --set-env-vars="^|^PROBE_TARGETS=${targets}|${extra}" \
+    ${JOB_SECRET_FLAGS[@]+"${JOB_SECRET_FLAGS[@]}"} --quiet >/dev/null
   # Scheduler calls the Run Admin API as the probe SA (needs run.jobs.run on the job).
   gcloud run jobs add-iam-policy-binding "${job}" --project="${PROJECT}" --region="${REGION}" \
     --member="serviceAccount:${SA}" --role="roles/run.invoker" --quiet >/dev/null

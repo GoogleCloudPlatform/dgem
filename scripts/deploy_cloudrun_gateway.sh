@@ -136,6 +136,16 @@ if [[ -n "${GATEWAY_TAG:-}" ]]; then
 fi
 
 echo "-> Deploying Cloud Run service ${GATEWAY_SERVICE} (GPU_IDLE_TTL=${GPU_IDLE_TTL}, DGEM_VERTEX_URL=${VERTEX_ENDPOINT_ID:-<none>}${GATEWAY_TAG:+, no-traffic tag ${GATEWAY_TAG}})..."
+# Service-to-service key for the serving image (X-DGem-Key; see docs/deploy/public-images.md). Held only by services
+# (gateway, matrix jobs, probes), never given to people. Skipped when the secret doesn't exist.
+SERVER_KEY_SECRET="${SERVER_KEY_SECRET:-dgem-server-key}"
+GATEWAY_SECRET_FLAGS=()
+if gcloud secrets describe "${SERVER_KEY_SECRET}" --project "${PROJECT}" >/dev/null 2>&1; then
+  gcloud secrets add-iam-policy-binding "${SERVER_KEY_SECRET}" --project "${PROJECT}" \
+    --member="serviceAccount:${GATEWAY_SA}" --role=roles/secretmanager.secretAccessor --quiet >/dev/null
+  GATEWAY_SECRET_FLAGS=(--set-secrets="DGEM_SERVER_KEY=${SERVER_KEY_SECRET}:latest")
+fi
+
 gcloud run deploy "${GATEWAY_SERVICE}" "${TRAFFIC_FLAGS[@]}" \
   --project="${PROJECT}" \
   --region="${REGION}" \
@@ -150,6 +160,7 @@ gcloud run deploy "${GATEWAY_SERVICE}" "${TRAFFIC_FLAGS[@]}" \
   --timeout=600 \
   --no-allow-unauthenticated \
   --set-env-vars="${ENV_VARS}" \
+  ${GATEWAY_SECRET_FLAGS[@]+"${GATEWAY_SECRET_FLAGS[@]}"} \
   --quiet
 
 # Ensure Gateway SA has Vertex AI User role to query/invoke Dedicated Endpoint ${VERTEX_ENDPOINT_ID}

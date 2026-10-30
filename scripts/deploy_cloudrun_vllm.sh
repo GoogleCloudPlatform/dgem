@@ -153,8 +153,22 @@ CLOUDRUN_VPC_EGRESS="${CLOUDRUN_VPC_EGRESS:-all-traffic}"
 if [[ "$CLOUDRUN_VPC_EGRESS" != "off" ]]; then
   DEPLOY_FLAGS+=("--network=${CLOUDRUN_NETWORK}" "--subnet=${CLOUDRUN_SUBNET}" "--vpc-egress=${CLOUDRUN_VPC_EGRESS}")
 fi
+SECRETS=()
 if gcloud secrets describe "$HF_SECRET" --project "$PROJECT_ID" >/dev/null 2>&1; then
-  DEPLOY_FLAGS+=("--set-secrets=HF_TOKEN=${HF_SECRET}:latest")
+  SECRETS+=("HF_TOKEN=${HF_SECRET}:latest")
+fi
+# Service-to-service key for the serving image (X-DGem-Key; see docs/deploy/public-images.md). Held only by services
+# (gateway, matrix jobs, probes), never given to people. Skipped when the secret doesn't exist.
+SERVER_KEY_SECRET="${SERVER_KEY_SECRET:-dgem-server-key}"
+if gcloud secrets describe "${SERVER_KEY_SECRET}" --project "$PROJECT_ID" >/dev/null 2>&1; then
+  gcloud secrets add-iam-policy-binding "${SERVER_KEY_SECRET}" --project "$PROJECT_ID" \
+    --member="serviceAccount:${GPU_SA}" --role=roles/secretmanager.secretAccessor --quiet >/dev/null
+  SECRETS+=("DGEM_SERVER_KEY=${SERVER_KEY_SECRET}:latest")
+else
+  echo "==> WARNING: secret ${SERVER_KEY_SECRET} not found: the service will accept POSTs without X-DGem-Key"
+fi
+if [ ${#SECRETS[@]} -gt 0 ]; then
+  DEPLOY_FLAGS+=("--set-secrets=$(IFS=,; echo "${SECRETS[*]}")")
 fi
 
 # CLOUDRUN_TAG=<tag>: deploy as a tagged revision with no traffic (blue/green); verify at

@@ -89,6 +89,22 @@ echo "    Image: ${IMAGE_URI}"
 echo "    Endpoint display name: ${ENDPOINT_DISPLAY_NAME} (an existing endpoint with this name is reused)"
 
 echo "==> [1/4] Uploading Invoke-Enabled Model (${MODEL_DISPLAY_NAME}) with invokeRoutePrefix=\"/*\"..."
+# Service-to-service key for the serving image (X-DGem-Key; see docs/deploy/public-images.md). Held only by services
+# (gateway, matrix jobs, probes), never given to people. Skipped when the secret doesn't exist.
+SERVER_KEY_SECRET="${SERVER_KEY_SECRET:-dgem-server-key}"
+SERVER_KEY_ENV=""
+if gcloud secrets describe "${SERVER_KEY_SECRET}" --project "${PROJECT_ID}" >/dev/null 2>&1; then
+  # Vertex model env takes plain values (no Secret Manager references): the key is visible to anyone who can read
+  # the model resource (aiplatform.models.get), so keep that role to the operators.
+  SERVER_KEY_VALUE="$(gcloud secrets versions access latest --secret="${SERVER_KEY_SECRET}" --project "${PROJECT_ID}")"
+  SERVER_KEY_JSON="$(printf '%s' "${SERVER_KEY_VALUE}" | python3 -c 'import json,sys;print(json.dumps(sys.stdin.read()))')"
+  SERVER_KEY_ENV=",
+        { \"name\": \"DGEM_SERVER_KEY\", \"value\": ${SERVER_KEY_JSON} }"
+  echo "==> X-DGem-Key required on POST (secret ${SERVER_KEY_SECRET})"
+else
+  echo "==> WARNING: secret ${SERVER_KEY_SECRET} not found: the endpoint will accept POSTs without X-DGem-Key"
+fi
+
 UPLOAD_PAYLOAD=$(cat <<EOF
 {
   "model": {
@@ -112,7 +128,7 @@ UPLOAD_PAYLOAD=$(cat <<EOF
         { "name": "MAX_MODEL_LEN", "value": "${MAX_MODEL_LEN}" },
         { "name": "HTTP_IDLE_TIMEOUT", "value": "${HTTP_IDLE_TIMEOUT:-120}" },
         { "name": "DEFAULT_SAMPLES", "value": "${DEFAULT_SAMPLES}" },
-        { "name": "MAX_INFLIGHT", "value": "${MAX_INFLIGHT}" }
+        { "name": "MAX_INFLIGHT", "value": "${MAX_INFLIGHT}" }${SERVER_KEY_ENV}
       ]
     }
   }
@@ -123,7 +139,7 @@ EOF
 UPLOAD_OP=$(curl -sS -X POST "${API_BASE}/projects/${PROJECT_ID}/locations/${REGION}/models:upload" \
   -H "Authorization: Bearer ${TOKEN}" \
   -H "Content-Type: application/json" \
-  -d "${UPLOAD_PAYLOAD}")
+  --data-binary @- <<<"${UPLOAD_PAYLOAD}")  # stdin, so the key in the payload isn't on the command line
 
 OP_NAME=$(echo "$UPLOAD_OP" | python3 -c 'import json,sys; d=json.load(sys.stdin); print(d.get("name",""))')
 if [ -z "$OP_NAME" ]; then
