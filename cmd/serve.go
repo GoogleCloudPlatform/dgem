@@ -1485,10 +1485,21 @@ func runServe(cmd *cobra.Command, args []string) error {
 		}
 
 		var payload GatewayDecideRequest
-		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
-			rootSpan.SetStatus(codes.Error, err.Error())
+		decideBody, rerr := io.ReadAll(r.Body)
+		if rerr == nil {
+			rerr = decisionindex.CheckMediaKeys(decideBody) // audio/video fields: 400, not silently ignored
+		}
+		if rerr == nil {
+			rerr = json.Unmarshal(decideBody, &payload)
+		}
+		if rerr != nil {
+			rootSpan.SetStatus(codes.Error, rerr.Error())
 			rootSpan.End()
-			writeErr(http.StatusBadRequest, fmt.Sprintf("invalid JSON body: %s", err.Error()))
+			msg := rerr.Error()
+			if !errors.Is(rerr, decisionindex.ErrUnsupportedMedia) {
+				msg = "invalid JSON body: " + msg
+			}
+			writeErr(http.StatusBadRequest, msg)
 			return
 		}
 
@@ -1889,6 +1900,18 @@ func runServe(cmd *cobra.Command, args []string) error {
 		}
 
 		// If this is a JSON POST /v1/systemone request and adapter mode is enabled, evaluate via decisionindex.ExecuteSystemOne
+		if reqPath == "/v1/systemone" && !strings.Contains(r.Header.Get("Content-Type"), "multipart") {
+			// Audio/video fields are refused before any routing, adapter or pass-through.
+			if err := decisionindex.CheckMediaKeys(bodyBytes); err != nil {
+				proxySpan.SetStatus(codes.Error, "unsupported_media")
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusBadRequest)
+				_ = json.NewEncoder(w).Encode(map[string]interface{}{
+					"error": map[string]string{"message": err.Error(), "type": "invalid_request_error"},
+				})
+				return
+			}
+		}
 		if reqPath == "/v1/systemone" && serveSystemOneMode != "passthrough" && r.URL.Query().Get("raw") != "1" && !strings.Contains(r.Header.Get("Content-Type"), "multipart") {
 			var soReq decisionindex.SystemOneRequest
 			if err := json.Unmarshal(bodyBytes, &soReq); err == nil && len(soReq.Questions) > 0 {

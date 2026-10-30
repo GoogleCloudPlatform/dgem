@@ -20,6 +20,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"math"
 	"net/http"
 	"regexp"
@@ -192,6 +193,32 @@ type SystemOneRequest struct {
 // ErrInvalidImage marks an image reference the adapter refuses. Local file paths are rejected because the adapter
 // runs as a network server: a path would read the adapter host's own filesystem.
 var ErrInvalidImage = errors.New("invalid image")
+
+// ErrUnsupportedMedia marks a request carrying media the model can't read (audio, video). DiffusionGemma is text +
+// image only; such fields used to be dropped silently and the request answered as a guess.
+var ErrUnsupportedMedia = errors.New("unsupported media")
+
+// UnsupportedMediaKeys are top-level request fields refused with ErrUnsupportedMedia.
+var UnsupportedMediaKeys = []string{"audio", "audios", "video", "videos", "input_audio", "video_url", "videos_url"}
+
+// CheckMediaKeys returns ErrUnsupportedMedia when a JSON request body has any of UnsupportedMediaKeys at top level.
+// Bodies that aren't JSON objects pass (the caller's own decoding reports those).
+func CheckMediaKeys(body []byte) error {
+	var top map[string]json.RawMessage
+	if json.Unmarshal(body, &top) != nil {
+		return nil
+	}
+	var found []string
+	for _, k := range UnsupportedMediaKeys {
+		if _, ok := top[k]; ok {
+			found = append(found, k)
+		}
+	}
+	if len(found) == 0 {
+		return nil
+	}
+	return fmt.Errorf("%w: %s not supported; this model reads text and images only: send video as sampled frames in \"images\" and audio as a transcript in \"state\"", ErrUnsupportedMedia, strings.Join(found, ", "))
+}
 
 // ValidateImages checks that every image is a data: URI or an http(s) URL (empty entries are skipped, as
 // client.BuildMultimodalContent does).
@@ -865,8 +892,17 @@ func NewSystemOneHTTPHandler(cli *client.Client, opts EngineOptions) http.Handle
 			http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
 			return
 		}
+		raw, err := io.ReadAll(r.Body)
+		if err != nil {
+			http.Error(w, fmt.Sprintf("invalid body: %v", err), http.StatusBadRequest)
+			return
+		}
+		if err := CheckMediaKeys(raw); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
 		var req SystemOneRequest
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		if err := json.Unmarshal(raw, &req); err != nil {
 			http.Error(w, fmt.Sprintf("invalid JSON body: %v", err), http.StatusBadRequest)
 			return
 		}
@@ -894,7 +930,7 @@ var upstreamClientError = regexp.MustCompile(`upstream 4\d\d\b`)
 // to fix: 422 with the upstream message (the Decision Index kit scores 422 as a capacity refusal, not a failure).
 // Everything else is 500. Shared by `dgem systemone serve` and the gateway's /v1/systemone route.
 func ErrorStatus(err error) (int, string) {
-	if errors.Is(err, ErrInvalidImage) {
+	if errors.Is(err, ErrInvalidImage) || errors.Is(err, ErrUnsupportedMedia) {
 		return http.StatusBadRequest, err.Error()
 	}
 	msg := err.Error()
