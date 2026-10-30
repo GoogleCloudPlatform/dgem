@@ -15,6 +15,7 @@
 package cmd
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -202,6 +203,44 @@ func isLoopbackURL(u string) bool {
 		strings.Contains(lower, "0.0.0.0")
 }
 
+// tokenCacheTTL is how long a token may be cached: until shortly before it expires, at most 45 minutes. The metadata
+// server hands out its own cached access token, which can have well under 45 minutes left; caching that token for a flat
+// 45 minutes served an expired token, so every Vertex control-plane check got 401 and a warm endpoint read as
+// "quiesced" for up to ~15 minutes per hour. lifetime <= 0 means unknown: cache briefly.
+func tokenCacheTTL(lifetime time.Duration) time.Duration {
+	const maxTTL, margin, unknownTTL = 45 * time.Minute, 2 * time.Minute, 5 * time.Minute
+	if lifetime <= 0 {
+		return unknownTTL
+	}
+	ttl := lifetime - margin
+	if ttl > maxTTL {
+		ttl = maxTTL
+	}
+	if ttl < 0 {
+		ttl = 0
+	}
+	return ttl
+}
+
+// jwtLifetime returns the time left before a JWT (ID token) expires, from its unverified "exp" claim; 0 if unknown.
+func jwtLifetime(tok string) time.Duration {
+	parts := strings.Split(tok, ".")
+	if len(parts) != 3 {
+		return 0
+	}
+	payload, err := base64.RawURLEncoding.DecodeString(strings.TrimRight(parts[1], "="))
+	if err != nil {
+		return 0
+	}
+	var claims struct {
+		Exp int64 `json:"exp"`
+	}
+	if json.Unmarshal(payload, &claims) != nil || claims.Exp == 0 {
+		return 0
+	}
+	return time.Until(time.Unix(claims.Exp, 0))
+}
+
 // FetchGCPAccessToken mints an OAuth2 access token (cloud-platform scope) for Vertex AI Endpoints (:rawPredict).
 // It checks (1) GOOGLE_OAUTH_ACCESS_TOKEN, (2) GCP Metadata Server, (3) pure-Go ADC (application_default_credentials.json), and (4) gcloud CLI.
 func FetchGCPAccessToken() string {
@@ -218,6 +257,7 @@ func FetchGCPAccessToken() string {
 	}
 
 	var token string
+	var lifetime time.Duration // 0 = unknown (gcloud may return its own cached token)
 	metaURL := "http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/token"
 	if req, err := http.NewRequest("GET", metaURL, nil); err == nil {
 		req.Header.Set("Metadata-Flavor", "Google")
@@ -228,9 +268,11 @@ func FetchGCPAccessToken() string {
 				if body, err := io.ReadAll(resp.Body); err == nil {
 					var parsed struct {
 						AccessToken string `json:"access_token"`
+						ExpiresIn   int64  `json:"expires_in"`
 					}
 					if json.Unmarshal(body, &parsed) == nil && parsed.AccessToken != "" {
 						token = strings.TrimSpace(parsed.AccessToken)
+						lifetime = time.Duration(parsed.ExpiresIn) * time.Second
 					}
 				}
 			}
@@ -242,12 +284,13 @@ func FetchGCPAccessToken() string {
 		accTok, idTok := fetchADCTokens()
 		if accTok != "" {
 			token = accTok
+			lifetime = time.Hour // freshly minted by a refresh-token grant
 		}
 		if idTok != "" {
 			tokenCacheMu.Lock()
 			tokenCache["adc_id_token"] = cachedToken{
 				token:   idTok,
-				expires: time.Now().Add(45 * time.Minute),
+				expires: time.Now().Add(tokenCacheTTL(jwtLifetime(idTok))),
 			}
 			tokenCacheMu.Unlock()
 		}
@@ -268,7 +311,7 @@ func FetchGCPAccessToken() string {
 		tokenCacheMu.Lock()
 		tokenCache[cacheKey] = cachedToken{
 			token:   token,
-			expires: time.Now().Add(45 * time.Minute),
+			expires: time.Now().Add(tokenCacheTTL(lifetime)),
 		}
 		tokenCacheMu.Unlock()
 	}
@@ -312,12 +355,12 @@ func FetchGCPIdentityToken(explicitAudience, targetURL string) string {
 			tokenCacheMu.Lock()
 			tokenCache["adc_id_token"] = cachedToken{
 				token:   idTok,
-				expires: time.Now().Add(45 * time.Minute),
+				expires: time.Now().Add(tokenCacheTTL(jwtLifetime(idTok))),
 			}
 			if accTok != "" {
 				tokenCache["oauth2_access_token|cloud-platform"] = cachedToken{
 					token:   accTok,
-					expires: time.Now().Add(45 * time.Minute),
+					expires: time.Now().Add(tokenCacheTTL(time.Hour)),
 				}
 			}
 			tokenCacheMu.Unlock()
@@ -357,7 +400,7 @@ func FetchGCPIdentityToken(explicitAudience, targetURL string) string {
 		tokenCacheMu.Lock()
 		tokenCache[cacheKey] = cachedToken{
 			token:   token,
-			expires: time.Now().Add(45 * time.Minute),
+			expires: time.Now().Add(tokenCacheTTL(jwtLifetime(token))),
 		}
 		tokenCacheMu.Unlock()
 	}
