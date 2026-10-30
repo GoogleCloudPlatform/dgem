@@ -32,6 +32,7 @@ import (
 	cloudtrace "github.com/GoogleCloudPlatform/opentelemetry-operations-go/exporter/trace"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/propagation"
 	"go.opentelemetry.io/otel/sdk/resource"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
@@ -241,9 +242,50 @@ func (p *gatewaySpanProcessor) OnEnd(s sdktrace.ReadOnlySpan) {
 		logEntry["logging.googleapis.com/spanId"] = spanID
 		logEntry["logging.googleapis.com/trace_sampled"] = sc.IsSampled()
 	}
-	if b, err := json.Marshal(logEntry); err == nil {
-		fmt.Fprintln(os.Stdout, string(b))
+	if sev, msg := spanSeverity(s, attrs); sev != "INFO" {
+		logEntry["severity"] = sev
+		if msg != "" {
+			logEntry["error"] = msg
+		}
 	}
+	if b, err := json.Marshal(logEntry); err == nil {
+		fmt.Fprintln(spanLogWriter, string(b))
+	}
+}
+
+// spanLogWriter receives the span log lines (stdout, which Cloud Run ships to Cloud Logging; tests swap it).
+var spanLogWriter io.Writer = os.Stdout
+
+// maxSpanErrorLen caps the error text in a span log line. Error messages can carry a caller's question id (e.g. the
+// serving image's "question 'move_1': ...") but never request content.
+const maxSpanErrorLen = 300
+
+// spanSeverity is the log severity of a finished span and its error text: WARNING for a 4xx (the caller's request),
+// ERROR for a 5xx or an error span without a status code, INFO otherwise. Before, every span logged at INFO with no
+// reason, so a refused request left only its status code.
+func spanSeverity(s sdktrace.ReadOnlySpan, attrs map[string]interface{}) (string, string) {
+	status := 0
+	if v, ok := attrs["http.status_code"]; ok {
+		if n, ok := v.(int64); ok {
+			status = int(n)
+		}
+	}
+	msg := ""
+	if s.Status().Code == codes.Error {
+		msg = s.Status().Description
+		if r := []rune(msg); len(r) > maxSpanErrorLen {
+			msg = string(r[:maxSpanErrorLen]) + "..."
+		}
+	}
+	switch {
+	case status >= 500:
+		return "ERROR", msg
+	case status >= 400:
+		return "WARNING", msg
+	case s.Status().Code == codes.Error:
+		return "ERROR", msg
+	}
+	return "INFO", ""
 }
 
 func (p *gatewaySpanProcessor) Shutdown(ctx context.Context) error   { return nil }

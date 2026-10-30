@@ -19,7 +19,6 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
-	"io"
 	"math"
 	"net/http"
 	"os"
@@ -736,24 +735,11 @@ func cascadeImageParts(ctx context.Context, images []string) ([]*genai.Part, err
 				data = []byte(raw)
 			}
 		case strings.HasPrefix(ref, "http://") || strings.HasPrefix(ref, "https://"):
-			req, err := http.NewRequestWithContext(ctx, http.MethodGet, ref, nil)
+			b, m, err := fetchImageURL(ctx, ref)
 			if err != nil {
 				return nil, err
 			}
-			hr, err := imageFetchClient(30 * time.Second).Do(req)
-			if err != nil {
-				return nil, err
-			}
-			if hr.StatusCode < 200 || hr.StatusCode > 299 {
-				hr.Body.Close()
-				return nil, fmt.Errorf("image URL: HTTP %d", hr.StatusCode)
-			}
-			data, err = io.ReadAll(io.LimitReader(hr.Body, 20<<20))
-			hr.Body.Close()
-			if err != nil {
-				return nil, err
-			}
-			mime = strings.SplitN(hr.Header.Get("Content-Type"), ";", 2)[0]
+			data, mime = b, m
 		default:
 			if !allowLocalImagePaths {
 				return nil, fmt.Errorf("image must be a data: URI or an http(s) URL on this server")

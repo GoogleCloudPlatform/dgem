@@ -270,6 +270,7 @@ export default defineConfig({
             { label: 'Regression Matrix', slug: 'operate/regression-matrix' },
             { label: 'Monitoring and Alerts', slug: 'operate/monitoring' },
             { label: 'Observability and Traces', slug: 'operate/observability' },
+            { label: 'Security and Access', slug: 'operate/security' },
           ],
         },
         {

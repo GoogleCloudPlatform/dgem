@@ -127,6 +127,18 @@ fi
 if [[ -n "${GCP_PROJECT_NUMBER:-}" ]]; then
   ENV_VARS="${ENV_VARS},DGEM_GCP_PROJECT_NUMBER=${GCP_PROJECT_NUMBER}"
 fi
+# Caller authentication: the gateway verifies the IAP JWT on every request (signature, audience, expiry) and takes the
+# caller's identity from it, so access is tracked even if IAP were bypassed or misconfigured. Cloud Run IAP audience:
+# /projects/<PROJECT_NUMBER>/locations/<REGION>/services/<SERVICE>. Set VERIFY_IAP=0 to skip (not recommended), or
+# IAP_AUDIENCE to override (e.g. a load-balancer backend service: /projects/<NUM>/global/backendServices/<ID>).
+if [[ "${VERIFY_IAP:-1}" == "1" ]]; then
+  if [[ -z "${IAP_AUDIENCE:-}" ]]; then
+    PROJECT_NUM="${GCP_PROJECT_NUMBER:-$(gcloud projects describe "${PROJECT}" --format='value(projectNumber)')}"
+    IAP_AUDIENCE="/projects/${PROJECT_NUM}/locations/${REGION}/services/${GATEWAY_SERVICE}"
+  fi
+  ENV_VARS="${ENV_VARS},DGEM_IAP_AUDIENCE=${IAP_AUDIENCE}"
+  echo "==> Gateway verifies IAP JWTs (audience ${IAP_AUDIENCE})"
+fi
 
 # GATEWAY_TAG=<tag>: deploy as a tagged revision with no traffic (blue/green). Verify at
 # https://<tag>---<service-url-host>, then: gcloud run services update-traffic <service> --to-tags=<tag>=100

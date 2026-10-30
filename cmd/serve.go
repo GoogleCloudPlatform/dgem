@@ -23,6 +23,7 @@ import (
 	"io"
 	"io/fs"
 	"math"
+	"net"
 	"net/http"
 	"net/url"
 	"os"
@@ -99,6 +100,8 @@ func init() {
 	serveCmd.Flags().BoolVar(&serveAdminAPI, "enable-admin-api", false, "Allow POST /api/backend-config and /api/vertex/deploy|teardown (changes gateway-wide settings and Vertex deployments; env: DGEM_ADMIN_API=1)")
 	serveCmd.Flags().StringVar(&serveAllowedVertexFlag, "allowed-vertex-endpoints", "", "Extra Vertex endpoint IDs/URLs a request may select via vertex_url; the configured endpoint is always allowed (env: DGEM_ALLOWED_VERTEX_ENDPOINTS)")
 	serveCmd.Flags().StringVar(&serveCORSOriginsFlag, "cors-origins", "", "Comma-separated browser origins allowed to call the gateway cross-origin (e.g. https://studio.example.com); default none, the embedded Studio is same-origin (env: DGEM_CORS_ORIGINS)")
+	serveCmd.Flags().StringVar(&serveIAPAudience, "iap-audience", "", "Verify the IAP JWT (X-Goog-IAP-JWT-Assertion) on every request against this audience, e.g. /projects/<PROJECT_NUMBER>/locations/<REGION>/services/<SERVICE> for Cloud Run IAP; callers' identity then comes from the verified token (env: DGEM_IAP_AUDIENCE)")
+	serveCmd.Flags().StringVar(&serveAPIKeys, "api-keys", "", "Comma-separated API keys accepted in the X-DGem-Api-Key header, for self-hosted gateways without IAP (env: DGEM_GATEWAY_KEYS). Never put keys on the command line in shared environments; prefer the env var")
 	serveCmd.Flags().StringVar(&serveAllowedHostsFlag, "allowed-hosts", "", "Extra Host header values accepted on loopback connections, for a reverse proxy on the same machine; default only localhost/127.0.0.1/::1 (DNS rebinding protection; env: DGEM_ALLOWED_HOSTS)")
 	serveCmd.Flags().BoolVar(&serveLocalMode, "local", false, "Run gateway targeting local diffgemma (Apple Silicon Metal) without cloud failover (env: DGEM_SERVE_LOCAL)")
 	serveCmd.Flags().StringVar(&serveCascadeModel, "cascade-model", DefaultCascadeGeminiModel, "Default Stage-2 Vertex AI Gemini 3.x model for cascade escalation (e.g. 'gemini-3.8-flash', 'gemini-3.5-flash-lite'; env: DGEM_CASCADE_MODEL)")
@@ -352,6 +355,11 @@ func defaultSampleVars(id string, vars []string) map[string]string {
 
 func isColdStartRetryable(err error) bool {
 	if err == nil {
+		return false
+	}
+	// The serving image refused the request itself (schema, too many options): retrying can't help.
+	var he *client.HTTPError
+	if errors.As(err, &he) && he.StatusCode >= 400 && he.StatusCode < 500 && he.StatusCode != http.StatusTooManyRequests {
 		return false
 	}
 	s := err.Error()
@@ -945,12 +953,21 @@ func executeDecideWithWarmup(ctx context.Context, schemaContent, stateContent st
 			return resp, stats, attempts, nil
 		}
 
-		attemptSpan.SetStatus(codes.Error, err.Error())
 		attemptSpan.SetAttributes(attribute.String("dgem.error", err.Error()))
+		if status := decideUpstreamStatus(err); status < 500 {
+			// The serving image refused the request: the caller's error, logged at WARNING.
+			failSpan(attemptSpan, status, err.Error())
+		} else {
+			attemptSpan.SetStatus(codes.Error, err.Error())
+		}
 		attemptSpan.End(trace.WithTimestamp(attemptEnd))
 
 		if !isColdStartRetryable(err) || time.Now().After(deadline) || ctx.Err() != nil {
-			orchSpan.SetStatus(codes.Error, err.Error())
+			if status := decideUpstreamStatus(err); status < 500 {
+				failSpan(orchSpan, status, err.Error())
+			} else {
+				orchSpan.SetStatus(codes.Error, err.Error())
+			}
 			return nil, nil, attempts, err
 		}
 		_, backoffSpan := gatewayTracer().Start(ctx, "dgem.gpu.cold_start_backoff")
@@ -966,7 +983,9 @@ func executeDecideWithWarmup(ctx context.Context, schemaContent, stateContent st
 
 func runServe(cmd *cobra.Command, args []string) error {
 	defaultRetriesForLongRunning()
-	allowLocalImagePaths = false // image references now come from network requests
+	allowLocalImagePaths = false              // image references now come from network requests
+	client.ImageHTTPClient = imageFetchClient // pkg/client fetches (if any) also connect to public addresses only
+	client.SendGatewayKey = false             // never forward a caller key (DGEM_GATEWAY_KEY) to the serving image
 	if envPort := os.Getenv("PORT"); envPort != "" && !cmd.Flags().Changed("port") {
 		if p, err := fmt.Sscanf(envPort, "%d", &servePort); err == nil && p == 1 {
 			// parsed from PORT
@@ -1038,6 +1057,12 @@ func runServe(cmd *cobra.Command, args []string) error {
 	if env := os.Getenv("DGEM_CORS_ORIGINS"); env != "" && !cmd.Flags().Changed("cors-origins") {
 		serveCORSOriginsFlag = env
 	}
+	if env := os.Getenv("DGEM_IAP_AUDIENCE"); env != "" && !cmd.Flags().Changed("iap-audience") {
+		serveIAPAudience = env
+	}
+	if env := os.Getenv("DGEM_GATEWAY_KEYS"); env != "" && !cmd.Flags().Changed("api-keys") {
+		serveAPIKeys = env
+	}
 	if env := os.Getenv("DGEM_ALLOWED_HOSTS"); env != "" && !cmd.Flags().Changed("allowed-hosts") {
 		serveAllowedHostsFlag = env
 	}
@@ -1078,6 +1103,7 @@ func runServe(cmd *cobra.Command, args []string) error {
 			"default_backend": defB,
 			"upstream_url":    viper.GetString("url"),
 			"vertex_url":      vxURL,
+			"body_logging":    bodyLogStatus(),
 		})
 	})
 
@@ -1477,18 +1503,38 @@ func runServe(cmd *cobra.Command, args []string) error {
 		if traceID != "" {
 			w.Header().Set("X-Dgem-Trace-Id", traceID)
 		}
+		// The caller is recorded before any validation so refused requests are attributable too.
+		if u := callerEmail(r); u != "" {
+			rootSpan.SetAttributes(attribute.String("dgem.user", u))
+		}
 
 		writeErr := func(status int, msg string) {
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(status)
 			_ = json.NewEncoder(w).Encode(map[string]string{"error": msg})
 		}
+		// failDecide records the caller's status and the reason on the root span (WARNING for 4xx, ERROR for 5xx in
+		// the span log), ends it and writes the error response.
+		failDecide := func(status int, reason, msg string) {
+			failSpan(rootSpan, status, reason)
+			rootSpan.End()
+			writeErr(status, msg)
+		}
 
 		var payload GatewayDecideRequest
-		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
-			rootSpan.SetStatus(codes.Error, err.Error())
-			rootSpan.End()
-			writeErr(http.StatusBadRequest, fmt.Sprintf("invalid JSON body: %s", err.Error()))
+		decideBody, rerr := io.ReadAll(r.Body)
+		if rerr == nil {
+			rerr = decisionindex.CheckMediaKeys(decideBody) // audio/video fields: 400, not silently ignored
+		}
+		if rerr == nil {
+			rerr = json.Unmarshal(decideBody, &payload)
+		}
+		if rerr != nil {
+			msg := rerr.Error()
+			if !errors.Is(rerr, decisionindex.ErrUnsupportedMedia) {
+				msg = "invalid JSON body: " + msg
+			}
+			failDecide(http.StatusBadRequest, rerr.Error(), msg)
 			return
 		}
 
@@ -1548,20 +1594,16 @@ func runServe(cmd *cobra.Command, args []string) error {
 			}
 		}
 		if err != nil {
-			renderSpan.SetStatus(codes.Error, err.Error())
+			failSpan(renderSpan, http.StatusBadRequest, err.Error())
 			renderSpan.End()
-			rootSpan.SetStatus(codes.Error, err.Error())
-			rootSpan.End()
-			writeErr(http.StatusBadRequest, fmt.Sprintf("template render failed: %s", err.Error()))
+			failDecide(http.StatusBadRequest, err.Error(), fmt.Sprintf("template render failed: %s", err.Error()))
 			return
 		}
 
 		schemaContent, stateContent, err := template.ParseStructuredPayload(rendered, payload.Variables)
 		renderSpan.End()
 		if err != nil {
-			rootSpan.SetStatus(codes.Error, err.Error())
-			rootSpan.End()
-			writeErr(http.StatusBadRequest, fmt.Sprintf("failed to parse rendered template: %s", err.Error()))
+			failDecide(http.StatusBadRequest, err.Error(), fmt.Sprintf("failed to parse rendered template: %s", err.Error()))
 			return
 		}
 
@@ -1593,9 +1635,7 @@ func runServe(cmd *cobra.Command, args []string) error {
 			layout = r.URL.Query().Get("layout")
 		}
 		if schemaContent, err = ApplyPromptLayout(schemaContent, layout); err != nil {
-			rootSpan.SetStatus(codes.Error, err.Error())
-			rootSpan.End()
-			writeErr(http.StatusBadRequest, err.Error())
+			failDecide(http.StatusBadRequest, err.Error(), err.Error())
 			return
 		}
 
@@ -1615,18 +1655,15 @@ func runServe(cmd *cobra.Command, args []string) error {
 			images = append(images, payload.ImageURL)
 		}
 		images = append(images, payload.Images...)
-		if err := checkRequestImages(ctx, images); err != nil {
-			rootSpan.SetStatus(codes.Error, err.Error())
-			rootSpan.End()
-			writeErr(http.StatusBadRequest, err.Error())
+		images, imgErr := prepareRequestImages(ctx, images) // URLs fetched here and sent as data: URIs
+		if imgErr != nil {
+			failDecide(imageErrorStatus(imgErr), imgErr.Error(), imgErr.Error())
 			return
 		}
 
 		backendTarget, targetUpstreamURL, backendErr := resolveBackendTarget(r, payload.Backend, payload.VertexURL)
 		if backendErr != nil {
-			rootSpan.SetStatus(codes.Error, backendErr.Error())
-			rootSpan.End()
-			writeErr(http.StatusBadRequest, backendErr.Error())
+			failDecide(http.StatusBadRequest, backendErr.Error(), backendErr.Error())
 			return
 		}
 
@@ -1662,9 +1699,13 @@ func runServe(cmd *cobra.Command, args []string) error {
 			}
 		}
 		if err != nil {
-			rootSpan.SetStatus(codes.Error, err.Error())
-			rootSpan.End()
-			writeErr(http.StatusBadGateway, fmt.Sprintf("upstream (%s) decision failed after %d attempt(s): %s", backendTarget, attempts, err.Error()))
+			if status := decideUpstreamStatus(err); status < 500 {
+				// Refused by the serving image: same status and message (with the capacity hint) as /v1/systemone.
+				_, msg := decisionindex.ErrorStatus(err)
+				failDecide(status, err.Error(), msg)
+			} else {
+				failDecide(http.StatusBadGateway, err.Error(), fmt.Sprintf("upstream (%s) decision failed after %d attempt(s): %s", backendTarget, attempts, err.Error()))
+			}
 			return
 		}
 
@@ -1696,9 +1737,7 @@ func runServe(cmd *cobra.Command, args []string) error {
 			}
 			prior, perr := NormalizeStage2Prior(prior)
 			if perr != nil {
-				rootSpan.SetStatus(codes.Error, perr.Error())
-				rootSpan.End()
-				writeErr(http.StatusBadRequest, perr.Error())
+				failDecide(http.StatusBadRequest, perr.Error(), perr.Error())
 				return
 			}
 			thresholdMode := payload.CascadeThresholdMode
@@ -1707,9 +1746,7 @@ func runServe(cmd *cobra.Command, args []string) error {
 			}
 			thresholdMode, terr := NormalizeCascadeThresholdMode(thresholdMode)
 			if terr != nil {
-				rootSpan.SetStatus(codes.Error, terr.Error())
-				rootSpan.End()
-				writeErr(http.StatusBadRequest, terr.Error())
+				failDecide(http.StatusBadRequest, terr.Error(), terr.Error())
 				return
 			}
 			_, cascadeSpan := gatewayTracer().Start(ctx, "dgem.cascade.gemini")
@@ -1744,9 +1781,7 @@ func runServe(cmd *cobra.Command, args []string) error {
 
 		appliedTemp, _, terr := applyPolicyTemperature(resp, schemaContent, payload.Temperature, cascadeSummary)
 		if terr != nil {
-			rootSpan.SetStatus(codes.Error, terr.Error())
-			rootSpan.End()
-			writeErr(http.StatusBadRequest, terr.Error())
+			failDecide(http.StatusBadRequest, terr.Error(), terr.Error())
 			return
 		}
 
@@ -1811,6 +1846,7 @@ func runServe(cmd *cobra.Command, args []string) error {
 			attribute.Int("dgem.warmup_attempts", attempts),
 			attribute.Float64("dgem.max_entropy", maxEntropy),
 		)
+		rootSpan.SetAttributes(attribute.Int("http.status_code", http.StatusOK))
 		rootSpan.SetStatus(codes.Ok, "ok")
 		rootSpan.End()
 
@@ -1856,9 +1892,14 @@ func runServe(cmd *cobra.Command, args []string) error {
 			w.Header().Set("X-Dgem-Trace-Id", tid)
 		}
 
+		if u := callerEmail(r); u != "" {
+			proxySpan.SetAttributes(attribute.String("dgem.user", u))
+		}
+		proxySpan.SetAttributes(attribute.String("dgem.route", r.URL.Path))
+
 		bodyBytes, err := io.ReadAll(r.Body)
 		if err != nil {
-			proxySpan.SetStatus(codes.Error, err.Error())
+			failSpan(proxySpan, http.StatusBadRequest, "failed to read request body: "+err.Error())
 			http.Error(w, `{"error": "failed to read request body"}`, http.StatusBadRequest)
 			return
 		}
@@ -1871,7 +1912,7 @@ func runServe(cmd *cobra.Command, args []string) error {
 
 		backendTarget, resolvedURL, bErr := resolveBackendTarget(r, bodyMeta.Backend, bodyMeta.VertexURL)
 		if bErr != nil {
-			proxySpan.SetStatus(codes.Error, bErr.Error())
+			failSpan(proxySpan, http.StatusBadRequest, bErr.Error())
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusBadRequest)
 			_ = json.NewEncoder(w).Encode(map[string]interface{}{
@@ -1889,43 +1930,78 @@ func runServe(cmd *cobra.Command, args []string) error {
 		}
 
 		// If this is a JSON POST /v1/systemone request and adapter mode is enabled, evaluate via decisionindex.ExecuteSystemOne
-		if reqPath == "/v1/systemone" && serveSystemOneMode != "passthrough" && r.URL.Query().Get("raw") != "1" && !strings.Contains(r.Header.Get("Content-Type"), "multipart") {
-			var soReq decisionindex.SystemOneRequest
-			if err := json.Unmarshal(bodyBytes, &soReq); err == nil && len(soReq.Questions) > 0 {
-				if err := checkSystemOneImages(ctx, soReq.Images); err != nil {
-					proxySpan.SetStatus(codes.Error, "invalid_image")
-					w.Header().Set("Content-Type", "application/json")
-					w.WriteHeader(http.StatusBadRequest)
-					_ = json.NewEncoder(w).Encode(map[string]interface{}{
-						"error": map[string]string{"message": err.Error(), "type": "invalid_request_error"},
-					})
-					return
-				}
-				proxySpan.SetAttributes(attribute.Int("dgem.image_count", len(soReq.Images)))
-				soOpts := decisionindex.DefaultEngineOptions()
-				soOpts.TemperatureScale = serveSystemOneTemp
-				cli := GetClientForURL(resolvedURL)
-				soResp, soErr := decisionindex.ExecuteSystemOne(ctx, cli, soReq, soOpts)
-				if soErr != nil {
-					errStr := soErr.Error()
-					if strings.Contains(errStr, "HTTP 422") ||
-						strings.Contains(errStr, "options per choice") ||
-						strings.Contains(errStr, "the canvas holds at most") ||
-						strings.Contains(errStr, "too many tokens") ||
-						strings.Contains(errStr, "maximum context length") ||
-						strings.Contains(errStr, "context window") {
-						w.WriteHeader(http.StatusUnprocessableEntity)
-						_, _ = w.Write([]byte(errStr))
-						return
-					}
-					http.Error(w, soErr.Error(), http.StatusInternalServerError)
-					return
-				}
+		if reqPath == "/v1/systemone" && !strings.Contains(r.Header.Get("Content-Type"), "multipart") {
+			// Audio/video fields are refused before any routing, adapter or pass-through.
+			if err := decisionindex.CheckMediaKeys(bodyBytes); err != nil {
+				failSpan(proxySpan, http.StatusBadRequest, err.Error())
 				w.Header().Set("Content-Type", "application/json")
-				w.Header().Set("X-DGem-Backend-Used", backendTarget)
-				_ = json.NewEncoder(w).Encode(soResp)
+				w.WriteHeader(http.StatusBadRequest)
+				_ = json.NewEncoder(w).Encode(map[string]interface{}{
+					"error": map[string]string{"message": err.Error(), "type": "invalid_request_error"},
+				})
 				return
 			}
+		}
+		// Image URLs are fetched by the gateway (public addresses only) and forwarded as data: URIs, on every path:
+		// adapter, ?raw=1, pass-through and the chat proxy. The serving image never fetches a caller's URL.
+		if !strings.Contains(r.Header.Get("Content-Type"), "multipart") {
+			nb, err := inlineProxyBodyImages(ctx, reqPath, bodyBytes)
+			if err != nil {
+				failSpan(proxySpan, imageErrorStatus(err), err.Error())
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(imageErrorStatus(err))
+				_ = json.NewEncoder(w).Encode(map[string]interface{}{
+					"error": map[string]string{"message": err.Error(), "type": "invalid_request_error"},
+				})
+				return
+			}
+			bodyBytes = nb
+		}
+		if reqPath == "/v1/systemone" && serveSystemOneMode != "passthrough" && r.URL.Query().Get("raw") != "1" && !strings.Contains(r.Header.Get("Content-Type"), "multipart") {
+			// A body the adapter can't read is refused, never forwarded unbatched: that silent fall-through sent score
+			// questions to the server in one oversized read. ?raw=1 or --systemone-mode passthrough bypass.
+			proxySpan.SetAttributes(systemOneBodyAttrs(bodyBytes)...)
+			soReq, status, parseErr := decodeSystemOneAdapterRequest(bodyBytes)
+			if parseErr != nil {
+				failSpan(proxySpan, status, "invalid /v1/systemone request: "+parseErr.Error())
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(status)
+				_ = json.NewEncoder(w).Encode(map[string]interface{}{
+					"error": map[string]string{
+						"message": "invalid /v1/systemone request: " + parseErr.Error() + " (send ?raw=1 to forward a body to the serving image unchanged)",
+						"type":    "invalid_request_error",
+					},
+				})
+				return
+			}
+			proxySpan.SetAttributes(systemOneShapeAttrs(soReq)...)
+			if err := checkSystemOneImages(ctx, soReq.Images); err != nil {
+				failSpan(proxySpan, http.StatusBadRequest, err.Error())
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusBadRequest)
+				_ = json.NewEncoder(w).Encode(map[string]interface{}{
+					"error": map[string]string{"message": err.Error(), "type": "invalid_request_error"},
+				})
+				return
+			}
+			soOpts := decisionindex.DefaultEngineOptions()
+			soOpts.TemperatureScale = serveSystemOneTemp
+			cli := GetClientForURL(resolvedURL)
+			soResp, soErr := decisionindex.ExecuteSystemOne(ctx, cli, soReq, soOpts)
+			if soErr != nil {
+				status, msg := decisionindex.ErrorStatus(soErr)
+				failSpan(proxySpan, status, msg)
+				http.Error(w, msg, status)
+				return
+			}
+			if soResp.EvaluationTrace != nil {
+				proxySpan.SetAttributes(attribute.Int("dgem.systemone.forward_passes", soResp.EvaluationTrace.ForwardPasses))
+			}
+			proxySpan.SetAttributes(attribute.Int("http.status_code", http.StatusOK))
+			w.Header().Set("Content-Type", "application/json")
+			w.Header().Set("X-DGem-Backend-Used", backendTarget)
+			_ = json.NewEncoder(w).Encode(soResp)
+			return
 		}
 
 		if reqPath == "/v1/systemone" && backendTarget == "local" {
@@ -2015,6 +2091,11 @@ func runServe(cmd *cobra.Command, args []string) error {
 					time.Sleep(6 * time.Second)
 					continue
 				}
+				proxySpan.SetAttributes(attribute.Int("http.status_code", resp.StatusCode))
+				if resp.StatusCode >= 400 {
+					// Pass-through (?raw=1, multipart, chat): record the upstream's reason, not just its status.
+					failSpan(proxySpan, resp.StatusCode, fmt.Sprintf("upstream %d: %s", resp.StatusCode, strings.TrimSpace(string(respBody))))
+				}
 				if resp.StatusCode == http.StatusOK {
 					attemptSpan.SetStatus(codes.Ok, "ok")
 					if backendTarget == "cloudrun" {
@@ -2044,8 +2125,8 @@ func runServe(cmd *cobra.Command, args []string) error {
 
 	// 8. Model Context Protocol (MCP) Streamable HTTP Server at /mcp
 	mcpHandler := newMCPHTTPHandler(len(allowedHosts) > 0)
-	mux.Handle("/mcp", mcpHandler)
-	mux.Handle("/mcp/", mcpHandler)
+	mux.Handle("/mcp", mcpSpanHandler(mcpHandler))
+	mux.Handle("/mcp/", mcpSpanHandler(mcpHandler))
 
 	// 9. Serve Lit WebComponents Studio (from --ui-dir on disk if available, else embedded studio/dist)
 	var uiFS fs.FS
@@ -2080,7 +2161,12 @@ func runServe(cmd *cobra.Command, args []string) error {
 		http.NotFound(w, r)
 	})
 
-	secured, err := gatewaySecurityHandler(mux, corsOrigins, allowedHosts)
+	auth := parseCallerAuth(serveIAPAudience, serveAPIKeys)
+	bodyLogMu.Lock()
+	bodyLog = parseBodyLogConfig(os.Getenv, time.Now())
+	blc := bodyLog
+	bodyLogMu.Unlock()
+	secured, err := gatewaySecurityHandler(callerAuthHandler(bodyLogHandler(mux, blc), auth), corsOrigins, allowedHosts)
 	if err != nil {
 		return err
 	}
@@ -2097,6 +2183,18 @@ func runServe(cmd *cobra.Command, args []string) error {
 	fmt.Printf("   • Studio Assets:       %s\n", uiSource)
 	if len(corsOrigins) > 0 {
 		fmt.Printf("   • CORS Origins:        %s\n", strings.Join(corsOrigins, ", "))
+	}
+	switch {
+	case blc.on():
+		fmt.Printf("   ⚠ Body logging:        ON (%s) until %s for %s (sample %.2f): request/response content goes to the logs as log_type %q\n",
+			blc.mode, blc.until.UTC().Format(time.RFC3339), strings.Join(blc.users, ", "), blc.sample, bodyLogType)
+	case blc != nil:
+		fmt.Printf("   ⚠ Body logging:        OFF, refused: %s\n", blc.err)
+	}
+	if auth.enabled() {
+		fmt.Printf("   • Caller auth:         %s\n", auth.describe())
+	} else if !isLoopbackHost(net.JoinHostPort(serveHost, "0")) {
+		fmt.Printf("   ⚠ Caller auth:         none: listening on %s without --iap-audience or --api-keys; put the gateway behind IAP/IAM\n", serveHost)
 	}
 	return http.ListenAndServe(addr, secured)
 }
@@ -2124,4 +2222,26 @@ func rawChatGoneHandler(w http.ResponseWriter, r *http.Request) {
 			"type":    "route_removed",
 		},
 	})
+}
+
+// decodeSystemOneAdapterRequest reads a /v1/systemone body for the gateway's adapter mode, merging "media" into
+// "images". On failure it returns the HTTP status to answer with: 400 for a body that isn't a Jev request (bad JSON,
+// criteria of the wrong shape, no questions) or for unsupported media; such bodies are never forwarded.
+func decodeSystemOneAdapterRequest(body []byte) (decisionindex.SystemOneRequest, int, error) {
+	var req decisionindex.SystemOneRequest
+	err := json.Unmarshal(body, &req)
+	if err == nil && len(req.Questions) == 0 {
+		err = errors.New(`"questions" must be an object with at least one question`)
+	}
+	if err == nil {
+		err = req.MergeMedia()
+	}
+	if err == nil {
+		return req, http.StatusOK, nil
+	}
+	status, _ := decisionindex.ErrorStatus(err)
+	if status == http.StatusInternalServerError {
+		status = http.StatusBadRequest // JSON decoding errors
+	}
+	return req, status, err
 }

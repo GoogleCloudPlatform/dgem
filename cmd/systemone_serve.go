@@ -21,6 +21,7 @@ import (
 	"os"
 	"time"
 
+	"github.com/GoogleCloudPlatform/dgem/pkg/client"
 	"github.com/GoogleCloudPlatform/dgem/pkg/decisionindex"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
@@ -155,6 +156,10 @@ func runSystemOneServe(cmd *cobra.Command, args []string) error {
 		PromptLayout:      soPromptLayout,
 	}
 
+	// A network server: image URLs in requests are fetched by pkg/client (and sent upstream as data: URIs) with a client
+	// that only connects to public addresses, at connect time and on every redirect.
+	allowLocalImagePaths = false
+	client.ImageHTTPClient = imageFetchClient
 	cli := GetClientForURL(upstream)
 
 	mux := http.NewServeMux()

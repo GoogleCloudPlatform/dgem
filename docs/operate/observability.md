@@ -150,3 +150,63 @@ Provisioned via `scripts/setup_cloud_monitoring.sh` (`deploy/monitoring/dgem-ope
   curl -s -H "Authorization: Bearer $(gcloud auth print-identity-token)" \
     "${GATEWAY_URL}/api/traces?trace_id=${TRACE_ID}" | jq .
   ```
+
+## 4. Request and Response Body Logging (Off by Default)
+
+The gateway's normal logs carry the caller, route, status, error reason and request shape (question counts, image
+count), never request or response content. When you need to see what a caller sent and what it got back (a client
+that behaves differently after a release, say), turn on body logging for a limited time and for named callers only.
+
+**What it does.** For each matching request on `/v1/systemone`, `/api/decide` or `/mcp` (`tools/call` only), the
+gateway writes one extra JSON line to stdout with `"log_type": "dgem.bodies"`:
+
+| Field | Content |
+| :--- | :--- |
+| `dgem_user`, `route`, `http_status`, `trace_id` | Who called, which route, the status returned, the trace (also set as `logging.googleapis.com/trace`) |
+| `request` | The request body (only with `DGEM_LOG_BODIES=both`) |
+| `response`, `response_bytes` | The response body and its full size |
+| `request_truncated`, `response_truncated` | `true` when a body was longer than 96 KB and was cut (Cloud Logging entries hold at most 256 KB) |
+| `logged_until` | When logging switches itself off |
+
+Images are never logged: every `data:` URI and every base64 string of 512+ characters, anywhere in a body, is
+replaced by `{"redacted": "data_uri" or "base64", "mime", "chars", "sha256"}` (the first 16 hex digits of the
+digest), so you can still tell whether two requests carried the same image. Multipart uploads and binary bodies are
+recorded by type and size only. Headers, tokens and other routes (`/api/auth/*`, admin routes) are never logged.
+
+**Settings** (environment variables on the gateway service):
+
+| Variable | Required | Meaning |
+| :--- | :---: | :--- |
+| `DGEM_LOG_BODIES` | yes | `off` (default), `responses` (responses only) or `both` |
+| `DGEM_LOG_BODIES_UNTIL` | yes | RFC3339 time, at most 7 days ahead; nothing is logged after it, so the setting can't be left on by mistake |
+| `DGEM_LOG_BODIES_USERS` | yes | Comma-separated caller identities as they appear in `dgem.user` (an IAP account, `apikey:<id>`); write `*` to log every caller |
+| `DGEM_LOG_BODIES_SAMPLE` | no | Fraction of matching requests to log, `(0, 1]`, default `1` |
+
+An invalid combination (missing or past `UNTIL`, more than 7 days ahead, no callers) leaves logging off. The gateway
+prints the reason at startup, and `GET /health` reports it under `body_logging`:
+
+```json
+"body_logging": {"enabled": true, "mode": "both", "until": "2026-10-22T18:00:00Z", "callers": 1, "sample": 1}
+```
+
+**Keep the content out of your normal logs.** Bodies are your callers' data. Route them to a separate log bucket with
+short retention and narrow read access, and exclude them from `_Default`, before you turn logging on:
+
+```bash
+PROJECT=<PROJECT>; REGION=<REGION>
+gcloud logging buckets create dgem-bodies --project=$PROJECT --location=$REGION --retention-days=7
+gcloud logging sinks create dgem-bodies \
+  "logging.googleapis.com/projects/$PROJECT/locations/$REGION/buckets/dgem-bodies" --project=$PROJECT \
+  --log-filter='resource.type="cloud_run_revision" AND jsonPayload.log_type="dgem.bodies"'
+gcloud logging sinks update _Default --project=$PROJECT \
+  --add-exclusion=name=dgem-bodies,filter='jsonPayload.log_type="dgem.bodies"'
+# Read access: grant roles/logging.viewAccessor on a log view of the dgem-bodies bucket to the people who debug.
+```
+
+**Turn it on and off.** Setting the variables deploys a new Cloud Run revision. Deploy it with `--no-traffic --tag`
+first and check `/health`, then move traffic. Logging stops by itself at `UNTIL`; to stop earlier, remove
+`DGEM_LOG_BODIES` (another revision). Read entries with:
+
+```text
+jsonPayload.log_type="dgem.bodies" AND jsonPayload.dgem_user="<caller>"
+```

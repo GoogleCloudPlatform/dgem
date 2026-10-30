@@ -264,13 +264,25 @@ Any service or script can query `dgem serve` (`https://<your-dgem-gateway>` or l
 | Endpoint | Method | Description |
 | :--- | :---: | :--- |
 | **`/api/decide` & `/api/decide/{template}`** | `POST` | Renders `{template}.json.tmpl` (or inline `custom_template`) with `{"variables": {...}, "backend": "vertex_first", "cascade_mode": "off\|entropy\|on_miss", "cascade_threshold": 0.35, "cascade_model": "gemini-3.8-flash"}`, runs 1-pass `DiffusionGemma` readout, and returns `answers`, `diagnostics`, `backend_target`, `max_entropy`, `gpu_forward_ms`, `cold_start_wait_ms`, and `trace_spans`. |
-| **`/v1/systemone`** | `POST` | `SystemOne` / `JevBench` decisions (`state`, `questions`, optional `images` as data: URIs or public http(s) URLs) through the adapter, or passed through unchanged for `multipart/form-data` image uploads and `?raw=1`, to Vertex AI (`/invoke/v1/systemone`) or Cloud Run GPU (`/v1/systemone`). Returns HTTP 501 on `local` backend. |
+| **`/v1/systemone`** | `POST` | `SystemOne` / `JevBench` decisions (`state`, `questions`, optional `images` as data: URIs or public http(s) URLs, which the gateway fetches and forwards as data: URIs) through the adapter, or passed through for `multipart/form-data` image uploads and `?raw=1` (image URLs inlined the same way), to Vertex AI (`/invoke/v1/systemone`) or Cloud Run GPU (`/v1/systemone`). Returns HTTP 501 on `local` backend. Question types: `choice` (`criteria` an object of options), `noul` and `score` (`criteria` an array of levels, lowest first, at most 26); the adapter reads at most 8 questions at a time. Score answers: `score` (0-indexed expected level, sum(i·p_i)), `probabilities` keyed `"0"`..`"n-1"`, `legend` (index to level text), `confidence`; every answer carries `confidence`. A choice with one option or a score with one level is answered without a model call (probability 1). `media: [{"mime_type": "image/...", "data": <data: URI or base64>}]` is accepted as an alias for `images` (appended after them; other fields ignored); other media types get 400. In adapter mode a body that is not a valid request (bad JSON, `questions` missing or not an object, criteria of the wrong shape, an unknown type) gets 400 instead of being forwarded; `?raw=1` forwards a body unchanged. |
 | **`/api/templates`** | `GET` | Returns the full JSON catalog of discovered `.json.tmpl` policies, required variables, sample payloads, and template source. |
 | **`/api/status` & `/api/backend-config`** | `GET` | Returns real-time health, `available_backends` (`["vertex_first", "vertex", "cloudrun", "local"]`), and replica state for Cloud Run GPU (`dgemma`), Vertex AI Dedicated Endpoint (`<endpoint-id>`), and local diffgemma (Apple Silicon Metal). |
 | **`/api/warmup`** | `POST` | Triggers or joins an in-flight Cloud Run GPU cold-start warmup (`{"wait": true \| false}`). |
 | **`/api/traces`** | `GET` | Returns recent OpenTelemetry traces (`?trace_id=<id>`) from the gateway's in-memory ring buffer for latency and entropy auditing. |
 | **`/v1/chat/completions`** | `POST` | **Deprecated** decision-only proxy (schema system message + JSON state) kept for `dgem decide -u <gateway>/v1`; responses carry a `Deprecation` header. Use `/api/decide` or `/v1/systemone`. `/v1/raw/chat/completions` returns `410 Gone`. |
 | **`/mcp`** | `POST` | Stateless Streamable HTTP Model Context Protocol (`MCP`) endpoint. |
+
+**Errors and logging.** `/api/decide` and `/v1/systemone` use the same status codes:
+
+| Status | Meaning | Gateway log severity |
+| :---: | :--- | :--- |
+| `400` | The gateway can't read the request: bad JSON, unknown template name, unknown question type, unsupported media (audio/video), an image URL it refuses | WARNING |
+| `401` | Caller authentication required (IAP or `X-DGem-Api-Key`, when enabled) | — |
+| `422` | The model server refused the request: e.g. more than 26 options in one choice on `/api/decide` (`/v1/systemone` brackets wider choices itself), an answer template too long for the canvas, an image it can't fetch, or the input over the context window. The message is the server's, with `(at most N options per choice or levels per score)` added for capacity limits | WARNING |
+| `502` | The model server was unreachable or failed (5xx, timeouts after cold-start retries) | ERROR |
+
+Requests the server refused are never retried by the gateway. Every failure is logged with the reason (`error`) and
+the caller (`dgem.user`); filter with `severity>=WARNING` for caller errors and `severity>=ERROR` for server faults.
 
 ### Example: Calling the REST Gateway API with `curl`
 

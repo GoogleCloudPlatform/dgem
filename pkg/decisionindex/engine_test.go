@@ -289,10 +289,13 @@ func TestNewSystemOneHTTPHandler_CapacityMarkers(t *testing.T) {
 	}
 }
 
-// TestNewSystemOneHTTPHandler_ServerSchemaError: a server HTTP 400 schema error (here a score question with 30 levels,
-// which the adapter does not bracket) becomes a 422 with the kit's capacity marker, not a 500 (#120).
+// TestNewSystemOneHTTPHandler_ServerSchemaError: a server HTTP 400 schema error ("at most 26 alternatives") becomes a
+// 422 with the kit's capacity marker, not a 500 (#120). A score question with more levels than one read can label is
+// refused by the adapter itself with 422, before any upstream call.
 func TestNewSystemOneHTTPHandler_ServerSchemaError(t *testing.T) {
+	calls := 0
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls++
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusBadRequest)
 		_, _ = w.Write([]byte(`{"error": {"message": "question 'q1': at most 26 alternatives", "type": "invalid_request_error"}}`))
@@ -300,20 +303,23 @@ func TestNewSystemOneHTTPHandler_ServerSchemaError(t *testing.T) {
 	defer srv.Close()
 	cli := client.NewClient(srv.URL+"/v1", "dgemma", 2*time.Second)
 	cli.MaxRetries = 0
-	levels := make(map[string]string)
-	for i := 0; i < 30; i++ {
-		levels[fmt.Sprintf("l%02d", i)] = ""
-	}
-	reqBody, _ := json.Marshal(SystemOneRequest{
-		State:     "Sample state",
-		Questions: map[string]SystemOneQuestion{"q1": {Type: "score", Criteria: levels}},
-	})
+	h := NewSystemOneHTTPHandler(cli, DefaultEngineOptions())
+
 	rec := httptest.NewRecorder()
-	NewSystemOneHTTPHandler(cli, DefaultEngineOptions())(rec, httptest.NewRequest("POST", "/v1/systemone", strings.NewReader(string(reqBody))))
-	if rec.Code != http.StatusUnprocessableEntity {
-		t.Fatalf("expected 422, got %d: %s", rec.Code, rec.Body.String())
+	h(rec, httptest.NewRequest("POST", "/v1/systemone", strings.NewReader(`{"state": "s", "questions": {"q1": {"type": "choice", "criteria": {"a": "", "b": ""}}}}`)))
+	if rec.Code != http.StatusUnprocessableEntity || !strings.Contains(rec.Body.String(), "options per choice") {
+		t.Fatalf("server schema error: got %d %q, want 422 with the kit marker", rec.Code, rec.Body.String())
 	}
-	if !strings.Contains(rec.Body.String(), "options per choice") {
-		t.Fatalf("expected the kit marker in %q", rec.Body.String())
+
+	levels := make([]string, 30)
+	for i := range levels {
+		levels[i] = fmt.Sprintf("level %02d", i)
+	}
+	lb, _ := json.Marshal(levels)
+	calls = 0
+	rec = httptest.NewRecorder()
+	h(rec, httptest.NewRequest("POST", "/v1/systemone", strings.NewReader(`{"state": "s", "questions": {"q1": {"type": "score", "criteria": `+string(lb)+`}}}`)))
+	if rec.Code != http.StatusUnprocessableEntity || calls != 0 {
+		t.Fatalf("30-level score: got %d %q with %d upstream calls, want 422 and none", rec.Code, rec.Body.String(), calls)
 	}
 }

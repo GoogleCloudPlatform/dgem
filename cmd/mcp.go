@@ -284,6 +284,10 @@ func runRemoteMCPProxy(remoteURL string) error {
 		if tok != "" {
 			req.Header.Set("Authorization", "Bearer "+tok)
 		}
+		gwKey := client.GatewayKeyFromEnv() // a self-hosted gateway started with --api-keys
+		if gwKey != "" {
+			req.Header.Set(client.GatewayKeyHeader, gwKey)
+		}
 
 		// If get_health_and_gpu_status is called with a specific backend parameter,
 		// query /api/status?backend=<backend> directly so backend-specific telemetry is returned
@@ -303,6 +307,9 @@ func runRemoteMCPProxy(remoteURL string) error {
 				if sErr == nil {
 					if tok != "" {
 						sReq.Header.Set("Authorization", "Bearer "+tok)
+					}
+					if gwKey != "" {
+						sReq.Header.Set(client.GatewayKeyHeader, gwKey)
 					}
 					if sResp, doErr := httpClient.Do(sReq); doErr == nil {
 						sBody, _ := io.ReadAll(sResp.Body)
@@ -461,6 +468,9 @@ func runRemoteMCPProxy(remoteURL string) error {
 						fbReq.Header.Set("Content-Type", "application/json")
 						if tok != "" {
 							fbReq.Header.Set("Authorization", "Bearer "+tok)
+						}
+						if gwKey != "" {
+							fbReq.Header.Set(client.GatewayKeyHeader, gwKey)
 						}
 						if fbResp, doErr := httpClient.Do(fbReq); doErr == nil {
 							fbBody, _ := io.ReadAll(fbResp.Body)
@@ -1592,8 +1602,9 @@ func buildMCPServer() *mcp.Server {
 		if input.Image != "" {
 			imgs = append(imgs, input.Image)
 		}
-		if err := checkRequestImages(ctx, imgs); err != nil {
-			return nil, GatewayDecideResponse{}, err
+		imgs, imgErr := prepareRequestImages(ctx, imgs)
+		if imgErr != nil {
+			return nil, GatewayDecideResponse{}, imgErr
 		}
 		backendTarget, targetURL, bErr := resolveBackendTargetFromParams(ctx, input.Backend, input.VertexURL)
 		if bErr != nil {
@@ -1688,8 +1699,10 @@ func buildMCPServer() *mcp.Server {
 		if strings.TrimSpace(input.Image) == "" {
 			return nil, LocateBBoxToolOutput{}, fmt.Errorf("'image' URL or data URI is required")
 		}
-		if err := checkRequestImages(ctx, []string{input.Image}); err != nil {
+		if prepared, err := prepareRequestImages(ctx, []string{input.Image}); err != nil {
 			return nil, LocateBBoxToolOutput{}, err
+		} else {
+			input.Image = prepared[0]
 		}
 		target := strings.TrimSpace(input.Target)
 		if target == "" {
@@ -1778,8 +1791,10 @@ func buildMCPServer() *mcp.Server {
 			"locate_bounding_boxes for precise boxes.",
 		InputSchema: visionBackendChoicesSchema[LocateRequest](),
 	}, func(ctx context.Context, req *mcp.CallToolRequest, input LocateRequest) (*mcp.CallToolResult, LocateResult, error) {
-		if err := checkRequestImages(ctx, []string{input.Image}); err != nil {
+		if prepared, err := prepareRequestImages(ctx, []string{input.Image}); err != nil {
 			return nil, LocateResult{}, err
+		} else {
+			input.Image = prepared[0]
 		}
 		backendTarget, targetURL, bErr := resolveBackendTargetFromParams(ctx, input.Backend, input.VertexURL)
 		if bErr != nil {
@@ -1845,7 +1860,8 @@ func buildMCPServer() *mcp.Server {
 		if input.Image != "" {
 			customImgs = append(customImgs, input.Image)
 		}
-		if err := checkRequestImages(ctx, customImgs); err != nil {
+		customImgs, err := prepareRequestImages(ctx, customImgs)
+		if err != nil {
 			return nil, GatewayDecideResponse{}, err
 		}
 		resp, stats, attempts, err := executeDecideWithWarmup(ctx, schemaStr, stateStr, customImgs, targetURL)

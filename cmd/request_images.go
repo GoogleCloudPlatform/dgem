@@ -48,7 +48,7 @@ func checkRequestImages(ctx context.Context, images []string) error {
 		case ref == "", strings.HasPrefix(ref, "data:"):
 			continue
 		case strings.HasPrefix(ref, "http://"), strings.HasPrefix(ref, "https://"):
-			if err := checkPublicImageURL(ctx, ref); err != nil {
+			if err := imageHostCheck(ctx, ref); err != nil {
 				return err
 			}
 		default:
@@ -68,6 +68,9 @@ func checkSystemOneImages(ctx context.Context, images []string) error {
 	}
 	return checkRequestImages(ctx, images)
 }
+
+// imageHostCheck is the request-time host check for image URLs (a variable so tests can serve images from loopback).
+var imageHostCheck = checkPublicImageURL
 
 func checkPublicImageURL(ctx context.Context, ref string) error {
 	u, err := url.Parse(ref)

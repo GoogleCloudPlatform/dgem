@@ -17,6 +17,8 @@ app/web screenshots. Re-check on your own images with `dgem bench-vision` (below
   that says when to ask Gemini instead.
 - **Do not use it for coordinates.** Use a detector or Gemini for bounding boxes and masks, for "is this hidden or cut
   off?", or for locating elements in app and web screenshots.
+- **Send images as files, data: URIs or public URLs.** The `dgem` CLI and gateway fetch URLs themselves (the gateway
+  only from public addresses) and send the image bytes; the serving image does not fetch URLs (`DGEM_IMAGE_URLS=deny`).
 
 ## Supported questions
 

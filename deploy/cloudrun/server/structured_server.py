@@ -1264,8 +1264,54 @@ JEV_EXTENSIONS = (
 )
 
 
+# dgem: media this model can't read. DiffusionGemma is text + image only (no audio encoder, no video token), so a
+# request carrying these keys or content parts is refused instead of answered as if they were absent.
+# dgem: whether vLLM may fetch http(s) image URLs from requests. "deny" (default) accepts images only as data: URIs
+# (or multipart uploads): the serving image runs with VPC egress, so a URL could rebind or redirect to the metadata
+# server or internal hosts. The dgem gateway fetches URLs itself (public addresses only) and forwards data: URIs.
+IMAGE_URLS = os.environ.get("DGEM_IMAGE_URLS", "deny")
+if IMAGE_URLS not in ("deny", "allow"):
+    raise SystemExit("DGEM_IMAGE_URLS must be deny or allow")
+UNSUPPORTED_MEDIA_KEYS = ("audio", "audios", "video", "videos", "input_audio", "video_url", "videos_url")
+UNSUPPORTED_MEDIA_MSG = "this model reads text and images only; send video as sampled frames in \"images\" and audio as a transcript in \"state\""
+
+
+class UnsupportedMediaError(SchemaError):
+    """A request with media the model can't read: HTTP 400 on every route (the caller sent the wrong kind of input)."""
+
+
+def check_media_keys(body):
+    """Raise SchemaError when a /v1/systemone body carries media other than images."""
+    found = [k for k in UNSUPPORTED_MEDIA_KEYS if isinstance(body, dict) and k in body]
+    if found:
+        raise UnsupportedMediaError(f"{', '.join(found)}: not supported; {UNSUPPORTED_MEDIA_MSG}")
+
+
+def check_content_parts(content):
+    """Raise SchemaError for chat content parts other than text and images (e.g. input_audio, video_url)."""
+    if not isinstance(content, list):
+        return
+    bad = sorted({str(p.get("type")) for p in content
+                  if isinstance(p, dict) and p.get("type") not in ("text", "image_url", "image")})
+    if bad:
+        raise UnsupportedMediaError(f"content part type {', '.join(bad)}: not supported; {UNSUPPORTED_MEDIA_MSG}")
+    if IMAGE_URLS == "deny":
+        for p in content:
+            if not isinstance(p, dict):
+                continue
+            ref = p.get("image_url") if p.get("type") == "image_url" else p.get("image") if p.get("type") == "image" else None
+            if isinstance(ref, dict):
+                ref = ref.get("url")
+            if isinstance(ref, str) and not ref.strip().lower().startswith("data:"):
+                raise UnsupportedMediaError(
+                    "image URLs are not fetched by this server (DGEM_IMAGE_URLS=deny): send images as data: URIs; the "
+                    "dgem gateway fetches URLs for you"
+                )
+
+
 def jev_schema(body):
     """This server's schema from a Jev request body."""
+    check_media_keys(body)
     qs = body.get("questions")
     if not isinstance(qs, dict) or not qs:
         raise SchemaError("questions: needs a non-empty map of id -> question")
@@ -1553,14 +1599,12 @@ class Handler(BaseHTTPRequestHandler):
         except SchemaError as e:
             return 422, {"error": {"message": str(e), "type": "validation_error"}}
         except urllib.error.HTTPError as e:
-            return 502, {
-                "error": {
-                    "message": (
-                        f"upstream {e.code}: {e.read()[:300].decode(errors='replace')}"
-                    ),
-                    "type": "server_error",
-                }
-            }
+            detail = e.read()[:300].decode(errors="replace")
+            if 400 <= e.code < 500:
+                # dgem: the model server refused the request itself (an image URL it can't fetch or decode, a prompt
+                # over the context length): the caller's to fix, so 422, not a server error.
+                return 422, {"error": {"message": f"upstream {e.code}: {detail}", "type": "validation_error"}}
+            return 502, {"error": {"message": f"upstream {e.code}: {detail}", "type": "server_error"}}
         except Exception as e:
             return 500, {"error": {"message": repr(e), "type": "server_error"}}
         finally:
@@ -1574,6 +1618,8 @@ class Handler(BaseHTTPRequestHandler):
         try:
             schema = jev_schema(req)
             state = jev_state(req, images + jev_images(req.get("images")))
+        except UnsupportedMediaError as e:
+            return self._json(400, {"error": {"message": str(e), "type": "invalid_request_error"}})
         except SchemaError as e:
             return self._json(
                 422, {"error": {"message": str(e), "type": "validation_error"}}
@@ -1639,6 +1685,7 @@ class Handler(BaseHTTPRequestHandler):
             schema_value = json.loads(message_text(msgs[0]))
             schema = parse_schema(schema_value)
             content = msgs[1].get("content", "")
+            check_content_parts(content)
             has_image = isinstance(content, list) and any(
                 isinstance(p, dict) and p.get("type") in ("image_url", "image")
                 for p in content

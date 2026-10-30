@@ -14,6 +14,51 @@ image for a release in your own project with `make cloudrun-build`.
   scripts set it from the Secret Manager secret `dgem-server-key` when it exists (`SERVER_KEY_SECRET` names another).
   Use it for any endpoint that more than your own services can reach, such as a Vertex AI dedicated endpoint
   ([Vertex AI](docs/deploy/vertex.md#1-prerequisites)).
+- **Gateway: caller authentication.** `dgem serve --iap-audience` (`DGEM_IAP_AUDIENCE`) verifies the IAP JWT on every
+  request (signature, audience, expiry) and takes the caller's identity from it, discarding identity headers sent by
+  the client; `--api-keys` (`DGEM_GATEWAY_KEYS`, header `X-DGem-Api-Key`) serves self-hosted gateways without IAP.
+  With either set, requests without valid credentials get 401 (`GET /health` stays open). `deploy_cloudrun_gateway.sh`
+  sets the Cloud Run IAP audience by default (`VERIFY_IAP=0` to skip). The CLI and `dgem mcp --remote` send
+  `DGEM_GATEWAY_KEY`; the gateway never forwards it upstream. Without either option the gateway warns at startup when
+  it listens on a non-loopback address.
+- **Image URLs are fetched by dgem, never by the serving image.** The gateway (`/api/decide`, MCP, `/api/locate`,
+  `/v1/systemone` including `?raw=1`, and the `/v1/chat/completions` proxy) fetches http(s) image URLs with its
+  public-address-only client and forwards data: URIs (unfetchable or non-image URLs: 422); the CLI fetches from the
+  caller's network and does the same. **Behaviour change:** the serving image refuses http(s) image URLs with 400 by
+  default (`DGEM_IMAGE_URLS=deny`; `allow` restores the old behaviour), because vLLM runs with network egress and a URL
+  that passed the gateway's check could rebind or redirect to the metadata server or internal hosts.
+- **Audio and video are refused with 400** by the serving image, the gateway and `dgem systemone serve` (`audio`,
+  `video`, `input_audio`, `video_url` and similar fields or chat content parts), instead of being answered as if they
+  were absent. Send video as sampled frames in `images` and audio as a transcript.
+- **Requests the model server refuses are 4xx, not 500/502.** The serving image answers 422 (400 on the chat route)
+  when vLLM refuses a request, such as an image it can't fetch or decode or a prompt over the context length; the
+  gateway and `dgem systemone serve` pass such refusals on with the server's message. **Behaviour change:**
+  `/api/decide` returns 422 instead of 502 for them and no longer retries them as cold starts; unreachable or failing
+  servers stay 502. The gateway API reference documents the 400/401/422/502 meanings.
+- **`/v1/systemone` adapter: score questions, one-option questions, `media`.**
+  - `score` questions (`criteria` an array of levels) are read with the rest in batches of at most 8; answers follow
+    the serving image's form (`score` = sum(i·p_i), probabilities keyed `"0"`..`"n-1"`, `legend`). Every answer now
+    carries `confidence`.
+  - A choice with one option or a score with one level is answered without a model call.
+  - `media: [{mime_type, data}]` with `image/*` (data: URI or raw base64) is an alias for `images`; other types get 400.
+  - **Behaviour change:** in adapter mode a body the adapter can't read (bad JSON, `questions` not an object, criteria
+    of the wrong shape, unknown question type) gets 400 instead of silent pass-through; use `?raw=1` to send a body to
+    the serving image unchanged. Score questions with more than 26 levels or repeated levels get 422.
+- **Gateway logs say why a request failed, and who sent it.** Failed requests log the reason (`error`, up to 300
+  characters) at WARNING (4xx) or ERROR (5xx) instead of INFO, on `/v1/systemone`, `/api/decide` and pass-through
+  routes. The verified caller (`dgem.user`) is recorded on `/v1/systemone`, on `/mcp` (a new `dgem.gateway.mcp` span;
+  tool arguments are never logged) and from the start of `/api/decide`. Adapter requests log their shape without
+  content (question counts by type, max options, media entries, body size, forward passes). `/mcp` responses carry
+  `X-Dgem-Trace-Id`.
+- **Gateway: opt-in request/response body logging, off by default.** `DGEM_LOG_BODIES=responses|both` with a required
+  `DGEM_LOG_BODIES_UNTIL` (RFC3339, at most 7 days ahead) and `DGEM_LOG_BODIES_USERS` (caller identities, or `*`),
+  optional `DGEM_LOG_BODIES_SAMPLE`. Logs `/v1/systemone`, `/api/decide` and MCP `tools/call` bodies as
+  `log_type: "dgem.bodies"` lines (96 KB cap per body; `data:` URIs and long base64 replaced by a digest, in JSON and
+  non-JSON bodies; no headers or tokens). Invalid settings leave it off; startup and `/health` (`body_logging`) report
+  its state. Setup, including a separate log bucket: [Observability](docs/operate/observability.md).
+- **GCP tokens are cached only until they expire.** Access and ID tokens were cached for a flat 45 minutes, so an
+  expired metadata-server token could be served: Vertex AI control-plane checks got 401 and a warm endpoint read as
+  quiesced.
 - **Gateway: `/v1/systemone` keeps images.** The adapter dropped the request's `images` and answered text-only with
   HTTP 200; it now sends them with every sub-request (batches and bracket rounds). Images must be data: URIs or
   public http(s) URLs (local paths are rejected with 400, in the gateway and in `dgem systemone serve`).

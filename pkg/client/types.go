@@ -19,6 +19,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"math"
 	"net/http"
 	"os"
@@ -631,11 +632,19 @@ func BuildMultimodalContent(textContent string, imageInputs []string) (interface
 		}
 
 		var imageURI string
-		if strings.HasPrefix(img, "http://") || strings.HasPrefix(img, "https://") || strings.HasPrefix(img, "data:") {
+		if strings.HasPrefix(img, "data:") {
 			if err := CheckImageFormat(img, nil); err != nil {
 				return nil, err
 			}
 			imageURI = img
+		} else if strings.HasPrefix(img, "http://") || strings.HasPrefix(img, "https://") {
+			// Fetched here, from the caller's own network, and sent as a data: URI: serving images refuse image URLs
+			// by default (DGEM_IMAGE_URLS=deny). The gateway inlines URLs before they reach this point.
+			uri, err := fetchImageAsDataURI(img)
+			if err != nil {
+				return nil, err
+			}
+			imageURI = uri
 		} else {
 			// Read local file
 			fileData, err := os.ReadFile(img)
@@ -666,6 +675,48 @@ func BuildMultimodalContent(textContent string, imageInputs []string) (interface
 	}
 
 	return parts, nil
+}
+
+// maxClientImageBytes caps an image fetched by the client.
+const maxClientImageBytes = 20 << 20
+
+// ErrImageFetch marks an image URL that couldn't be fetched or isn't an image (the caller's input).
+var ErrImageFetch = errors.New("image URL")
+
+// ImageHTTPClient returns the HTTP client used to fetch image URLs. The default is a plain client (the CLI fetches
+// from the caller's own network). Network servers (`dgem serve`, `dgem systemone serve`) replace it with a client that
+// only connects to public addresses, since there the URL comes from a request.
+var ImageHTTPClient = func(timeout time.Duration) *http.Client { return &http.Client{Timeout: timeout} }
+
+// fetchImageAsDataURI downloads an http(s) image and returns it as a data: URI, refusing non-images and SVG.
+func fetchImageAsDataURI(ref string) (string, error) {
+	hr, err := ImageHTTPClient(30 * time.Second).Get(ref)
+	if err != nil {
+		return "", fmt.Errorf("%w %s: %w", ErrImageFetch, ref, err)
+	}
+	defer hr.Body.Close()
+	if hr.StatusCode < 200 || hr.StatusCode > 299 {
+		return "", fmt.Errorf("%w %s: HTTP %d", ErrImageFetch, ref, hr.StatusCode)
+	}
+	data, err := io.ReadAll(io.LimitReader(hr.Body, maxClientImageBytes+1))
+	if err != nil {
+		return "", fmt.Errorf("%w %s: %w", ErrImageFetch, ref, err)
+	}
+	if len(data) > maxClientImageBytes {
+		return "", fmt.Errorf("%w %s: larger than %d MB", ErrImageFetch, ref, maxClientImageBytes>>20)
+	}
+	mime := strings.TrimSpace(strings.SplitN(hr.Header.Get("Content-Type"), ";", 2)[0])
+	sniff := http.DetectContentType(data)
+	if !strings.HasPrefix(sniff, "image/") {
+		if looksLikeSVG(data) {
+			return "", CheckImageFormat("x.svg", data)
+		}
+		return "", fmt.Errorf("%w %s: not an image (%s)", ErrImageFetch, ref, sniff)
+	}
+	if !strings.HasPrefix(mime, "image/") {
+		mime = sniff
+	}
+	return "data:" + mime + ";base64," + base64.StdEncoding.EncodeToString(data), nil
 }
 
 func detectImageMime(path string, data []byte) string {
