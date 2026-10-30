@@ -370,6 +370,7 @@ class _KeepAlive:
         tok = net.token_for(self.base)
         if tok:
             hdr["Authorization"] = f"Bearer {tok}"
+        hdr.update(net.server_key_header())  # the serving image's service key (X-DGem-Key), when DGEM_SERVER_KEY is set
         for attempt in range(2):
             t0 = time.perf_counter()
             try:

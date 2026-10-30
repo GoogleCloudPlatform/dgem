@@ -127,7 +127,7 @@ def probe_serving(name, base, n):
     for i in range(n):
         payload = {"model": "dgemma", "messages": [{"role": "system", "content": json.dumps(schema)},
                                                    {"role": "user", "content": json.dumps({"ticket": ss.TICKETS[i % len(ss.TICKETS)]})}]}
-        req = urllib.request.Request(url, json.dumps(payload).encode(), {"Content-Type": "application/json", "Authorization": f"Bearer {bearer(base)}"})
+        req = urllib.request.Request(url, json.dumps(payload).encode(), {"Content-Type": "application/json", "Authorization": f"Bearer {bearer(base)}", **ss.server_key_header()})
         t0 = time.perf_counter()
         try:
             with urllib.request.urlopen(req, timeout=120) as r:

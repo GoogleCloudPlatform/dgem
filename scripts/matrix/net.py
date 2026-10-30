@@ -140,7 +140,14 @@ def _open(req, timeout):
     return urllib.request.urlopen(req, timeout=timeout)
 
 
-def request(url, body=None, method=None, timeout=300, retries=3, raw=False):
+def server_key_header():
+    """{"X-DGem-Key": key} when DGEM_SERVER_KEY is set (first entry of a rotation list), else {}. Send it only to dgem
+    serving targets, never to any other server."""
+    key = os.environ.get("DGEM_SERVER_KEY", "").split(",")[0].strip()
+    return {"X-DGem-Key": key} if key else {}
+
+
+def request(url, body=None, method=None, timeout=300, retries=3, raw=False, headers=None):
     """-> (status, parsed JSON or text, wall_ms, headers). Retries 429/5xx and network errors with backoff."""
     data = None if body is None else (body if isinstance(body, bytes) else json.dumps(body).encode())
     method = method or ("POST" if data is not None else "GET")
@@ -150,6 +157,7 @@ def request(url, body=None, method=None, timeout=300, retries=3, raw=False):
         tok = token_for(url)
         if tok:
             hdr["Authorization"] = f"Bearer {tok}"
+        hdr.update(headers or {})
         req = urllib.request.Request(url, data=data, method=method, headers=hdr)
         t0 = time.perf_counter()
         try:

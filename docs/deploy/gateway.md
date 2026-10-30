@@ -97,6 +97,10 @@ GATEWAY_TAG=candidate \
   handling. `*.run.app` and Vertex endpoints are recognised automatically.
 - `DGEM_BACKENDS`, `DGEM_ALLOWED_VERTEX_ENDPOINTS` and `DGEM_ADMIN_API=1` are passed through when set
   ([restrictions](#restrict-backends-and-admin-actions)).
+- When the Secret Manager secret `dgem-server-key` exists (`SERVER_KEY_SECRET` to name another), the script grants
+  the gateway service account access and mounts it as `DGEM_SERVER_KEY`; the gateway then sends it as `X-DGem-Key`
+  to the serving image ([service key](vertex.md#1-prerequisites)). Callers' own `X-DGem-Key` headers are never
+  forwarded.
 - `GATEWAY_TAG`: deploy as a tagged revision with **no traffic**, verify it at `https://<tag>---<gateway-host>`,
   then `gcloud run services update-traffic dgemma-gateway --to-tags=<tag>=100`. Roll back by moving traffic to
   the previous revision.

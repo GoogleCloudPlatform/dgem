@@ -18,6 +18,7 @@ Guidance for people and coding agents changing this repository. User documentati
 make build                      # ./bin/dgem
 go vet ./... && go test ./...   # unset DGEM_VERTEX_URL first if it is set in your shell
 python3 -m unittest scripts/matrix/test_matrix.py
+python3 -m unittest deploy/cloudrun/server/test_server_key.py
 ```
 After changing `studio/src/*`: `npm --prefix studio run build && go build -o bin/dgem .`, then
 `rm -rf studio/dist/* && touch studio/dist/.gitkeep` before committing (build output is not tracked).
@@ -55,7 +56,12 @@ After changing `studio/src/*`: `npm --prefix studio run build && go build -o bin
   paths (no timestamps), and check that it re-applies to the upstream file.
 - Keep in the patch: `/health` merging `/tmp/dgemma/warmup_state.json`, HTTP/1.1 keep-alive with listen backlog 256,
   `MAX_INFLIGHT`, `DEFAULT_SAMPLES`, `DEFAULT_LAYOUT` (default `document_first`), `DEFAULT_ISOLATE` (default `auto`),
-  and the `/predict` / `/rawPredict` aliases.
+  the `/predict` / `/rawPredict` aliases, and the `X-DGem-Key` check.
+- **Service key.** With `DGEM_SERVER_KEY` set (comma-separated to rotate), the serving image refuses every `POST`
+  without a matching `X-DGem-Key` header; `GET /health` stays open. Callers send the first entry of their own
+  `DGEM_SERVER_KEY`: `pkg/client`, the gateway proxy in `cmd/serve.go` (which never forwards a caller's header),
+  `scripts/matrix/net.py` and `scripts/serving_speed.py` (also used by `probe.py` and `contract_diff.py`). A new
+  caller of the serving image sends it too. The key is for services, never for people, and is never committed.
 - Validate a serving change by running the new image next to the current one and comparing them with
   `scripts/bench_matrix.py run --tier T1 --target current=<url> --target new=<url> --baseline current`
   (T2 with `--confirm` for vLLM upgrades). Results are judged against the noise measured in the same session.

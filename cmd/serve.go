@@ -1984,6 +1984,10 @@ func runServe(cmd *cobra.Command, args []string) error {
 				req.Header.Set("Content-Type", "application/json")
 			}
 			injectTraceContextToRequest(attemptCtx, req)
+			// The serving image's service secret: only the gateway holds it; callers' own X-DGem-Key is never forwarded.
+			if k := client.ServerKeyFromEnv(); k != "" {
+				req.Header.Set(client.ServerKeyHeader, k)
+			}
 			if backendTarget == "vertex" {
 				if tok := FetchGCPAccessToken(); tok != "" {
 					req.Header.Set("Authorization", "Bearer "+tok)

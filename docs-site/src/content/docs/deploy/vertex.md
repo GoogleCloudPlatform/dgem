@@ -3,10 +3,11 @@ title: "Step 4: Production on Vertex AI"
 description: "Run DiffusionGemma on an always-warm Vertex AI dedicated endpoint (g4-standard-48 + RTX PRO 6000): deploy, verify, scale, swap images with zero downtime, and tear down."
 ---
 
-A Vertex AI **dedicated endpoint** is the **run** stage: always warm, IAM-protected, autoscaling replicas and
-Cloud Monitoring, on the same container image as Cloud Run. The container is deployed with arbitrary custom routes
+A Vertex AI **dedicated endpoint** is the **run** stage: always warm, autoscaling replicas and Cloud Monitoring, on
+the same container image as Cloud Run. The container is deployed with arbitrary custom routes
 (`invokeRoutePrefix: "/*"`), so every server route is available under `/invoke/*`
-([why](/dgem/reference/vertex-vs-cloud-run/)).
+([why](/dgem/reference/vertex-vs-cloud-run/)). Deploy it with a [service key](#1-prerequisites) so that only your
+own services can make decisions on it, and give people access through the [gateway](/dgem/deploy/gateway/).
 
 ## What you get
 
@@ -33,6 +34,18 @@ Cloud Monitoring, on the same container image as Cloud Run. The container is dep
   to the bucket.
 - Vertex AI requires an Artifact Registry or Container Registry image. [Build the serving image](/dgem/deploy/public-images/)
   into your project (`GCP_PROJECT=<PROJECT> make cloudrun-build`) and pin the commit tag or digest it prints.
+- A **service key** for the serving image, stored in Secret Manager as `dgem-server-key`. When the secret exists, the
+  deploy script sets it as `DGEM_SERVER_KEY` on the model and the serving image refuses every `POST` without a
+  matching `X-DGem-Key` header (`GET /health` stays open). Without the secret the script prints a warning and the
+  serving image accepts any `POST` that reaches it. Give the key to the services that call the endpoint (your
+  [gateway](/dgem/deploy/gateway/), batch jobs, probes), not to people:
+
+  ```bash
+  openssl rand -base64 32 | tr -d '\n' | gcloud secrets create dgem-server-key --project=<PROJECT> --data-file=-
+  ```
+
+  Vertex AI model environment variables are plain values, so anyone who can read the model resource
+  (`aiplatform.models.get`) can read the key: keep that permission to the operators who deploy the endpoint.
 
 ## 2. Deploy
 
@@ -68,7 +81,14 @@ INVOKE=https://<ENDPOINT_ID>.<REGION>-<PROJECT_NUMBER>.prediction.vertexai.goog/
 curl -s -H "Authorization: Bearer $(gcloud auth print-access-token)" $INVOKE/health
 #   -> {"status": "ok", "vllm_ready": true, "phase": "ready", "warmed": true, ...}
 
+# Without the service key, decision requests are refused
+curl -s -o /dev/null -w '%{http_code}\n' -X POST -H "Authorization: Bearer $(gcloud auth print-access-token)" \
+  -H "Content-Type: application/json" -d '{}' $INVOKE/v1/chat/completions
+#   -> 401
+
+# As an operator, with the key from Secret Manager (callers send DGEM_SERVER_KEY as X-DGem-Key)
 export GCP_PROJECT=<PROJECT> GCP_PROJECT_NUMBER=<PROJECT_NUMBER>
+export DGEM_SERVER_KEY="$(gcloud secrets versions access latest --secret=dgem-server-key --project=<PROJECT>)"
 ./bin/dgem decide --vertex-url <ENDPOINT_ID> --gcp-auth -t templates/support_triage.json.tmpl \
   -v ticket="Charged twice" --stats
 ./bin/dgem decide --vertex-url <ENDPOINT_ID> --gcp-auth -t templates/multimodal/bbox_localization.json.tmpl \

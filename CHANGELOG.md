@@ -6,6 +6,14 @@ image for a release in your own project with `make cloudrun-build`.
 
 ## Unreleased
 
+- **Serving image: optional service key (`X-DGem-Key`).** With `DGEM_SERVER_KEY` set (comma-separated to rotate),
+  every `POST` needs a matching `X-DGem-Key` header; `GET /health` stays open. Unlike `API_KEY` it works on Vertex AI
+  and Cloud Run, where `Authorization` carries the Google token. The `dgem` CLI, the gateway, `dgem systemone serve`,
+  `scripts/matrix`, `probe.py`, `serving_speed.py` and `contract_diff.py` send the first entry of their own
+  `DGEM_SERVER_KEY`; the gateway never forwards a caller's header. The Vertex AI, Cloud Run, gateway and probe deploy
+  scripts set it from the Secret Manager secret `dgem-server-key` when it exists (`SERVER_KEY_SECRET` names another).
+  Use it for any endpoint that more than your own services can reach, such as a Vertex AI dedicated endpoint
+  ([Vertex AI](docs/deploy/vertex.md#1-prerequisites)).
 - **Gateway: `/v1/systemone` keeps images.** The adapter dropped the request's `images` and answered text-only with
   HTTP 200; it now sends them with every sub-request (batches and bracket rounds). Images must be data: URIs or
   public http(s) URLs (local paths are rejected with 400, in the gateway and in `dgem systemone serve`).
