@@ -75,9 +75,9 @@ After changing `studio/src/*`: `npm --prefix studio run build && go build -o bin
 
 ## Serving image
 - `deploy/cloudrun/server/structured_server.py` is vLLM's upstream example (`structured_server.upstream.py`, kept
-  byte-identical) plus `dgem.patch`. Edit `structured_server.py`, then regenerate the patch:
-  `diff -u structured_server.upstream.py structured_server.py` with the two header lines set to the repository
-  paths (no timestamps), and check that it re-applies to the upstream file.
+  byte-identical) plus `dgem.patch`. Edit `structured_server.py`, then run `scripts/regen_serving_patch.sh`: it
+  regenerates the patch in GNU `diff -u` form and checks that it re-applies to the upstream file, as CI does (plain
+  `diff -u` on macOS produces different hunks).
 - Keep in the patch: `/health` merging `/tmp/dgemma/warmup_state.json`, HTTP/1.1 keep-alive with listen backlog 256,
   `MAX_INFLIGHT`, `DEFAULT_SAMPLES`, `DEFAULT_LAYOUT` (default `document_first`), `DEFAULT_ISOLATE` (default `auto`),
   the `/predict` / `/rawPredict` aliases, the `X-DGem-Key` check, model-server 4xx answered as 422 (400 on the chat
