@@ -42,13 +42,14 @@ After changing `studio/src/*`: `npm --prefix studio run build && go build -o bin
   shape, never request content: content goes only to the opt-in, time-limited body log (`cmd/body_log.go`), with
   media redacted. A new route or failure path records its status and reason with `failSpan`.
 - **Unauthenticated replies reveal no configuration.** The gateway's 401 body is the same whatever is configured, and
-  the open `GET /health` reports liveness, version and `body_logging.enabled` only. Authentication methods, the IAP
-  audience, backends, upstream URLs and body-logging settings go to the startup log or to authenticated routes
-  (`/api/backend-config`, `/api/status`).
+  the open `GET /health` (on `dgem serve` and `dgem systemone serve`) reports liveness and version only (plus
+  `body_logging.enabled` on the gateway). Authentication methods, the IAP audience, backends, upstream URLs and
+  body-logging settings go to the startup log or to authenticated routes (`/api/backend-config`, `/api/status`).
 - **Each credential goes only to its own service.** `X-DGem-Key` (`DGEM_SERVER_KEY`) goes to the serving image, and
   `X-DGem-Api-Key` (`DGEM_GATEWAY_KEY`) only to the gateway in `DGEM_GATEWAY_URL` (`client.GatewayKeyFor`) or to the
-  `dgem mcp --remote` URL (`client.GatewayKeyForRemote`). HTTP clients that send either use
-  `client.StripKeysOnCrossOriginRedirect`, and the gateway never forwards a caller's key.
+  `dgem mcp --remote` URL (`client.GatewayKeyForRemote`). HTTP clients that send either strip credentials on
+  cross-origin redirects (`client.StripKeysOnCrossOriginRedirect` in Go, `_RedirectHandler` in `scripts/matrix/net.py`
+  and `scripts/serving_speed.py`), and the gateway never forwards a caller's key.
 - **Images reach the serving image as data: URIs.** The gateway and the CLI fetch http(s) image URLs themselves with
   the guarded client (public addresses only, checked on every connection and redirect); the serving image refuses
   URLs by default (`DGEM_IMAGE_URLS=deny`). Requests the model server refuses are 4xx (`decisionindex.ErrorStatus`),

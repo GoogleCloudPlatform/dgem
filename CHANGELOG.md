@@ -93,7 +93,8 @@ image for a release in your own project with `make cloudrun-build`.
   SVG and answered 502. Docs use new PNG fixtures (`fixtures/*.png`); the Studio picker offers raster formats only.
 - **Templates keep the order of dict-form questions and options** (they were reordered randomly per call).
 - **`dgem systemone serve`:** `--option-order alpha|source` (default `alpha`); server schema errors are passed on as
-  422 with the Decision Index kit's marker instead of 500.
+  422 with the Decision Index kit's marker instead of 500; the open `GET /health` reports only liveness and the version
+  (the upstream URL and adapter settings remain in the startup log).
 - **`bench-intents`:** kept intents above 26 go through another bracket round instead of a final the server rejects
   (full CLINC150).
 - **Docs:** canvas size (128 rows as served, rounded to 16 per request), letter readout and the 26-option limit,

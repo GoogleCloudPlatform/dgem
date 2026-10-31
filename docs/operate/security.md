@@ -23,11 +23,12 @@ details.
 | Vertex AI endpoints a request may select | `--allowed-vertex-endpoints` (`DGEM_ALLOWED_VERTEX_ENDPOINTS`) | the configured endpoint only |
 | Admin actions (gateway-wide routing, endpoint deploy and teardown) | `--enable-admin-api` (`DGEM_ADMIN_API=1`) | off: `403` |
 
-With IAP or API keys set, every request except the health checks needs valid credentials (`401` otherwise), and the
+With IAP or API keys set, every request except `GET /health` needs valid credentials (`401` otherwise), and the
 caller's identity comes only from the verified credential: identity headers sent by clients are discarded. Replies to
 callers that haven't authenticated reveal nothing about the setup: every refusal is the same `401`, and the open
-`GET /health` reports only liveness, the version and whether body logging is on. The accepted methods and the
-body-logging settings are printed in the gateway's startup log. With neither set, the gateway warns at startup when
+`GET /health` (on both the gateway and `dgem systemone serve`) reports only liveness and the version (plus whether body
+logging is on for the gateway). The accepted methods and the body-logging settings are printed in the startup log. With
+neither set, the gateway warns at startup when
 it listens on a non-loopback address; keep such a gateway behind IAP or Cloud Run IAM (`deploy_cloudrun_gateway.sh`
 deploys with `--no-allow-unauthenticated` and grants `ALLOW_GROUP`). A browser can't send an API key, so the Studio
 needs IAP or a loopback gateway without keys. Setup:

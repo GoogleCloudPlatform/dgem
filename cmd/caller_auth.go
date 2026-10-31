@@ -114,7 +114,7 @@ func callerAuthHandler(next http.Handler, a callerAuth) http.Handler {
 		// Never trust identity headers from the caller once verification is on.
 		r.Header.Del("X-Goog-Authenticated-User-Email")
 		r.Header.Del("X-Goog-Authenticated-User-Id")
-		if r.Method == http.MethodGet && (r.URL.Path == "/health" || r.URL.Path == "/healthz") {
+		if r.Method == http.MethodGet && r.URL.Path == "/health" {
 			next.ServeHTTP(w, r)
 			return
 		}
