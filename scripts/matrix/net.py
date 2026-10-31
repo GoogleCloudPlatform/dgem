@@ -40,8 +40,15 @@ _META_OK = None
 
 
 def is_vertex(url):
-    u = url.lower()
-    return "prediction.vertexai.goog" in u or "aiplatform.googleapis.com" in u
+    host = (urllib.parse.urlparse(url).hostname or "").lower()
+    if host == "prediction.vertexai.goog" or host.endswith(".prediction.vertexai.goog"):
+        return True
+    if host == "aiplatform.googleapis.com" or host.endswith(".aiplatform.googleapis.com"):
+        return True
+    if host.endswith(".googleapis.com"):
+        sub = host[: -len(".googleapis.com")]
+        return sub.endswith("-aiplatform") and "." not in sub
+    return False
 
 
 def _metadata_available():

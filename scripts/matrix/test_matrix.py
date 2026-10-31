@@ -127,6 +127,20 @@ class TestServerKey(unittest.TestCase):
             ka.call({"questions": {}})
         self.assertEqual(conn.headers.get("X-DGem-Key"), "new-key")
 
+    def test_is_vertex_checks_parsed_hostname(self):
+        import serving_speed as ss
+        for fn in (net.is_vertex, ss.is_vertex):
+            self.assertTrue(fn("https://1234.us-central1-999.prediction.vertexai.goog/v1/projects/p/locations/r/endpoints/1234/invoke"))
+            self.assertTrue(fn("https://us-central1-aiplatform.googleapis.com/v1/projects/p/locations/us-central1/endpoints/1234:rawPredict"))
+            self.assertTrue(fn("https://aiplatform.googleapis.com/v1/projects/p/locations/global/endpoints/1234:rawPredict"))
+            self.assertTrue(fn("https://us-central1.aiplatform.googleapis.com/v1/projects/p/locations/us-central1/endpoints/1234:rawPredict"))
+            self.assertFalse(fn("https://dgemma-service.a.run.app/v1"))
+            self.assertFalse(fn("https://evil.example/https://aiplatform.googleapis.com"))
+            self.assertFalse(fn("https://evil.example?target=prediction.vertexai.goog"))
+            self.assertFalse(fn("https://aiplatform.googleapis.com.evil.example/v1"))
+            self.assertFalse(fn("https://evilaiplatform.googleapis.com/v1"))
+            self.assertFalse(fn("https://nested.us-central1-aiplatform.googleapis.com/v1"))
+
 
 class TestMetrics(unittest.TestCase):
     def test_ece_perfect_and_off(self):

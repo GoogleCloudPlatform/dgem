@@ -45,6 +45,18 @@ def server_key_header():
     return {"X-DGem-Key": key} if key else {}
 
 
+def is_vertex(url):
+    host = (urllib.parse.urlparse(url).hostname or "").lower()
+    if host == "prediction.vertexai.goog" or host.endswith(".prediction.vertexai.goog"):
+        return True
+    if host == "aiplatform.googleapis.com" or host.endswith(".aiplatform.googleapis.com"):
+        return True
+    if host.endswith(".googleapis.com"):
+        sub = host[: -len(".googleapis.com")]
+        return sub.endswith("-aiplatform") and "." not in sub
+    return False
+
+
 REPO = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 
 TICKETS = [
@@ -132,7 +144,7 @@ IMG = None
 def call(url, schema, image, ticket, timeout=300):
     global IMG
     at, it = TOK.get()
-    token = at if "prediction.vertexai.goog" in url or "aiplatform.googleapis.com" in url else it
+    token = at if is_vertex(url) else it
     if image:
         IMG = IMG or image_data_uri()
         user = [{"type": "text", "text": json.dumps({"note": ticket})}, {"type": "image_url", "image_url": {"url": IMG}}]
