@@ -299,6 +299,9 @@ func clampBoxPct(b *[4]float64) *[4]float64 {
 func samLocateMask(ctx context.Context, samURL, image string, box [4]float64) (*LocateMask, error) {
 	img := image
 	if !strings.HasPrefix(img, "data:") && !strings.HasPrefix(img, "http://") && !strings.HasPrefix(img, "https://") {
+		if !allowLocalImagePaths {
+			return nil, fmt.Errorf("image must be a data: URI or an http(s) URL on this server")
+		}
 		b, err := os.ReadFile(img)
 		if err != nil {
 			return nil, err
