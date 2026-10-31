@@ -750,9 +750,11 @@
  def self_signed(cert_dir):
      """Paths of a self-signed certificate and key in cert_dir, made with
      openssl on first use."""
-@@ -1487,14 +1795,23 @@
+@@ -1486,15 +1794,25 @@
+ def serve_tls(host, port, cert_dir):
      cert, key = self_signed(cert_dir)
      ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
++    ctx.minimum_version = ssl.TLSVersion.TLSv1_2
      ctx.load_cert_chain(cert, key)
 -    srv = ThreadingHTTPServer((host, port), Handler)
 +    srv = _Server((host, port), Handler)
@@ -776,7 +778,7 @@
      p = argparse.ArgumentParser()
      p.add_argument("--upstream", default="http://127.0.0.1:8010")
      p.add_argument("--model", default="dgemma")
-@@ -1507,6 +1824,12 @@
+@@ -1507,6 +1825,12 @@
          help="request widths round up to a multiple of this",
      )
      p.add_argument(
@@ -789,7 +791,7 @@
          "--no-constrained",
          dest="constrained",
          action="store_false",
-@@ -1523,6 +1846,7 @@
+@@ -1523,6 +1847,7 @@
          help="directory for the self-signed certificate",
      )
      ARGS = p.parse_args()
@@ -797,7 +799,7 @@
      CANVAS_LEN = ARGS.canvas
      CANVAS_STEP = ARGS.canvas_step
      init_tokenizer(AutoTokenizer.from_pretrained(ARGS.tokenizer))
-@@ -1537,7 +1861,8 @@
+@@ -1537,7 +1862,8 @@
          f"(canvas {CANVAS_LEN})",
          flush=True,
      )
