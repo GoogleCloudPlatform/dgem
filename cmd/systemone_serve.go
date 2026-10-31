@@ -89,6 +89,18 @@ func init() {
 	RootCmd.AddCommand(systemoneCmd)
 }
 
+// systemOneHealth answers GET /health for readiness probes. It is registered outside authWrap, so it reports liveness
+// and version only; the upstream URL and adapter settings are in the startup log.
+func systemOneHealth(w http.ResponseWriter, _ *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]any{
+		"status":   "ok",
+		"service":  "dgem-systemone-adapter",
+		"version":  Version,
+		"revision": buildRevision(),
+	})
+}
+
 func runSystemOneServe(cmd *cobra.Command, args []string) error {
 	switch soCatchAll {
 	case "off", "final", "both", "verify":
@@ -183,19 +195,7 @@ func runSystemOneServe(cmd *cobra.Command, args []string) error {
 	soHandler := decisionindex.NewSystemOneHTTPHandler(cli, opts)
 	mux.HandleFunc("/v1/systemone", authWrap(soHandler))
 
-	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(map[string]any{
-			"status":       "ok",
-			"service":      "dgem-systemone-adapter",
-			"upstream_url": upstream,
-			"temperature":  soTemperature,
-			"bracket_size": soBracketSize,
-			"max_slots":    soMaxSlots,
-			"option_order": soOptionOrder,
-			"auth_enabled": apiKey != "",
-		})
-	})
+	mux.HandleFunc("/health", systemOneHealth)
 
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/" {

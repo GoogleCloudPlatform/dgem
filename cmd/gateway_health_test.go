@@ -51,3 +51,34 @@ func TestGatewayHealthRevealsNoConfiguration(t *testing.T) {
 		}
 	}
 }
+
+// dgem systemone serve also leaves GET /health outside authWrap, so it reports liveness and version only.
+func TestSystemOneHealthRevealsNoConfiguration(t *testing.T) {
+	oldUpstream, oldKey := soUpstreamURL, soAPIKey
+	soUpstreamURL = testCR
+	soAPIKey = "secret-key"
+	t.Cleanup(func() { soUpstreamURL, soAPIKey = oldUpstream, oldKey })
+
+	rec := httptest.NewRecorder()
+	systemOneHealth(rec, httptest.NewRequest("GET", "/health", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET /health: %d", rec.Code)
+	}
+	var got map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatal(err)
+	}
+	var keys []string
+	for k := range got {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	if want := "revision,service,status,version"; strings.Join(keys, ",") != want {
+		t.Errorf("/health fields %v, want %s", keys, want)
+	}
+	for _, leak := range []string{"upstream_url", "run.app", "auth_enabled", "secret-key", "temperature", "bracket_size", "max_slots", "option_order"} {
+		if strings.Contains(rec.Body.String(), leak) {
+			t.Errorf("/health reveals %q: %s", leak, rec.Body.String())
+		}
+	}
+}

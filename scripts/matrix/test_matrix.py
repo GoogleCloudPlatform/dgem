@@ -141,6 +141,53 @@ class TestServerKey(unittest.TestCase):
             self.assertFalse(fn("https://evilaiplatform.googleapis.com/v1"))
             self.assertFalse(fn("https://nested.us-central1-aiplatform.googleapis.com/v1"))
 
+    def test_strip_credentials_on_cross_origin_redirect(self):
+        import urllib.request
+        import serving_speed as ss
+
+        def make_req(url="https://gw.example.com/v1/chat/completions"):
+            r = urllib.request.Request(
+                url,
+                data=b"{}",
+                method="POST",
+                headers={
+                    "Content-Type": "application/json",
+                    "Authorization": "Bearer secret-tok",
+                    "X-DGem-Key": "svc-key",
+                    "X-DGem-Api-Key": "gw-key",
+                },
+            )
+            r.add_unredirected_header("Authorization", "Bearer secret-tok")
+            r.add_unredirected_header("X-DGem-Key", "svc-key")
+            return r
+
+        def hdrs_lower(req):
+            out = {k.lower(): v for k, v in req.headers.items()}
+            out.update({k.lower(): v for k, v in req.unredirected_hdrs.items()})
+            return out
+
+        for mod in (net, ss):
+            h = mod._RedirectHandler()
+            for target, keep in (
+                ("https://gw.example.com:443/v2", True),
+                ("https://GW.EXAMPLE.COM/v2", True),
+                ("https://gw.example.com:8443/v2", False),
+                ("http://gw.example.com:443/v2", False),
+                ("https://sub.gw.example.com/v2", False),
+                ("https://example.net/v2", False),
+            ):
+                r1 = h.redirect_request(make_req(), None, 302, "Found", {}, target)
+                got = hdrs_lower(r1)
+                for cred in ("authorization", "x-dgem-key", "x-dgem-api-key"):
+                    self.assertEqual(cred in got, keep, f"{mod.__name__} -> {target}: {cred} in {got}")
+
+            # Multi-hop: once a redirect leaves the first origin, a redirect back to the first origin never restores keys.
+            hop1 = h.redirect_request(make_req(), None, 302, "Found", {}, "https://example.net/hop")
+            hop2 = h.redirect_request(hop1, None, 302, "Found", {}, "https://gw.example.com/v2")
+            got2 = hdrs_lower(hop2)
+            for cred in ("authorization", "x-dgem-key", "x-dgem-api-key"):
+                self.assertNotIn(cred, got2, f"{mod.__name__} bounce-back kept {cred}")
+
 
 class TestMetrics(unittest.TestCase):
     def test_ece_perfect_and_off(self):

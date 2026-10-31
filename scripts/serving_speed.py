@@ -39,6 +39,50 @@ import urllib.parse
 import urllib.request
 
 
+_CREDENTIAL_HEADERS = ("authorization", "x-dgem-key", "x-dgem-api-key")
+
+
+def _origin(url):
+    try:
+        u = urllib.parse.urlparse(url)
+        scheme = (u.scheme or "").lower()
+        host = (u.hostname or "").lower()
+        port = u.port or (443 if scheme == "https" else 80 if scheme == "http" else None)
+    except ValueError:
+        return None
+    if scheme not in ("http", "https") or not host:
+        return None
+    return (scheme, host, port)
+
+
+def _same_origin(a, b):
+    oa = _origin(a)
+    return oa is not None and oa == _origin(b)
+
+
+class _RedirectHandler(urllib.request.HTTPRedirectHandler):
+    """Once a redirect leaves the first request's origin, strip Authorization, X-DGem-Key and X-DGem-Api-Key from that
+    request and every later hop, including a redirect back to the first origin."""
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        new_req = super().redirect_request(req, fp, code, msg, headers, newurl)
+        if new_req is None:
+            return None
+        first_url = getattr(req, "_first_url", req.full_url)
+        crossed = getattr(req, "_crossed_origin", False) or not _same_origin(first_url, new_req.full_url)
+        new_req._first_url = first_url
+        new_req._crossed_origin = crossed
+        if crossed:
+            for d in (new_req.headers, new_req.unredirected_hdrs):
+                for k in [k for k in d if k.lower() in _CREDENTIAL_HEADERS]:
+                    del d[k]
+        return new_req
+
+
+def _open(req, timeout=300):
+    return urllib.request.build_opener(_RedirectHandler()).open(req, timeout=timeout)
+
+
 def server_key_header():
     """X-DGem-Key for the serving image when DGEM_SERVER_KEY is set (first entry of a rotation list)."""
     key = os.environ.get("DGEM_SERVER_KEY", "").split(",")[0].strip()
@@ -156,7 +200,7 @@ def call(url, schema, image, ticket, timeout=300):
     t0 = time.perf_counter()
     rec = {"status": None, "error": None}
     try:
-        with urllib.request.urlopen(req, timeout=timeout) as r:
+        with _open(req, timeout=timeout) as r:
             raw = r.read()
             rec["status"] = r.status
     except urllib.error.HTTPError as e:

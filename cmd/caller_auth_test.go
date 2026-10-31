@@ -68,6 +68,9 @@ func TestCallerAuthAPIKeys(t *testing.T) {
 	if code, _ := do(h, "GET", "/health", nil); code != 200 {
 		t.Fatalf("/health: %d", code)
 	}
+	if code, _ := do(h, "GET", "/healthz", nil); code != http.StatusUnauthorized {
+		t.Fatalf("GET /healthz must not be exempt: %d", code)
+	}
 	if code, _ := do(h, "POST", "/health", nil); code != http.StatusUnauthorized {
 		t.Fatalf("POST /health must not be exempt: %d", code)
 	}
