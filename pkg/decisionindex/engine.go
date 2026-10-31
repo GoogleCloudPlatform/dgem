@@ -1215,7 +1215,10 @@ func balancedBrackets(keys []string, size int) [][]string {
 	if n == 0 {
 		return nil
 	}
-	nb := (n + size - 1) / size
+	if n <= size {
+		return [][]string{keys}
+	}
+	nb := (n-1)/size + 1
 	base, extra := n/nb, n%nb
 	out := make([][]string, 0, nb)
 	i := 0

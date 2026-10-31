@@ -215,46 +215,87 @@ func resolveTemplateFile(rootDir, name string) (string, string, error) {
 	} else if mapped, ok := aliases[filepath.Base(cleanID)]; ok {
 		cleanID = mapped
 	}
-	candidates := []string{
-		filepath.Join(rootDir, cleanID+".json.tmpl"),
-		filepath.Join(rootDir, "calibration", filepath.Base(cleanID)+".json.tmpl"),
-		filepath.Join(rootDir, "multimodal", filepath.Base(cleanID)+".json.tmpl"),
-		filepath.Join(rootDir, "rerank", filepath.Base(cleanID)+".json.tmpl"),
+	base := filepath.Base(cleanID)
+	preferred := []string{
+		cleanID,
+		"calibration/" + base,
+		"multimodal/" + base,
+		"rerank/" + base,
 	}
-	for _, c := range candidates {
-		if !isWithinDir(rootDir, c) {
-			continue
-		}
-		if info, err := os.Stat(c); err == nil && !info.IsDir() {
-			rel, relErr := filepath.Rel(rootDir, c)
-			if relErr == nil {
-				return c, strings.TrimSuffix(filepath.ToSlash(rel), ".json.tmpl"), nil
-			}
-			return c, cleanID, nil
-		}
-	}
-	targetBase := filepath.Base(cleanID) + ".json.tmpl"
-	var matchedPath string
-	var matchedID string
+	targetBase := base + ".json.tmpl"
+	bestRank := len(preferred) + 1
+	var matchedPath, matchedID string
 	_ = filepath.Walk(rootDir, func(path string, info os.FileInfo, err error) error {
-		if err == nil && !info.IsDir() && info.Name() == targetBase && matchedPath == "" {
-			matchedPath = path
-			if rel, relErr := filepath.Rel(rootDir, path); relErr == nil {
-				matchedID = strings.TrimSuffix(filepath.ToSlash(rel), ".json.tmpl")
-			} else {
-				matchedID = cleanID
+		if err != nil || info.IsDir() || !strings.HasSuffix(info.Name(), ".json.tmpl") || !isWithinDir(rootDir, path) {
+			return nil
+		}
+		rel, relErr := filepath.Rel(rootDir, path)
+		if relErr != nil {
+			return nil
+		}
+		id := strings.TrimSuffix(filepath.ToSlash(rel), ".json.tmpl")
+		for r, want := range preferred {
+			if id == want && r < bestRank {
+				bestRank, matchedPath, matchedID = r, path, id
+				return nil
 			}
+		}
+		if info.Name() == targetBase && len(preferred) < bestRank {
+			bestRank, matchedPath, matchedID = len(preferred), path, id
 		}
 		return nil
 	})
 	if matchedPath != "" {
 		return matchedPath, matchedID, nil
 	}
-	fallback := filepath.Join(rootDir, cleanID+".json.tmpl")
-	if !isWithinDir(rootDir, fallback) {
-		return "", "", errTemplateName
+	return "", "", fmt.Errorf("template %q not found in %s", cleanID, rootDir)
+}
+
+// validateLocalBackendURL validates a local diffgemma endpoint URL supplied to POST /api/backend-config:
+// it must be an http(s) loopback URL (127.0.0.1, localhost, or ::1) with an explicit port and optional /v1 path.
+func validateLocalBackendURL(raw string) (string, error) {
+	v := strings.TrimSpace(raw)
+	if v == "" {
+		return "", nil
 	}
-	return fallback, cleanID, nil
+	u, err := url.Parse(v)
+	if err != nil || u.User != nil || u.RawQuery != "" || u.Fragment != "" {
+		return "", fmt.Errorf("invalid local_url %q: must be a loopback http(s) URL such as http://127.0.0.1:8080/v1", raw)
+	}
+	var scheme string
+	switch strings.ToLower(u.Scheme) {
+	case "http":
+		scheme = "http"
+	case "https":
+		scheme = "https"
+	default:
+		return "", fmt.Errorf("invalid local_url %q: scheme must be http or https", raw)
+	}
+	var host string
+	switch strings.ToLower(u.Hostname()) {
+	case "127.0.0.1":
+		host = "127.0.0.1"
+	case "localhost":
+		host = "localhost"
+	case "::1":
+		host = "[::1]"
+	default:
+		return "", fmt.Errorf("invalid local_url %q: host must be loopback (127.0.0.1, localhost, or ::1)", raw)
+	}
+	port, err := strconv.Atoi(u.Port())
+	if err != nil || port < 1 || port > 65535 {
+		return "", fmt.Errorf("invalid local_url %q: explicit port (1-65535) is required", raw)
+	}
+	var pathSuffix string
+	switch strings.TrimSuffix(u.Path, "/") {
+	case "":
+		pathSuffix = ""
+	case "/v1":
+		pathSuffix = "/v1"
+	default:
+		return "", fmt.Errorf("invalid local_url %q: path must be empty or /v1", raw)
+	}
+	return fmt.Sprintf("%s://%s:%d%s", scheme, host, port, pathSuffix), nil
 }
 
 func discoverTemplates(rootDir string) ([]TemplateCatalogEntry, error) {
@@ -1131,6 +1172,12 @@ func runServe(cmd *cobra.Command, args []string) error {
 				_ = json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
 				return
 			}
+			normLoc, err := validateLocalBackendURL(body.LocalURL)
+			if err != nil {
+				w.WriteHeader(http.StatusBadRequest)
+				_ = json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+				return
+			}
 			backendConfigMu.Lock()
 			if body.DefaultBackend != "" {
 				backendConfigMu.Unlock()
@@ -1145,8 +1192,8 @@ func runServe(cmd *cobra.Command, args []string) error {
 			if body.VertexURL != "" || body.DefaultBackend == "cloudrun" || body.DefaultBackend == "vertex_first" {
 				serveVertexURL = normVx
 			}
-			if strings.TrimSpace(body.LocalURL) != "" {
-				serveLocalURL = strings.TrimSpace(body.LocalURL)
+			if normLoc != "" {
+				serveLocalURL = normLoc
 			}
 			if strings.TrimSpace(body.DefaultCascadeModel) != "" {
 				serveCascadeModel = SanitizeCascadeModel(body.DefaultCascadeModel)

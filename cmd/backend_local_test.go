@@ -227,3 +227,31 @@ func TestServePortDefault(t *testing.T) {
 		t.Errorf("expected default serve port '8090', got %q", flag.DefValue)
 	}
 }
+
+func TestValidateLocalBackendURL(t *testing.T) {
+	valid := map[string]string{
+		"":                          "",
+		"http://127.0.0.1:8080/v1":  "http://127.0.0.1:8080/v1",
+		"http://localhost:8080/v1/": "http://localhost:8080/v1",
+		"http://[::1]:8080":         "http://[::1]:8080",
+		"https://127.0.0.1:8443/v1": "https://127.0.0.1:8443/v1",
+	}
+	for in, want := range valid {
+		got, err := validateLocalBackendURL(in)
+		if err != nil || got != want {
+			t.Errorf("validateLocalBackendURL(%q) = (%q, %v), want (%q, nil)", in, got, err, want)
+		}
+	}
+	invalid := []string{
+		"http://169.254.169.254/computeMetadata/v1/",
+		"https://evil.example:8080/v1",
+		"http://127.0.0.1/v1",
+		"http://127.0.0.1:8080/other",
+		"ftp://127.0.0.1:8080/v1",
+	}
+	for _, in := range invalid {
+		if got, err := validateLocalBackendURL(in); err == nil {
+			t.Errorf("validateLocalBackendURL(%q) = %q, expected error", in, got)
+		}
+	}
+}

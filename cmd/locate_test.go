@@ -149,6 +149,9 @@ func TestLocateGatewayRejectsLocalAndPrivateImages(t *testing.T) {
 			t.Errorf("image %q: status %d, want 400", img, w.Code)
 		}
 	}
+	if _, err := samLocateMask(context.Background(), "http://127.0.0.1:9", "/etc/passwd", [4]float64{0, 0, 10, 10}); err == nil {
+		t.Error("samLocateMask accepted local file path when allowLocalImagePaths is false")
+	}
 	w := httptest.NewRecorder()
 	handleLocate(w, httptest.NewRequest(http.MethodGet, "/api/locate", nil))
 	if w.Code != http.StatusMethodNotAllowed {
