@@ -19,7 +19,7 @@
  """Structured decisions in front of a vLLM DiffusionGemma server.
  
  POST /v1/systemone takes Jev's request body: {"model", "state", "questions"}.
-@@ -9,12 +22,13 @@
+@@ -9,12 +22,14 @@
    choice: option name -> description or null
    score:  ordered list of levels
  Answers take Jev's shapes, with this server's diagnostics alongside:
@@ -31,11 +31,12 @@
  "auto_max", "auto_threshold", "steps", "think", "ask", "chunk_rows",
 -"chunk_prompt" and "sequential" as extensions. Images go ahead of the
 +"chunk_prompt", "sequential", "layout", "isolate" ("auto", "noul", "none" or "all") and
-+"seed_token" ("random" or "fixed") as extensions. Images go ahead of the
++"seed_token" ("random" or "fixed") and "labels" ("az", "az_aa" or "az_lower") as
++extensions. Images go ahead of the
  state, either as multipart/form-data with the JSON body in a part named
  "request" and each image as a file part, or as an "images" array of data
  URLs in the JSON body.
-@@ -23,8 +37,8 @@
+@@ -23,8 +38,8 @@
  call. The system message is the schema JSON below and the user message is
  the state. The reply's `content` is the JSON answer set.
  
@@ -46,7 +47,7 @@
  
  With API_KEY set in the environment, every POST needs "Authorization:
  Bearer <key>". --tls-port adds an HTTPS listener with a self-signed
-@@ -50,7 +64,9 @@
+@@ -50,7 +65,9 @@
                               its prompt
    "ask_if": {id: [answers]}  asked only when that question's answer is
                               among them (a skipped answer is null)
@@ -57,7 +58,7 @@
  Questions run in stages by these dependencies. Each stage is one joint
  read. Later stages continue the earlier answers, prefilled for a text
  state and restated for an image.
-@@ -64,7 +80,10 @@
+@@ -64,7 +81,10 @@
  prefilled, and "chunk_prompt": "shared" lists every question in each
  chunk's prompt. "think": N lets the model write up to N tokens in its
  thought channel, as an ordinary generation, and the read then runs with
@@ -69,7 +70,7 @@
  the image in view and the server seeds it into the canvas ahead of the
  answer, so the canvas bounds it. The noise draws of a decision share one
  thought.
-@@ -79,6 +98,7 @@
+@@ -79,6 +99,7 @@
  """
  
  import argparse
@@ -77,7 +78,7 @@
  import json
  import math
  import os
-@@ -97,9 +117,56 @@
+@@ -97,9 +118,69 @@
  
  ARGS = None
  TOK = None
@@ -116,6 +117,19 @@
 +# canvas already uses for its tail; reads stop depending on the seed, so samples > 1 adds nothing but engine noise).
 +# Set per deployment (DEFAULT_SEED_TOKEN or --seed-token) or per request ("seed_token").
 +SEED_TOKENS = ("random", "fixed")
++# dgem: label sets for choice questions. "az" (the default, upstream behaviour) labels options A-Z, so at
++# most 26. "az_aa" continues with AA-AZ (52) and "az_lower" with a-z (52, "lines" format only: in "indexed" the id
++# merges with a lowercase label). Each label is one Gemma token at the answer slot.
++# Score questions keep their labels (1-9, then A-Z). Set per deployment (DEFAULT_LABELS / --labels) or per request.
++_AZ = [chr(ord("A") + i) for i in range(26)]
++LABEL_SETS = {
++    "az": _AZ,
++    "az_aa": _AZ + ["A" + c for c in _AZ],
++    "az_lower": _AZ + [c.lower() for c in _AZ],
++}
++DEFAULT_LABELS = os.environ.get("DEFAULT_LABELS", "az")
++if DEFAULT_LABELS not in LABEL_SETS:
++    raise SystemExit("DEFAULT_LABELS must be az, az_aa or az_lower")
 +DEFAULT_SEED_TOKEN = os.environ.get("DEFAULT_SEED_TOKEN", "random")
 +if DEFAULT_SEED_TOKEN not in SEED_TOKENS:
 +    raise SystemExit("DEFAULT_SEED_TOKEN must be random or fixed")
@@ -137,7 +151,41 @@
  CANVAS_LEN = 64  # the served canvas length. A request may be narrower.
  CANVAS_STEP = 16  # request widths are multiples of this
  VOCAB = 262144
-@@ -195,9 +262,27 @@
+@@ -134,6 +215,12 @@
+         raise SchemaError("schema: needs a non-empty questions array")
+     if len(value["questions"]) > MAX_QUESTIONS:
+         raise SchemaError(f"schema: at most {MAX_QUESTIONS} questions")
++    label_set = value.get("labels", DEFAULT_LABELS)  # dgem
++    if label_set not in LABEL_SETS:
++        raise SchemaError('schema: labels must be "az", "az_aa" or "az_lower"')
++    choice_labels = LABEL_SETS[label_set]
++    if label_set == "az_lower" and len(value["questions"]) > 10:
++        raise SchemaError('schema: labels "az_lower" needs at most 10 questions ("lines" format)')
+     qs = []
+     seen = set()
+     for q in value["questions"]:
+@@ -159,7 +246,7 @@
+                 else (str(o), None)
+                 for o in opts
+             ]
+-            labels = [chr(ord("A") + i) for i in range(len(choices))]
++            labels = choice_labels[: len(choices)]
+         elif kind == "score":
+             choices = [(str(level), None) for level in (q.get("levels") or [])]
+             labels = (
+@@ -171,8 +258,9 @@
+             raise SchemaError(f"question {qid!r}: unknown type {kind!r}")
+         if len(choices) < 2:
+             raise SchemaError(f"question {qid!r}: needs at least two alternatives")
+-        if len(choices) > 26:
+-            raise SchemaError(f"question {qid!r}: at most 26 alternatives")
++        limit = len(choice_labels) if kind == "choice" else 26
++        if len(choices) > limit:
++            raise SchemaError(f"question {qid!r}: at most {limit} alternatives")
+         deps = q.get("depends_on") or []
+         ask_if = q.get("ask_if") or {}
+         if not isinstance(deps, list) or not all(isinstance(d, str) for d in deps):
+@@ -195,9 +283,27 @@
                  "labels": labels,
                  "depends_on": list(dict.fromkeys(list(deps) + list(ask_if))),
                  "ask_if": ask_if,
@@ -166,7 +214,7 @@
      by_id = {q["id"]: q for q in qs}
      for q in qs:
          for dep in q["depends_on"]:
-@@ -213,7 +298,10 @@
+@@ -213,7 +319,10 @@
                      f"must be among {names}"
                  )
      schedule(qs)  # refuses a cycle
@@ -178,7 +226,7 @@
      if samples == "auto":
          policy = {
              "mode": "auto",
-@@ -240,6 +328,12 @@
+@@ -240,6 +349,12 @@
      if chunk_prompt not in ("shared", "own"):
          raise SchemaError('schema: chunk_prompt must be "shared" or "own"')
      sequential = bool(value.get("sequential", False))
@@ -191,16 +239,17 @@
      think = value.get("think", 0)
      if isinstance(think, bool) or not isinstance(think, int) or not 0 <= think <= 4096:
          raise SchemaError("schema: think must be a thought budget in tokens, 0 to 4096")
-@@ -253,6 +347,8 @@
+@@ -253,6 +368,9 @@
          "chunk_rows": chunk_rows,
          "chunk_prompt": chunk_prompt,
          "sequential": sequential,
 +        "layout": layout,
 +        "seed_token": seed_token,
++        "labels": label_set,
          "format": "lines" if len(qs) <= 10 else "indexed",
      }
  
-@@ -280,6 +376,38 @@
+@@ -280,6 +398,38 @@
  }
  
  
@@ -239,7 +288,7 @@
  def system_text(schema, chunked=False):
      s = (
          "Answer a fixed set of questions about the state the user provides. "
-@@ -303,6 +431,8 @@
+@@ -303,6 +453,8 @@
              " A reply may cover only some of the questions; answer every line "
              "that is present."
          )
@@ -248,7 +297,7 @@
      return s
  
  
-@@ -418,21 +548,49 @@
+@@ -418,21 +570,49 @@
      }
  
  
@@ -301,7 +350,7 @@
      req = urllib.request.Request(
          ARGS.upstream.rstrip("/") + "/v1/chat/completions",
          data=json.dumps(body).encode(),
-@@ -441,7 +599,32 @@
+@@ -441,7 +621,32 @@
      return json.load(urllib.request.urlopen(req, timeout=timeout))
  
  
@@ -334,7 +383,7 @@
      req = urllib.request.Request(
          ARGS.upstream.rstrip("/") + "/v1/completions",
          data=json.dumps(body).encode(),
-@@ -454,10 +637,7 @@
+@@ -454,10 +659,7 @@
      """The prompt the chat endpoint would build, as token ids, ending after
      the model turn marker. Text states only. ``thinking`` turns the chat
      template's thinking marker on."""
@@ -346,7 +395,7 @@
      out = TOK.apply_chat_template(
          messages, tokenize=True, add_generation_prompt=True, enable_thinking=thinking
      )
-@@ -502,10 +682,7 @@
+@@ -502,10 +704,7 @@
      Returns the thought's token ids and a diagnostics dict."""
      body = {
          "model": ARGS.model,
@@ -358,7 +407,7 @@
          "max_tokens": budget,
          "logprobs": True,
          "top_logprobs": 0,
-@@ -538,10 +715,7 @@
+@@ -538,10 +737,7 @@
  ):
      if prefix is not None:
          return one_read_continuation(schema, template, slots, prefix, seed)
@@ -370,7 +419,7 @@
      body = {
          "model": ARGS.model,
          "messages": messages,
-@@ -555,7 +729,9 @@
+@@ -555,7 +751,9 @@
          "return_tokens_as_token_ids": True,
          "chat_template_kwargs": {"enable_thinking": thinking},
          "vllm_xargs": {
@@ -381,7 +430,7 @@
              "diffusion_canvas_length": canvas_width(template),
              "diffusion_max_steps": schema["steps"],
              "diffusion_read_only": True,
-@@ -586,6 +762,11 @@
+@@ -586,6 +784,11 @@
      ex = [math.exp(x - mx) for x in lp_t]
      probs = [e / sum(ex) for e in ex]
      top_p = [math.exp(v) for v in top.values()]
@@ -393,7 +442,7 @@
      return {
          "probs": probs,
          "label_mass": sum(math.exp(x) for x in lp_t),
-@@ -605,7 +786,9 @@
+@@ -605,7 +808,9 @@
          "logprob_token_ids": label_id_union(slots),
          "return_tokens_as_token_ids": True,
          "vllm_xargs": {
@@ -404,7 +453,7 @@
              "diffusion_canvas_length": canvas_width(template),
              "diffusion_max_steps": schema["steps"],
              "diffusion_read_only": True,
-@@ -738,8 +921,12 @@
+@@ -738,8 +943,12 @@
          for q in schema["questions"]
          if not schema.get("ask") or q["id"] in schema["ask"]
      ]
@@ -418,17 +467,18 @@
      fmt = schema["format"]
      join = FORMATS[fmt][0]
      # More than one read in sequence needs the full question list in every
-@@ -871,6 +1058,9 @@
+@@ -871,6 +1080,10 @@
      one = len(parts) == 1 and not skipped
      diagnostics = {
          "steps": schema["steps"],
 +        "layout": schema["layout"],
 +        "seed_token": schema["seed_token"],
++        "labels": schema["labels"],
 +        "isolated": [q["id"] for q in schema["questions"] if q.get("alone")],
          "stages": stages,
          "skipped": skipped,
          "chunks": chunks,
-@@ -901,6 +1091,7 @@
+@@ -901,6 +1114,7 @@
          or None,
          "questions": diag_q,
          "engine": "vllm",
@@ -436,7 +486,7 @@
      }
      return {"answers": answers, "diagnostics": diagnostics}, sum(
          rows for _, rows in parts
-@@ -1034,6 +1225,7 @@
+@@ -1034,6 +1248,7 @@
          "answers": answers,
          "diagnostics": {
              "steps": schema["steps"],
@@ -444,7 +494,7 @@
              "samples": {
                  "n": n,
                  "tops": tops,
-@@ -1046,6 +1238,7 @@
+@@ -1046,6 +1261,7 @@
              "prompt_tokens": prompt_tokens,
              "questions": diag_q,
              "engine": "vllm",
@@ -452,13 +502,14 @@
          },
      }, len(template) + 1 + (thought["tokens"] if thought else 0)
  
-@@ -1065,11 +1258,60 @@
+@@ -1065,11 +1281,61 @@
      "chunk_rows",
      "chunk_prompt",
      "sequential",
 +    "layout",
 +    "isolate",
 +    "seed_token",
++    "labels",
  )
  
  
@@ -513,7 +564,7 @@
      qs = body.get("questions")
      if not isinstance(qs, dict) or not qs:
          raise SchemaError("questions: needs a non-empty map of id -> question")
-@@ -1160,7 +1402,8 @@
+@@ -1160,7 +1426,8 @@
      state = body.get("state")
      if state is None:
          raise SchemaError("state: required")
@@ -523,7 +574,7 @@
      if not image_parts:
          return text
      return list(image_parts) + [{"type": "text", "text": text}]
-@@ -1170,7 +1413,13 @@
+@@ -1170,7 +1437,13 @@
      if a is None:
          return None
      if q["type"] == "noul":
@@ -538,7 +589,7 @@
      if q["type"] == "choice":
          return {
              "type": "choice",
-@@ -1201,21 +1450,56 @@
+@@ -1201,21 +1474,56 @@
      return c if isinstance(c, str) else ""
  
  
@@ -599,7 +650,7 @@
          return self._json(404, {"error": {"message": "unknown route"}})
  
      def _read_request(self):
-@@ -1249,8 +1533,33 @@
+@@ -1249,8 +1557,33 @@
              )
          return body, images
  
@@ -633,7 +684,7 @@
              return self._json(
                  401,
                  {
-@@ -1260,8 +1569,20 @@
+@@ -1260,8 +1593,20 @@
                      }
                  },
              )
@@ -655,7 +706,7 @@
          try:
              req, images = self._read_request()
          except Exception as e:
-@@ -1278,51 +1599,49 @@
+@@ -1278,51 +1623,49 @@
              return self._systemone(req, images)
          if self.path == "/v1/chat/completions":
              return self._chat(req)
@@ -734,7 +785,7 @@
          except SchemaError as e:
              return self._json(
                  422, {"error": {"message": str(e), "type": "validation_error"}}
-@@ -1362,6 +1681,7 @@
+@@ -1362,6 +1705,7 @@
                  },
                  "diagnostics": body["diagnostics"],
              },
@@ -742,7 +793,7 @@
          )
  
      def _chat(self, req):
-@@ -1387,6 +1707,7 @@
+@@ -1387,6 +1731,7 @@
              schema_value = json.loads(message_text(msgs[0]))
              schema = parse_schema(schema_value)
              content = msgs[1].get("content", "")
@@ -750,7 +801,7 @@
              has_image = isinstance(content, list) and any(
                  isinstance(p, dict) and p.get("type") in ("image_url", "image")
                  for p in content
-@@ -1451,9 +1772,18 @@
+@@ -1451,9 +1796,18 @@
                      "total_tokens": completion_tokens,
                  },
              },
@@ -769,7 +820,7 @@
  def self_signed(cert_dir):
      """Paths of a self-signed certificate and key in cert_dir, made with
      openssl on first use."""
-@@ -1486,15 +1816,25 @@
+@@ -1486,15 +1840,25 @@
  def serve_tls(host, port, cert_dir):
      cert, key = self_signed(cert_dir)
      ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
@@ -793,11 +844,11 @@
 +
  def main():
 -    global ARGS, CANVAS_LEN, CANVAS_STEP
-+    global ARGS, CANVAS_LEN, CANVAS_STEP, DEFAULT_SEED_TOKEN
++    global ARGS, CANVAS_LEN, CANVAS_STEP, DEFAULT_SEED_TOKEN, DEFAULT_LABELS
      p = argparse.ArgumentParser()
      p.add_argument("--upstream", default="http://127.0.0.1:8010")
      p.add_argument("--model", default="dgemma")
-@@ -1507,6 +1847,12 @@
+@@ -1507,6 +1871,18 @@
          help="request widths round up to a multiple of this",
      )
      p.add_argument(
@@ -807,18 +858,25 @@
 +        help="answer-slot seed for requests without seed_token: random (seeded vocabulary id) or fixed (PAD)",
 +    )
 +    p.add_argument(
++        "--labels",
++        choices=sorted(LABEL_SETS),
++        default=DEFAULT_LABELS,
++        help="choice-option labels for requests without labels: az (A-Z, 26), az_aa (+AA-AZ, 52), az_lower (+a-z, 52, lines only)",
++    )
++    p.add_argument(
          "--no-constrained",
          dest="constrained",
          action="store_false",
-@@ -1523,6 +1869,7 @@
+@@ -1523,6 +1899,8 @@
          help="directory for the self-signed certificate",
      )
      ARGS = p.parse_args()
 +    DEFAULT_SEED_TOKEN = ARGS.seed_token
++    DEFAULT_LABELS = ARGS.labels
      CANVAS_LEN = ARGS.canvas
      CANVAS_STEP = ARGS.canvas_step
      init_tokenizer(AutoTokenizer.from_pretrained(ARGS.tokenizer))
-@@ -1537,7 +1884,8 @@
+@@ -1537,7 +1915,8 @@
          f"(canvas {CANVAS_LEN})",
          flush=True,
      )

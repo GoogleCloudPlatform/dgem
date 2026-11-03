@@ -28,7 +28,8 @@ Answers take Jev's shapes, with this server's diagnostics alongside:
 The request body may also carry the schema keys "instructions", "samples",
 "auto_max", "auto_threshold", "steps", "think", "ask", "chunk_rows",
 "chunk_prompt", "sequential", "layout", "isolate" ("auto", "noul", "none" or "all") and
-"seed_token" ("random" or "fixed") as extensions. Images go ahead of the
+"seed_token" ("random" or "fixed") and "labels" ("az", "az_aa" or "az_lower") as
+extensions. Images go ahead of the
 state, either as multipart/form-data with the JSON body in a part named
 "request" and each image as a file part, or as an "images" array of data
 URLs in the JSON body.
@@ -149,6 +150,19 @@ DEFAULT_LAYOUT = os.environ.get("DEFAULT_LAYOUT", "document_first")
 # canvas already uses for its tail; reads stop depending on the seed, so samples > 1 adds nothing but engine noise).
 # Set per deployment (DEFAULT_SEED_TOKEN or --seed-token) or per request ("seed_token").
 SEED_TOKENS = ("random", "fixed")
+# dgem: label sets for choice questions. "az" (the default, upstream behaviour) labels options A-Z, so at
+# most 26. "az_aa" continues with AA-AZ (52) and "az_lower" with a-z (52, "lines" format only: in "indexed" the id
+# merges with a lowercase label). Each label is one Gemma token at the answer slot.
+# Score questions keep their labels (1-9, then A-Z). Set per deployment (DEFAULT_LABELS / --labels) or per request.
+_AZ = [chr(ord("A") + i) for i in range(26)]
+LABEL_SETS = {
+    "az": _AZ,
+    "az_aa": _AZ + ["A" + c for c in _AZ],
+    "az_lower": _AZ + [c.lower() for c in _AZ],
+}
+DEFAULT_LABELS = os.environ.get("DEFAULT_LABELS", "az")
+if DEFAULT_LABELS not in LABEL_SETS:
+    raise SystemExit("DEFAULT_LABELS must be az, az_aa or az_lower")
 DEFAULT_SEED_TOKEN = os.environ.get("DEFAULT_SEED_TOKEN", "random")
 if DEFAULT_SEED_TOKEN not in SEED_TOKENS:
     raise SystemExit("DEFAULT_SEED_TOKEN must be random or fixed")
@@ -201,6 +215,12 @@ def parse_schema(value):
         raise SchemaError("schema: needs a non-empty questions array")
     if len(value["questions"]) > MAX_QUESTIONS:
         raise SchemaError(f"schema: at most {MAX_QUESTIONS} questions")
+    label_set = value.get("labels", DEFAULT_LABELS)  # dgem
+    if label_set not in LABEL_SETS:
+        raise SchemaError('schema: labels must be "az", "az_aa" or "az_lower"')
+    choice_labels = LABEL_SETS[label_set]
+    if label_set == "az_lower" and len(value["questions"]) > 10:
+        raise SchemaError('schema: labels "az_lower" needs at most 10 questions ("lines" format)')
     qs = []
     seen = set()
     for q in value["questions"]:
@@ -226,7 +246,7 @@ def parse_schema(value):
                 else (str(o), None)
                 for o in opts
             ]
-            labels = [chr(ord("A") + i) for i in range(len(choices))]
+            labels = choice_labels[: len(choices)]
         elif kind == "score":
             choices = [(str(level), None) for level in (q.get("levels") or [])]
             labels = (
@@ -238,8 +258,9 @@ def parse_schema(value):
             raise SchemaError(f"question {qid!r}: unknown type {kind!r}")
         if len(choices) < 2:
             raise SchemaError(f"question {qid!r}: needs at least two alternatives")
-        if len(choices) > 26:
-            raise SchemaError(f"question {qid!r}: at most 26 alternatives")
+        limit = len(choice_labels) if kind == "choice" else 26
+        if len(choices) > limit:
+            raise SchemaError(f"question {qid!r}: at most {limit} alternatives")
         deps = q.get("depends_on") or []
         ask_if = q.get("ask_if") or {}
         if not isinstance(deps, list) or not all(isinstance(d, str) for d in deps):
@@ -349,6 +370,7 @@ def parse_schema(value):
         "sequential": sequential,
         "layout": layout,
         "seed_token": seed_token,
+        "labels": label_set,
         "format": "lines" if len(qs) <= 10 else "indexed",
     }
 
@@ -1060,6 +1082,7 @@ def decide(schema, state_content, seed):
         "steps": schema["steps"],
         "layout": schema["layout"],
         "seed_token": schema["seed_token"],
+        "labels": schema["labels"],
         "isolated": [q["id"] for q in schema["questions"] if q.get("alone")],
         "stages": stages,
         "skipped": skipped,
@@ -1261,6 +1284,7 @@ JEV_EXTENSIONS = (
     "layout",
     "isolate",
     "seed_token",
+    "labels",
 )
 
 
@@ -1834,7 +1858,7 @@ def _watchdog(period=60.0):
 
 
 def main():
-    global ARGS, CANVAS_LEN, CANVAS_STEP, DEFAULT_SEED_TOKEN
+    global ARGS, CANVAS_LEN, CANVAS_STEP, DEFAULT_SEED_TOKEN, DEFAULT_LABELS
     p = argparse.ArgumentParser()
     p.add_argument("--upstream", default="http://127.0.0.1:8010")
     p.add_argument("--model", default="dgemma")
@@ -1851,6 +1875,12 @@ def main():
         choices=SEED_TOKENS,
         default=DEFAULT_SEED_TOKEN,
         help="answer-slot seed for requests without seed_token: random (seeded vocabulary id) or fixed (PAD)",
+    )
+    p.add_argument(
+        "--labels",
+        choices=sorted(LABEL_SETS),
+        default=DEFAULT_LABELS,
+        help="choice-option labels for requests without labels: az (A-Z, 26), az_aa (+AA-AZ, 52), az_lower (+a-z, 52, lines only)",
     )
     p.add_argument(
         "--no-constrained",
@@ -1870,6 +1900,7 @@ def main():
     )
     ARGS = p.parse_args()
     DEFAULT_SEED_TOKEN = ARGS.seed_token
+    DEFAULT_LABELS = ARGS.labels
     CANVAS_LEN = ARGS.canvas
     CANVAS_STEP = ARGS.canvas_step
     init_tokenizer(AutoTokenizer.from_pretrained(ARGS.tokenizer))

@@ -1,0 +1,65 @@
+# Copyright 2026 Google LLC
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+# Answer templates and label sets checked against the served DiffusionGemma tokenizer (public tokenizer.json from
+# Hugging Face, pinned revision). Runs only when the serving server changes.
+name: Serving tokenizer checks
+
+on:
+  pull_request:
+    paths: ['deploy/cloudrun/server/**', '.github/workflows/serving-tokenizer.yml']
+  push:
+    branches: [main]
+    paths: ['deploy/cloudrun/server/**', '.github/workflows/serving-tokenizer.yml']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  TOKENIZER_REPO: nvidia/diffusiongemma-26B-A4B-it-NVFP4
+  TOKENIZER_REV: ec4ff3df205028f4e81c954c2227f9312b3ec2ea
+  # Default-path reference: the serving server before opt-in label sets.
+  REF_COMMIT: b871c29
+
+jobs:
+  label-sets:
+    name: Label sets vs real tokenizer
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - name: Set up Python
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
+        with:
+          python-version: '3.12'
+      - name: Download tokenizer
+        run: |
+          mkdir -p ~/tok
+          for f in tokenizer.json tokenizer_config.json chat_template.jinja; do
+            [ -s ~/tok/$f ] || curl -sfL -o ~/tok/$f "https://huggingface.co/${TOKENIZER_REPO}/resolve/${TOKENIZER_REV}/$f"
+          done
+          ls -la ~/tok
+      - name: Install transformers (tokenizers only, no torch)
+        run: pip install transformers pybase64
+      - name: Run label-set tests
+        run: |
+          git show ${REF_COMMIT}:deploy/cloudrun/server/structured_server.py > /tmp/ss_ref.py
+          DGEM_TOKENIZER_DIR=~/tok DGEM_REF_SERVER=/tmp/ss_ref.py \
+            python -m unittest -v deploy/cloudrun/server/test_label_sets.py
+      - name: Server key, upstream error and single-route tests
+        run: python -m unittest -v deploy/cloudrun/server/test_server_key.py deploy/cloudrun/server/test_upstream_errors.py deploy/cloudrun/server/test_predict_route.py

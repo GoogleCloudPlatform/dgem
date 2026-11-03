@@ -36,7 +36,7 @@ If you are authoring your first `.json.tmpl` file, think of a `dgem` template as
 Because [DiffusionGemma](https://gemma.ai/models/diffusiongemma/) evaluates all questions on a bidirectional `[MASK]` canvas simultaneously, **asking 5 questions takes about the same GPU forward-pass latency as asking 1 question**:
 
 1. **`"type": "boolean"` (Yes/No Gate)**: Maps to two tokens (`yes` / `no`) and returns calibrated probability $P(\text{yes})$ and normalized entropy $\tilde{H} \in [0, 1]$.
-2. **`"type": "choice"` (Mutually Exclusive Label, `2..26` Options)**: Maps each option to a single uppercase ASCII letter (`A`–`Z`). Adding a `"description"` field to each option teaches `dgemma` your exact domain rubric zero-shot without fine-tuning.
+2. **`"type": "choice"` (Mutually Exclusive Label, `2..26` Options)**: Maps each option to a single uppercase ASCII letter (`A`–`Z`). Adding a `"description"` field to each option teaches `dgemma` your exact domain rubric zero-shot without fine-tuning. More than 26 options: `dgem systemone serve` splits them into brackets (two passes). Experimental: the serving image also accepts `"labels": "az_aa"` (A–Z then AA–AZ, up to 52 options in one read) or `"az_lower"` (A–Z then a–z, requests of up to 10 questions), reported in `diagnostics.labels`; it is under evaluation, so keep the default `az` unless you have measured your own policy with it.
 3. **`"type": "score"` (Ordered Scale Levels)**: Maps ordered levels (e.g., `["minimal", "moderate", "elevated", "severe"]`) and computes the continuous probability-weighted expectation $\mathbb{E}[\text{score}] = \sum_k k \cdot P(\text{level}_k)$.
 
 ### Naming questions (slot ids)

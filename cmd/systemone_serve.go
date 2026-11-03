@@ -37,6 +37,7 @@ var (
 	soCatchAll     string
 	soNoulMode     string
 	soOptionOrder  string
+	soLabels       string
 	soPromptLayout string
 	soAPIKey       string
 	soNullPrior    bool
@@ -78,6 +79,7 @@ func init() {
 	systemoneServeCmd.Flags().StringVar(&soCatchAll, "catch-all", "off", "Wide-option catch-all handling ('none of the listed', 'out of scope', ...): off, final (skip Round 1, compete in the final), both (every bracket and the final), verify (final over real options, then pick vs catch-all)")
 	systemoneServeCmd.Flags().StringVar(&soPromptLayout, "prompt-layout", "document_first", "Server prompt layout: document_first (the state first, then the questions; servers without the \"layout\" field ignore it), or schema_first (questions as the system prompt, the server default)")
 	systemoneServeCmd.Flags().StringVar(&soOptionOrder, "option-order", decisionindex.OptionOrderAlpha, "How each question's options are labelled A, B, C…: alpha (sorted keys, the default) or source (the order the request lists them)")
+	systemoneServeCmd.Flags().StringVar(&soLabels, "labels", decisionindex.LabelsAZ, "Server label set for choice options: az (A-Z, brackets above 26, the default), az_aa or az_lower (52 labels: up to 52 options in one read, 52-wide brackets above; needs a serving image with label sets). Experimental")
 	systemoneServeCmd.Flags().StringVar(&soNoulMode, "noul-mode", "noul", "How yes/no questions are read: noul, or choice (2-option yes/no choice with the true/false criteria as descriptions)")
 	systemoneServeCmd.Flags().StringVar(&soAPIKey, "api-key", "", "Optional secret key to enforce Authorization: Bearer <key> (env: SYSTEMONE_API_KEY or API_KEY)")
 	systemoneServeCmd.Flags().BoolVar(&soNullPrior, "null-prior-debias", false, "Divide out positional 'A'-bias prior")
@@ -112,6 +114,11 @@ func runSystemOneServe(cmd *cobra.Command, args []string) error {
 	}
 	if soOptionOrder != decisionindex.OptionOrderAlpha && soOptionOrder != decisionindex.OptionOrderSource {
 		return fmt.Errorf("--option-order must be alpha or source (got %q)", soOptionOrder)
+	}
+	switch soLabels {
+	case decisionindex.LabelsAZ, decisionindex.LabelsAZAA, decisionindex.LabelsAZLower:
+	default:
+		return fmt.Errorf("--labels must be az, az_aa or az_lower (got %q)", soLabels)
 	}
 	if soNoulMode != "noul" && soNoulMode != "choice" {
 		return fmt.Errorf("--noul-mode must be noul or choice (got %q)", soNoulMode)
@@ -165,6 +172,7 @@ func runSystemOneServe(cmd *cobra.Command, args []string) error {
 		CatchAll:          soCatchAll,
 		NoulMode:          soNoulMode,
 		OptionOrder:       soOptionOrder,
+		Labels:            soLabels,
 		PromptLayout:      soPromptLayout,
 	}
 
