@@ -16,6 +16,7 @@ banner, issue-template redirect, `go.mod` `Deprecated` line).
 - `pkg/template`, `templates/`: `.json.tmpl` decision policies (Policy-as-Template).
 - `pkg/decisionindex`: `/v1/systemone` adapter engine. `pkg/permutation`: option-order tools.
 - `studio/`: Decision Studio (Lit + Vite), embedded into the binary from `studio/dist` via `go:embed`.
+- `examples/`: runnable Go integration examples (Genkit Go v1.14.0 tool-approval interrupts and bulk policy evaluation).
 - `deploy/cloudrun/`: serving image (`Dockerfile`, `entrypoint.sh`, `server/structured_server.py`).
 - `scripts/`: deploy, build, staging, monitoring and evaluation scripts; `scripts/bench_matrix.py` + `scripts/matrix/`.
 - `docs/` (source) and `docs-site/` (Astro Starlight mirror).
