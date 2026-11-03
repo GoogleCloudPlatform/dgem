@@ -4,7 +4,8 @@ description: "The definitive guide to running DiffusionGemma on a scale-to-zero 
 ---
 
 A Cloud Run GPU service is the **walk** stage: your own endpoint that costs nothing while idle and wakes in a few
-minutes. It can also be the failover and batch tier behind a production Vertex endpoint. Everything below uses
+minutes. It can also be the failover tier behind a production Vertex endpoint; for whole datasets see
+[To batch or not to batch](/dgem/deploy/batch/). Everything below uses
 `scripts/deploy_cloudrun_vllm.sh`, which encodes the configuration we tested; placeholders are `<PROJECT>`,
 `<REGION>` and `<GROUP>`.
 

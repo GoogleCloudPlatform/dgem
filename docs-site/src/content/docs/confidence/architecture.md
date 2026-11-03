@@ -49,7 +49,7 @@ Seeded Canvas:
 
 ## 4. Uncertainty & Cardinality-Normalized Entropy
 
-Single-pass restricted-softmax readout provides calibrated epistemic uncertainty at every decision slot $m$:
+Single-pass restricted-softmax readout gives a probability distribution and an uncertainty signal at every decision slot $m$. These raw probabilities rank errors well but are somewhat over-confident, by an amount that depends on the domain; fit a temperature per policy on held-out data if you need calibrated probabilities (see [calibrate your policy](/dgem/confidence/calibrate-your-policy/#5-temperature-scaling-optional)):
 
 * **Raw Shannon Entropy ($H_m$)**:
   $$H_m = -\sum_{k \in \mathcal{V}_m} p_{m,k} \ln p_{m,k} \in [0, \ln|\mathcal{V}_m|]$$

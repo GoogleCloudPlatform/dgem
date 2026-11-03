@@ -47,7 +47,7 @@ const SCRIPT_CUES: Record<number, ScriptCue> = {
   },
   5: {
     title: '📖 Part 5 — Glossary',
-    text: '"Terms like hesitation (entropy), first-choice bias, taring the scale, and calibration sound academic, but each maps to an everyday idea—like zeroing a kitchen scale before weighing flour, or checking whether a forecaster’s "90% chance of rain" really means rain 9 days out of 10."',
+    text: '"Terms like hesitation (entropy), first-choice bias and calibration sound academic, but each maps to an everyday idea: how torn someone is between answers, a voter ticking the first name on the ballot, or checking whether a forecaster’s "90% chance of rain" really means rain 9 days out of 10."',
     hint: '👉 Presenter Action: Start with the four basics (decision model, question slot, policy template, handing off), then the trust terms.',
   },
 };
@@ -1102,7 +1102,7 @@ export class DgemConceptVisualizer extends LitElement {
             <div>
               <h3 style="margin: 0; font-size: 0.96rem;">dgem + DiffusionGemma (all blanks at once)</h3>
               <div style="font-size: 0.75rem; color: var(--viz-text-muted); margin-top: 0.18rem;">
-                Gives each question a blank and fills all 3 together in one pass. The blanks can see each other.
+                Gives each question a one-letter blank and fills all 3 together in one pass. The blanks can see each other.
               </div>
             </div>
             <span class="pill pill-emerald mono">1 pass</span>
@@ -1642,9 +1642,9 @@ export class DgemConceptVisualizer extends LitElement {
         badge: '🧭 Basics',
         title: 'Question slot',
         humanName: 'One blank on the form',
-        jargon: 'Masked canvas slot with a restricted vocabulary (boolean / choice / score)',
+        jargon: 'One answer token per question on a short canvas (128 rows, each request rounded to 16): yes/no, a letter A–Z for choices, 1–9 for scores',
         analogy:
-          'Each question gets its own blank, like "Team: ___" or "Urgent? yes / no". The model can only fill a blank with one of the listed answers, and it fills every blank at the same time.',
+          'Each question gets its own blank, like "Team: ___" or "Urgent? yes / no". Each option is given a letter (A: billing, B: technical…) and the model fills the blank with one letter, so a question holds up to 26 options; wider lists are split into rounds. It fills every blank at the same time.',
         impact: 'Answers always match the format your code expects, and asking several questions costs about the same as asking one.',
       },
       {
@@ -1685,7 +1685,7 @@ export class DgemConceptVisualizer extends LitElement {
         jargon: 'Shannon entropy H = -∑ pₖ ln(pₖ) in nats; hesitation = normalized entropy H / ln(K)',
         analogy:
           'If the model puts nearly all its weight on one answer, hesitation is near 0% (clear). If it splits evenly between options, hesitation is 100% (a toss-up). The Studio treats under 16% as clear, 16–50% as somewhat unsure, and above 50% as very unsure. Low hesitation is a good sign but not a guarantee: option order can occasionally hide doubt.',
-        impact: 'On a 50-item public suite, escalating only high-entropy items to Gemini (28–34% of items) raised accuracy from 88% to 94–98%.',
+        impact: 'Computed from the probabilities of the allowed answers. It ranks wrong answers above right ones well, which is what the gate needs; it is not, by itself, a calibrated probability of being wrong.',
       },
       {
         id: 'primacy',
@@ -1698,7 +1698,7 @@ export class DgemConceptVisualizer extends LitElement {
         impact: 'Explains why the order of options in a template can change the answer on borderline cases. dgem measures these flips on every release rather than correcting each request, because the corrections we tested did not help reliably.',
       },
       {
-        id: 'template',
+        id: 'answer-form',
         badge: '📝 Trust',
         title: 'The form is part of the question',
         humanName: 'Answer templates change answers',
@@ -1714,7 +1714,17 @@ export class DgemConceptVisualizer extends LitElement {
         humanName: 'Read the input before the questions',
         jargon: 'Prompt layout document_first (default from serving v0.2.0) vs schema_first',
         analogy: 'Like reading a letter before filling in the form about it, rather than reading the form first.',
-        impact: 'Gained 3–12 points on frozen held-out sets (for example XNLI 0.662 → 0.699, n=4,500), with lower recall on out-of-scope items.',
+        impact: 'Improved accuracy on catch-all intent and hallucination-detection questions in our tests, at some cost in out-of-scope recall.',
+      },
+      {
+        id: 'per-policy',
+        badge: '🎯 Trust',
+        title: 'Calibrated per policy',
+        humanName: 'Beyond Shannon: adjusting the odds for your domain',
+        jargon: 'Temperature scaling p ∝ p^(1/T), fitted per policy on held-out labelled data (no global default)',
+        analogy:
+          'Like a new colleague who is usually right but sounds a bit too sure: after a few weeks you learn how much to discount them, and the discount is different for each kind of task. dgem lets each policy carry its own "temperature", fitted on examples it was not tuned on.',
+        impact: 'Raw probabilities are over-confident by a domain-dependent amount. Fitting a temperature per policy on held-out data lowers calibration error; one shared temperature can make things worse across domains.',
       },
       {
         id: 'brier',
@@ -1724,7 +1734,7 @@ export class DgemConceptVisualizer extends LitElement {
         jargon: 'Multi-Class Brier Score (1/N ∑ ∑ (pᵢₖ - yᵢₖ)²) & 10-Bin Expected Calibration Error (ECE)',
         analogy:
           'If your weather app says "90% chance of rain" on 10 different days, it should actually rain on 9 of those 10 days—not 5 out of 10 (overconfident) and not 10 out of 10 (underconfident). Brier Score and ECE measure whether a model’s confidence percentages can be trusted as real-world probabilities.',
-        impact: 'Tells you whether a rule like "auto-approve at ≥ 90% confidence" is safe. Measure it on your own labeled data; 10-bin ECE needs roughly 200+ items to be reliable.',
+        impact: 'Tells you whether a rule like "auto-approve at ≥ 90% confidence" is safe. Measure it on your own held-out labelled data, per policy; 10-bin ECE needs roughly 200+ items to be reliable.',
       },
     ];
 

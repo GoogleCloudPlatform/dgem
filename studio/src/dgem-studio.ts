@@ -1814,7 +1814,7 @@ export class DgemStudio extends LitElement {
           <div class="brand-row">
             <div class="brand-mark">dG</div>
             <div>
-              <div class="brand-title">DiffusionGemma Decision Studio</div>
+              <div class="brand-title">Decision Gemma (dgem) Decision Studio</div>
               <div class="brand-subtitle">
                 Zero-Shot Decision Model · Policy-as-Template
               </div>
@@ -2387,7 +2387,7 @@ export class DgemStudio extends LitElement {
           <div class="card-header">
             <h2 class="card-title">
               <span class="material-symbols-outlined">analytics</span>
-              Joint Slot Readout &amp; Epistemic Entropy (H)
+              Joint Slot Readout &amp; Hesitation
             </h2>
             <div style="display:flex;gap:0.45rem">
               <button

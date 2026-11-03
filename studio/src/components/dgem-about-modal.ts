@@ -257,7 +257,7 @@ export class DgemAboutModal extends LitElement {
           <div class="dialog-header">
             <h2 class="dialog-title" id="about-title">
               <span class="material-symbols-outlined" style="color:var(--modal-brand)">info</span>
-              About DiffusionGemma Decision Studio (dgem)
+              About Decision Gemma (dgem) Decision Studio
             </h2>
             <button class="close-btn" @click=${this.closeModal} title="Close">
               <span class="material-symbols-outlined">close</span>
@@ -266,12 +266,17 @@ export class DgemAboutModal extends LitElement {
 
           <div class="dialog-body">
             <p style="margin-top:0">
+              <strong>dgem (Decision Gemma)</strong> is a decision layer on DiffusionGemma; this Studio calls your dgem
+              endpoint.
+            </p>
+            <p>
               <strong>DiffusionGemma (<code>dgemma</code>)</strong> is a Zero-Shot Decision Model that
               evaluates structured multi-slot policies (<code>.json.tmpl</code>) jointly in
               <strong>O(1) forward passes (~490ms)</strong> on a bidirectional discrete-diffusion canvas,
               returning a probability for every allowed answer and a <strong>hesitation score</strong>
               (normalized Shannon entropy) for every question, without writing any text. These scores are a
-              strong uncertainty signal, not automatically calibrated probabilities for your traffic.
+              strong uncertainty signal (they rank errors well), not calibrated probabilities: calibrate them per
+              policy on your own held-out labelled examples.
             </p>
 
             <div class="glossary-box">
@@ -302,7 +307,7 @@ export class DgemAboutModal extends LitElement {
                 </div>
                 <div class="glossary-card">
                   <strong>🌦️ Calibration (Brier &amp; ECE)</strong>
-                  Weather-Forecaster Honesty: measures whether "90% confident" really means right about 9 times out of 10. Check it on your own labeled data; the right correction differs by domain.
+                  Weather-Forecaster Honesty: measures whether "90% confident" really means right about 9 times out of 10. Raw dgem probabilities are over-confident by a different amount in each domain, so calibrate per policy on held-out labelled examples; there is no global setting.
                 </div>
               </div>
               <button class="glossary-btn" @click=${this.openGlossaryTab}>

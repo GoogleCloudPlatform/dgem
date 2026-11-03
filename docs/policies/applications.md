@@ -207,7 +207,7 @@ Use discrete slot readout to grade model outputs against structured evaluation r
 
 ---
 
-## 6. Multimodal Visual, Video & Audio Assessment Patterns
+## 6. Image and Video-Frame Assessment Patterns
 
 [DiffusionGemma](https://gemma.ai/models/diffusiongemma/) natively incorporates a ~550M parameter **SigLIP vision tower**, allowing visual inputs (single images, documents, and sequential video frames) to be prefilled directly into the KV cache.
 
@@ -231,15 +231,15 @@ When combined with discrete diffusion slot readout, multimodal queries bypass th
 
 ### Multimodal Best Practices
 1. **Modality Order**: Always place image parts **before** text prompts in the input array.
-2. **Visual Token Budgets**: [DiffusionGemma](https://gemma.ai/models/diffusiongemma/) supports variable resolution by setting token budgets (**70, 140, 280, 560, or 1120 tokens**). Use lower budgets (70–140) for rapid video frame triage, and higher budgets (560–1120) for small defect inspection or dense document OCR.
-3. **Sequential Video Frames**: Sample video frames at 1 fps (up to 60 frames) and supply them as a sequence of image parts.
+2. **Image token cost**: the serving image encodes each image to about **280 tokens** (the checkpoint's default). Images, the question list and the input all share the deployment's context (`MAX_MODEL_LEN`, 8,192 tokens on the reference deployment), so a request holds about two dozen images at most; requests over the limit are refused.
+3. **Video as frames**: sample a few frames that show the event (for example 1 fps over the relevant seconds) and send them as image parts in time order. Frame count is bounded by the context above; accuracy versus frame count has not been measured yet.
 
 ### Production Multimodal Templates (`templates/multimodal/`)
 * **Industrial AOI**: `templates/multimodal/pcb_defect_triage.json.tmpl` (solder bridge, tombstoning, missing component).
 * **Fintech & KYC**: `templates/multimodal/kyc_document_audit.json.tmpl` (legibility, document type, tampering detection).
 * **OSHA & Workplace Safety**: `templates/multimodal/workplace_hazard_video.json.tmpl` (PPE compliance, forklift pedestrian proximity, slip hazards).
 * **Frontend Design Systems**: `templates/multimodal/ui_design_review.json.tmpl` (WCAG contrast compliance, visual hierarchy, information density).
-* **Contact Center QA**: `templates/multimodal/call_quality_audio.json.tmpl` (acoustic tags, disclosure compliance, agent empathy, customer sentiment).
+* **Contact Center QA**: `templates/multimodal/call_quality_audio.json.tmpl` (disclosure compliance, agent empathy, customer sentiment). Text only: it reads a **call transcript** with optional acoustic tags such as `[raised voice]`, produced by your speech-to-text step; dgem does not take audio.
 
 ### Running Multimodal Queries with `dgem`
 ```bash
@@ -249,7 +249,7 @@ When combined with discrete diffusion slot readout, multimodal queries bypass th
   -v 'component=CheckoutCard' \
   --stats
 
-# Attach multiple video frames:
+# Attach multiple video frames (sampled by you, in time order):
 ./bin/dgem decide -t templates/multimodal/workplace_hazard_video.json.tmpl \
   -I fixtures/pcb_board.png \
   -I fixtures/id_card.png \

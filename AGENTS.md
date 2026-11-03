@@ -71,8 +71,9 @@ After changing `studio/src/*`: `npm --prefix studio run build && go build -o bin
 - **Question ids are part of the prompt.** Use neutral, descriptive ids; never ids that hint the answer should
   differ (`mirror`, `reverse`, `opposite`, `alt`). Avoid shared option letters across questions.
 - **Uncertainty in the UI** is shown as Hesitation % (normalized entropy; <16% clear, 16–50% somewhat unsure,
-  >50% very unsure) via `studio/src/hesitation.ts`. `cascade_threshold` is raw nats. Label simulated numbers as
-  illustrative.
+  >50% very unsure) via `studio/src/hesitation.ts`. `cascade_threshold` is raw nats. Raw restricted-softmax
+  probabilities are an uncertainty signal; call probabilities "calibrated" only when fitted per policy on held-out data.
+  Label simulated numbers as illustrative.
 
 ## Serving image
 - `deploy/cloudrun/server/structured_server.py` is vLLM's upstream example (`structured_server.upstream.py`, kept

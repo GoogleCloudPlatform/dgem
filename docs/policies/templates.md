@@ -35,7 +35,7 @@ If you are authoring your first `.json.tmpl` file, think of a `dgem` template as
 
 Because [DiffusionGemma](https://gemma.ai/models/diffusiongemma/) evaluates all questions on a bidirectional `[MASK]` canvas simultaneously, **asking 5 questions takes about the same GPU forward-pass latency as asking 1 question**:
 
-1. **`"type": "boolean"` (Yes/No Gate)**: Maps to two tokens (`yes` / `no`) and returns calibrated probability $P(\text{yes})$ and normalized entropy $\tilde{H} \in [0, 1]$.
+1. **`"type": "boolean"` (Yes/No Gate)**: Maps to two tokens (`yes` / `no`) and returns the probability $P(\text{yes})$ and normalized entropy $\tilde{H} \in [0, 1]$.
 2. **`"type": "choice"` (Mutually Exclusive Label, `2..26` Options)**: Maps each option to a single uppercase ASCII letter (`A`–`Z`). Adding a `"description"` field to each option teaches `dgemma` your exact domain rubric zero-shot without fine-tuning. More than 26 options: `dgem systemone serve` splits them into brackets (two passes). Experimental: the serving image also accepts `"labels": "az_aa"` (A–Z then AA–AZ, up to 52 options in one read) or `"az_lower"` (A–Z then a–z, requests of up to 10 questions), reported in `diagnostics.labels`; it is under evaluation, so keep the default `az` unless you have measured your own policy with it.
 3. **`"type": "score"` (Ordered Scale Levels)**: Maps ordered levels (e.g., `["minimal", "moderate", "elevated", "severe"]`) and computes the continuous probability-weighted expectation $\mathbb{E}[\text{score}] = \sum_k k \cdot P(\text{level}_k)$.
 
@@ -180,6 +180,22 @@ labelled examples of its own decisions. It rescales confidence and hesitation wi
     ```bash
     ./bin/dgem decide -t templates/code_review.json.tmpl \
       -v 'diff=Replace raw string concatenation in SQL query with parameterized statements to eliminate SQL injection vulnerability.' \
+      --stats
+    ```
+  </TabItem>
+
+  <TabItem label="GitHub Issue & PR Spam">
+    **File**: `templates/github_spam_triage.json.tmpl`
+
+    Triages new GitHub issues and pull requests in one read: `spam` (yes/no) and `kind` (nine options: four good-faith kinds such as `genuine_bug` and `docs_or_code_change`, five spam kinds: `junk_or_test`, `low_effort_unfilled`, `off_topic`, `promotional_or_scam`, `malicious_or_abuse`). The submission is treated as data, so instructions inside it are classified, not followed. Variables: `repo`, `item_kind` (`issue` or `pull_request`), `author_association`, `title`, `body` (trim to a few thousand characters) and, for pull requests, `pr_files` (list) and `pr_diff` (e.g. `"+12/-3 in 2 files"`). Do not pass outcome signals such as closure reason or labels; they are not available when an item arrives.
+
+    On 347 held-out public issues and PRs from Google AI sample and SDK repositories (56 spam), it reached spam F1 0.84 (PR-AUC 0.92) at `samples=1`, with hesitation ranking its errors well (AUROC 0.93). Its misses are confident ones (untouched PR templates, fork dumps), and its false positives were good-faith test or sync PRs, so use `spam=yes` to label items, not to close maintainers' PRs. It is a junk filter, not an abuse detector: on a separate set of real items it flagged fewer than half of the prompt injections disguised as normal bug reports (10 of 22) and of the product pitches framed as integration proposals (7 of 30), mostly with low hesitation, so a hesitation gate does not catch those misses. Add dedicated yes/no questions if you need to catch them. The instructions mention the Google Cloud / Gemini / A2A ecosystem; replace that phrase for your project, then fit your own temperature and hesitation threshold on labelled items ([Calibrate your policy](../confidence/calibrate-your-policy.md)).
+
+    ```bash
+    ./bin/dgem decide -t templates/github_spam_triage.json.tmpl \
+      -v repo=example/sdk -v item_kind=issue -v author_association=NONE \
+      -v 'title=Crash when streaming with tools enabled' \
+      -v 'body=generate_content_stream with tools raises KeyError on 1.2.0; repro attached.' \
       --stats
     ```
   </TabItem>
@@ -427,9 +443,10 @@ labelled examples of its own decisions. It rescales confidence and hesitation wi
 
 ---
 
-## 4. Multimodal Vision & Audio Inspection (`templates/multimodal/`)
+## 4. Multimodal Vision Inspection (`templates/multimodal/`)
 
-[DiffusionGemma](https://gemma.ai/models/diffusiongemma/) natively accepts image files (PNG, JPEG, WebP) directly alongside text state inputs.
+[DiffusionGemma](https://gemma.ai/models/diffusiongemma/) accepts image files (PNG, JPEG, WebP, GIF) alongside text state inputs. It is a text + image model: video
+works as sampled frames sent as images, and audio is not supported (the call-quality template reads a transcript).
 
 <Tabs>
   <TabItem label="UI Design & Accessibility Review">
@@ -628,7 +645,7 @@ labelled examples of its own decisions. It rescales confidence and hesitation wi
   <TabItem label="Contact Center Call Quality">
     **File**: `templates/multimodal/call_quality_audio.json.tmpl`
 
-    Evaluates customer service interactions across disclosure compliance, first-contact resolution, agent empathy, and final customer sentiment.
+    Evaluates customer service interactions across disclosure compliance, first-contact resolution, agent empathy, and final customer sentiment. Text only: the input is a call transcript (optionally with acoustic tags from your speech-to-text step), not audio.
 
     ```json
     {

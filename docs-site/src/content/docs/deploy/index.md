@@ -20,6 +20,9 @@ This track takes `dgem` from your laptop to a production endpoint and keeps it r
 | 7 | [Operations runbook](/dgem/operate/runbook/) | Health, promotion, rollback, teardown and troubleshooting |
 | 8 | [Monitoring and alerts](/dgem/operate/monitoring/) | Health checks, dashboards, alerts and what to do when they fire |
 
+Deciding a whole dataset rather than one request at a time? [To batch or not to batch](/dgem/deploy/batch/) compares a warm
+endpoint, Cloud Run Jobs, Dataflow and Vertex AI batch prediction, with measured cost per 1,000 decisions.
+
 Hosting it yourself? [Build the serving image](/dgem/deploy/public-images/) first; [Evaluate dgem on your own GPU](/dgem/deploy/evaluate/)
 covers GPU requirements, checking the install with the regression matrix, and a custom evaluation on your own
 labelled data.
@@ -41,7 +44,9 @@ concurrency and network: measure it on your own deployment ([method](#method)).
   the L4 was slower on every request type in our tests. Other GPUs are untested
   ([requirements](/dgem/deploy/evaluate/#0-hardware)).
 - **Production:** a Vertex AI dedicated endpoint with minimum replicas ≥ 1, autoscaling on GPU duty cycle.
-- **Failover and batch:** a scale-to-zero Cloud Run GPU service using the lean image and Direct VPC egress.
+- **Failover:** a scale-to-zero Cloud Run GPU service using the lean image and Direct VPC egress.
+- **Bulk decisions:** Cloud Run Jobs with the batch server settings above ~10,000 rows, or your warm endpoint if it
+  has spare capacity ([to batch or not to batch](/dgem/deploy/batch/)).
 - **One gateway** (`dgem serve`) in front of both, routing `vertex_first` with automatic failover.
 - **Requests:** `"samples": 1` by default; opt in to `4` only when you need agreement/standard error; never
   `"auto"` on latency-sensitive paths. Put all questions about one input in one request.

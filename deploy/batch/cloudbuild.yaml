@@ -1,0 +1,10 @@
+# gcloud builds submit scripts/batch_spike --config scripts/batch_spike/cloudbuild.yaml \
+#   --substitutions=_BASE=<dgemma image>,_IMAGE=<dgem-batch image>
+steps:
+  - name: gcr.io/cloud-builders/docker
+    args: ["build", "--build-arg", "BASE=${_BASE}", "-t", "${_IMAGE}", "."]
+images: ["${_IMAGE}"]
+options:
+  machineType: E2_HIGHCPU_8
+  diskSizeGb: 200
+timeout: 3600s

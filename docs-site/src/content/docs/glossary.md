@@ -22,7 +22,7 @@ Use this page as a **Decoder Ring** to translate between disciplines.
 ## 2. Decision Model & Canvas Primitives
 
 ### Discrete Diffusion Slot Readout
-* **In Plain English**: Reading the exact probability of every valid answer (`yes`/`no`, `A`–`Z`, `1`–`5`) directly from masked blanks in a single forward pass instead of generating words one by one.
+* **In Plain English**: Reading the exact probability of every valid answer (`yes`/`no`, `A`–`Z`, `1`–`5`) directly from masked blanks in a single forward pass instead of generating words one by one. Each option is given a letter and each blank holds one letter, which is why a `choice` question has at most 26 options (wider lists are split into rounds, or use the opt-in 52-label sets). Hesitation is computed from these answer probabilities.
 * **Under the Hood**: Given a causal prompt prefix and a seeded canvas containing masked slot positions $\langle s_1, \dots, s_M \rangle$, the engine runs 1 denoising step (`steps=1, think=0`), slices the raw vocabulary logits $z_{m,k}$ restricted to the valid single-token options $k \in \mathcal{V}_m$, and normalizes via softmax.
 * **Where You See It in `dgem`**: [`pkg/client/client.go`](https://github.com/GoogleCloudPlatform/dgem/blob/main/pkg/client/client.go) (`ParseStructuredContentWithLogprobs`) and `structured_server.py`.
 
@@ -97,8 +97,8 @@ These terms come from [Confidence beyond Shannon: hesitation-gated decisions](/d
 * **How dgem handles it**: Measured on every release (the regression matrix shuffles option order and reports extra flips) rather than corrected in the pass; see the research notes below.
 * **Under the Hood**: $p_0(k)$ is the model's slot distribution on a content-free input. It estimates the position term $b_{\text{pos}}(k)$ in $z = s(\text{option}) + b_{\text{pos}}(k) + \epsilon$.
 
-### Temperature Scaling ("Humility Dial")
-* **In Plain English**: One dial that makes over-confident scores more modest (or under-confident ones bolder) without changing which answer wins.
+### Temperature Scaling ("Humility Dial") — calibrated per policy
+* **In Plain English**: One dial that makes over-confident scores more modest (or under-confident ones bolder) without changing which answer wins. This is the "beyond Shannon" step: each policy gets its own dial, fitted on held-out labelled examples; there is no global setting.
 * **Under the Hood**: $p_k(T) \propto p_k^{1/T}$. $T > 1$ softens. $T^*$ is **fitted on labeled examples** (Guo et al., 2017), so the improvement is only trustworthy when measured on data not used for fitting. The best held-out temperature differs noticeably by domain, so fit one per policy.
 
 ### Expected Calibration Error (`ECE`)

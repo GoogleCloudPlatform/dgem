@@ -1,0 +1,35 @@
+{
+  "schema": {
+    "instructions": "You are reviewing user comments posted on a news site, as part of re-applying the community guidelines to the comment archive.",
+    "questions": [
+      {
+        "id": "toxic",
+        "type": "boolean",
+        "instructions": "Is this comment toxic: rude, disrespectful or unreasonable enough to make someone leave the discussion?"
+      },
+      {
+        "id": "category",
+        "type": "choice",
+        "instructions": "What is the main kind of harm in this comment?",
+        "options": [
+          {"name": "none", "description": "No harmful content"},
+          {"name": "insult", "description": "Insulting, inflammatory or negative remarks about a person or group"},
+          {"name": "obscene", "description": "Swear words, curse words or other obscene language"},
+          {"name": "threat", "description": "Wishes or threatens harm or violence against someone"},
+          {"name": "identity_attack", "description": "Negative or hateful remarks about someone because of their identity"},
+          {"name": "sexual_explicit", "description": "Sexual or explicit content"}
+        ]
+      },
+      {
+        "id": "severity",
+        "type": "score",
+        "instructions": "How severe is the harm?",
+        "levels": ["none", "mild", "moderate", "severe"]
+      }
+    ],
+    "samples": {{ default 1 .samples | toJson }}
+  },
+  "state": {
+    "comment": {{ default "No comment text provided" .comment | toJson }}
+  }
+}
