@@ -519,12 +519,15 @@ type EngineOptions struct {
 	BracketSize       int     // Max options per Round-1 bracket for wide (>26) choices; <=1 means BracketSize
 	CatchAll          string  // Wide-option catch-all handling: "off" (default), "final", "both" or "verify"; see catchAllKeys
 	NoulMode          string  // How yes/no questions are read: "noul" (default) or "choice" (2-option choice; see noulAsChoice)
-	Labels            string  // Server label set for choice options: "az" (default, 26) or "az_aa"/"az_lower" (52). Wide sets read up to 52 options natively and bracket above that with 52-wide brackets
-	OptionOrder       string  // How options are labelled A, B, C…: "alpha" (default, sorted keys) or "source" (request order)
-	PromptLayout      string  // Server prompt layout: "document_first" (default: state first, then questions) or "schema_first"/"" (questions as the system prompt)
-	PriorWeight       float64 // Log-linear fusion weight alpha >= 0 for PriorLogits; 0 disables fusion
-	HesitationGate    float64 // Raw normalized entropy threshold tau in [0, 1] used by PriorGateMode (default 0.16)
-	PriorGateMode     string  // Gate schedule for PriorLogits: "confident" (default: fuse when rawNormH < tau), "hesitant" (rawNormH >= tau), "proportional" (weight * rawNormH), or "always"
+	Labels               string  // Server label set for choice options: "az" (default, 26) or "az_aa"/"az_lower" (52). Wide sets read up to 52 options natively and bracket above that with 52-wide brackets
+	OptionOrder          string  // How options are labelled A, B, C…: "alpha" (default, sorted keys) or "source" (request order)
+	PromptLayout         string  // Server prompt layout: "document_first" (default: state first, then questions) or "schema_first"/"" (questions as the system prompt)
+	PriorWeight          float64 // Log-linear fusion weight alpha >= 0 for PriorLogits; 0 disables fusion
+	HesitationGate       float64 // Raw normalized entropy threshold tau in [0, 1] used by PriorGateMode (default 0.16)
+	PriorGateMode        string  // Gate schedule for PriorLogits: "confident" (default: fuse when rawNormH < tau), "hesitant" (rawNormH >= tau), "proportional" (weight * rawNormH), or "always"
+	ShortlistTopK        int     // Candidate count M <= MaxOptionsPerSlot retained by ShortlistFunc for wide choices (default 0 = off)
+	ShortlistContrastive bool    // Append [distinguishing: ...] sibling token tags on shortlisted wide choices (default true)
+	ShortlistFunc        ShortlistFunc
 }
 
 // DefaultEngineOptions returns production settings with Wide-Option Tournament + Multi-Slot Batching enabled (T*=1.0).
@@ -539,10 +542,12 @@ func DefaultEngineOptions() EngineOptions {
 		BracketSize:       BracketSize,
 		// document_first: on the wave-2 canary (dev suites, paired) it raised di_catchall 0.790 -> 0.870 and rag_dev
 		// 0.705 -> 0.770 with JevBench and di_wide unchanged; out-of-scope recall on di_catchall fell 1.00 -> 0.825.
-		PromptLayout:   "document_first",
-		PriorWeight:    0, // opt-in: prior_logits are ignored unless the operator sets --prior-weight
-		HesitationGate: 0.16,
-		PriorGateMode:  "confident",
+		PromptLayout:         "document_first",
+		PriorWeight:          0, // opt-in: prior_logits are ignored unless the operator sets --prior-weight
+		HesitationGate:       0.16,
+		PriorGateMode:        "confident",
+		ShortlistTopK:        0,
+		ShortlistContrastive: true,
 	}
 }
 
@@ -722,11 +727,20 @@ func ExecuteSystemOne(ctx context.Context, cli *client.Client, req SystemOneRequ
 		mu.Unlock()
 	}
 
-	// 2. Process wide questions (27 <= K <= 255) via 2-Stage Bracket Tournament Routing
+	// 2. Process wide questions (27 <= K <= 255+) via ShortlistFunc or 2-Stage Bracket Tournament Routing
 	for _, k := range wideKeys {
 		wideQs++
 		q := req.Questions[k]
-		ans, passes, err := evaluateWideQuestionTournament(ctx, cli, stateText, req.Images, k, q, opts)
+		var (
+			ans    SystemOneAnswer
+			passes int
+			err    error
+		)
+		if opts.ShortlistFunc != nil {
+			ans, passes, err = evaluateWideQuestionShortlist(ctx, cli, stateText, req.Images, k, q, opts)
+		} else {
+			ans, passes, err = evaluateWideQuestionTournament(ctx, cli, stateText, req.Images, k, q, opts)
+		}
 		if err != nil {
 			return nil, err
 		}
