@@ -257,7 +257,7 @@ export class DgemAboutModal extends LitElement {
           <div class="dialog-header">
             <h2 class="dialog-title" id="about-title">
               <span class="material-symbols-outlined" style="color:var(--modal-brand)">info</span>
-              About Decision Gemma (dgem) Decision Studio
+              About dgem Decision Studio
             </h2>
             <button class="close-btn" @click=${this.closeModal} title="Close">
               <span class="material-symbols-outlined">close</span>
@@ -266,7 +266,7 @@ export class DgemAboutModal extends LitElement {
 
           <div class="dialog-body">
             <p style="margin-top:0">
-              <strong>dgem (Decision Gemma)</strong> is a decision layer on DiffusionGemma; this Studio calls your dgem
+              <strong>dgem</strong> is a decision layer on DiffusionGemma; this Studio calls your dgem
               endpoint.
             </p>
             <p>

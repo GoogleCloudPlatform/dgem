@@ -220,7 +220,7 @@ export class DgemNavRail extends LitElement {
       <div class="rail-top" role="navigation" aria-label="Primary Workspace Navigation">
         <div
           class="brand-logo"
-          title="Decision Gemma (dgem) Decision Studio"
+          title="dgem Decision Studio"
           @click=${() => this.selectTab('studio')}
         >
           dG

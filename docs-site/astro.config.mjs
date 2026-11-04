@@ -76,7 +76,7 @@ export default defineConfig({
   },
   integrations: [
     starlight({
-      title: 'dgem - Decision Gemma',
+      title: 'dgem',
       description: 'DiffusionGemma as a Zero-Shot Decision Model & Declarative Policy-as-Template Engine across Apple Silicon, GCE, and Cloud Run',
       social: [
         { icon: 'github', label: 'GitHub', href: 'https://github.com/GoogleCloudPlatform/dgem' },

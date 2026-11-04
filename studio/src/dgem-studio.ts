@@ -1814,7 +1814,7 @@ export class DgemStudio extends LitElement {
           <div class="brand-row">
             <div class="brand-mark">dG</div>
             <div>
-              <div class="brand-title">Decision Gemma (dgem) Decision Studio</div>
+              <div class="brand-title">dgem Decision Studio</div>
               <div class="brand-subtitle">
                 Zero-Shot Decision Model · Policy-as-Template
               </div>
