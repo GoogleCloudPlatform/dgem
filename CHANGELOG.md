@@ -6,6 +6,30 @@ image for a release in your own project with `make cloudrun-build`.
 
 ## Unreleased
 
+## v0.4.0 (2026-11-03) — first public release
+
+Earlier versions were developed internally; this is the first release in this repository.
+
+- **Genkit Go `v1.14.0` examples (`examples/`).** Runnable standalone module (`examples/go.mod`) bridging `.json.tmpl`
+  decision policies to Genkit's `systemonex` (`POST /v1/systemone`) plugin (`examples/dgemgenkit/`), including
+  hesitation-gated tool-approval interrupts (`examples/genkit-tool-approval/`) and two-stage `gemini-3.8-flash`
+  synthesis + concurrent bulk `dgem` evaluation (`examples/genkit-bulk-synth/`).
+- **Private (PSC) Vertex AI `:rawPredict` and single-route serving.** The serving image dispatches health
+  (`{"health": true}`), `/v1/systemone` and OpenAI-shaped chat decisions on its single `/predict` and `/rawPredict`
+  routes. The CLI, gateway, `dgem systemone serve`, regression matrix, synthetic probe and contract runner accept
+  private PSC Vertex endpoint URLs (`http(s)://<ID>-<REGION>-<NUM>.prediction.p.vertexai.goog/v1/projects/.../endpoints/<ID>:rawPredict`,
+  including plain HTTP on port 80 inside the VPC) and send every call to that single `:rawPredict` URL.
+- **Experimental 52-option label sets (`az_aa`, `az_lower`).** The serving image (`DEFAULT_LABELS`, request `labels`)
+  and `dgem systemone serve --labels` support `az_aa` (`A`–`Z` then `AA`–`AZ`) and `az_lower` (`A`–`Z` then `a`–`z`,
+  requests of up to 10 questions) to read up to 52 choice options in one pass and bracket in 52-wide groups above that.
+  Default `az` (`A`–`Z`, 26 options) is unchanged.
+- **Bulk / batch decision recipes and guide.** `deploy/batch/` adds ready-to-run Cloud Run Jobs, Dataflow (`dgem_beam.py`)
+  and fan-out workers (`batch_worker.py`, sending `X-DGem-Key` from `DGEM_SERVER_KEY` in remote mode), documented in
+  [To batch or not to batch](docs/deploy/batch.md).
+- **New policy template:** `templates/github_spam_triage.json.tmpl` (single-pass spam gate + 9-way category classification
+  for GitHub issues, PRs and discussions).
+- **Adapter server time telemetry:** `evaluation_trace.server_ms` sums `diagnostics.timing.total_ms` across passes; the
+  matrix latency runner records server p90/p95/p99 alongside wall time.
 - **`/v1/systemone`: per-caller pass-through for requests the serving image can answer as sent.**
   `--systemone-raw-users` / `DGEM_SYSTEMONE_RAW_USERS` (comma-separated verified identities, `*` for all; default
   none) forwards a listed caller's adapter-mode request unchanged when it has at most 8 questions, every choice and
@@ -107,10 +131,6 @@ image for a release in your own project with `make cloudrun-build`.
   (full CLINC150).
 - **Docs:** canvas size (128 rows as served, rounded to 16 per request), letter readout and the 26-option limit,
   stage scheduling, prompt-cache advice for `document_first`, and what constrained reads do.
-
-## v0.4.0 — first public release
-
-Earlier versions were developed internally; this is the first release in this repository.
 
 - **Decision engine:** `dgem decide` compiles `.json.tmpl` decision policies into one-pass multi-question readouts
   (`boolean`, `choice`, `score`) with per-option probabilities, Shannon entropy and Hesitation %; conditional
