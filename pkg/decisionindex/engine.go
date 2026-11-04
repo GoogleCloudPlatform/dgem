@@ -508,25 +508,25 @@ func addServerTime(ctx context.Context, ms float64) {
 
 // EngineOptions configures the Decision Index execution adapter.
 type EngineOptions struct {
-	MaxSlotsPerPass   int
-	MaxOptionsPerSlot int
-	NaiveLimits       bool    // If true, mimics naive 26-option / 10-slot capacity rejections (HTTP 422 Unsupported)
-	TemperatureScale  float64 // Post-hoc slot temperature scaling T* (1.0 = unscaled, default)
-	MaxConcurrency    int
-	DualMirror        bool    // Evaluate forward + reversed option orderings on the same diffusion canvas
-	NullPriorDebias   bool    // Divide out content-free positional 'A'-bias prior
-	PriorAlpha        float64 // Damping exponent alpha in [0, 1] for null-prior de-biasing
-	BracketSize       int     // Max options per Round-1 bracket for wide (>26) choices; <=1 means BracketSize
-	CatchAll          string  // Wide-option catch-all handling: "off" (default), "final", "both" or "verify"; see catchAllKeys
-	NoulMode          string  // How yes/no questions are read: "noul" (default) or "choice" (2-option choice; see noulAsChoice)
+	MaxSlotsPerPass      int
+	MaxOptionsPerSlot    int
+	NaiveLimits          bool    // If true, mimics naive 26-option / 10-slot capacity rejections (HTTP 422 Unsupported)
+	TemperatureScale     float64 // Post-hoc slot temperature scaling T* (1.0 = unscaled, default)
+	MaxConcurrency       int
+	DualMirror           bool    // Evaluate forward + reversed option orderings on the same diffusion canvas
+	NullPriorDebias      bool    // Divide out content-free positional 'A'-bias prior
+	PriorAlpha           float64 // Damping exponent alpha in [0, 1] for null-prior de-biasing
+	BracketSize          int     // Max options per Round-1 bracket for wide (>26) choices; <=1 means BracketSize
+	CatchAll             string  // Wide-option catch-all handling: "off" (default), "final", "both" or "verify"; see catchAllKeys
+	NoulMode             string  // How yes/no questions are read: "noul" (default) or "choice" (2-option choice; see noulAsChoice)
 	Labels               string  // Server label set for choice options: "az" (default, 26) or "az_aa"/"az_lower" (52). Wide sets read up to 52 options natively and bracket above that with 52-wide brackets
 	OptionOrder          string  // How options are labelled A, B, C…: "alpha" (default, sorted keys) or "source" (request order)
 	PromptLayout         string  // Server prompt layout: "document_first" (default: state first, then questions) or "schema_first"/"" (questions as the system prompt)
-	PriorWeight          float64 // Log-linear fusion weight alpha >= 0 for PriorLogits; 0 disables fusion
+	PriorWeight          float64 // Log-linear fusion weight alpha >= 0 for PriorLogits; 0 disables fusion (cascades should gate on RawNormalizedH)
 	HesitationGate       float64 // Raw normalized entropy threshold tau in [0, 1] used by PriorGateMode (default 0.16)
-	PriorGateMode        string  // Gate schedule for PriorLogits: "confident" (default: fuse when rawNormH < tau), "hesitant" (rawNormH >= tau), "proportional" (weight * rawNormH), or "always"
+	PriorGateMode        string  // Gate schedule for PriorLogits: "confident" (default: fuse when rawNormH < tau), "hesitant" (rawNormH >= tau; recommended for tie-break priors), "proportional" (weight * rawNormH), or "always"
 	ShortlistTopK        int     // Candidate count M <= MaxOptionsPerSlot retained by ShortlistFunc for wide choices (default 0 = off)
-	ShortlistContrastive bool    // Append [distinguishing: ...] sibling token tags on shortlisted wide choices (default true)
+	ShortlistContrastive bool    // Append [distinguishing: ...] sibling token tags on shortlisted wide choices (default false; schema-dependent)
 	ShortlistFunc        ShortlistFunc
 }
 
@@ -547,7 +547,7 @@ func DefaultEngineOptions() EngineOptions {
 		HesitationGate:       0.16,
 		PriorGateMode:        "confident",
 		ShortlistTopK:        0,
-		ShortlistContrastive: true,
+		ShortlistContrastive: false,
 	}
 }
 

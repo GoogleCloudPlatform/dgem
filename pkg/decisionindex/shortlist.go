@@ -25,6 +25,53 @@ import (
 	"github.com/GoogleCloudPlatform/dgem/pkg/client"
 )
 
+// DefaultCosinePriorTemperature is the default InfoNCE / bi-encoder temperature tau used when converting
+// cosine similarity scores in [-1, 1] into normalized log-probabilities via NormalizeCosinePriorLogits.
+const DefaultCosinePriorTemperature = 0.07
+
+// NormalizeCosinePriorLogits converts caller embedding cosine similarities s_k into temperature-scaled
+// log-softmax logits:
+//
+//	l_k = (s_k / tau) - log(sum_j exp(s_j / tau))
+//
+// Raw cosine scores occupy a narrow interval in [-1, 1] and carry an arbitrary scale across candidate counts K;
+// normalizing them with a calibrated bi-encoder temperature (default DefaultCosinePriorTemperature = 0.07 when
+// temperature <= 0) puts prior_logits onto a proper log-probability simplex while strictly preserving rank order
+// for PriorLogitsShortlist. Non-finite entries (NaN, +-Inf) are ignored; returns nil when no finite entry exists.
+func NormalizeCosinePriorLogits(cosines map[string]float64, temperature float64) map[string]float64 {
+	if len(cosines) == 0 {
+		return nil
+	}
+	if temperature <= 0 || math.IsNaN(temperature) || math.IsInf(temperature, 0) {
+		temperature = DefaultCosinePriorTemperature
+	}
+	scaled := make(map[string]float64, len(cosines))
+	maxScaled := math.Inf(-1)
+	for k, s := range cosines {
+		if math.IsNaN(s) || math.IsInf(s, 0) {
+			continue
+		}
+		v := s / temperature
+		scaled[k] = v
+		if v > maxScaled {
+			maxScaled = v
+		}
+	}
+	if len(scaled) == 0 {
+		return nil
+	}
+	sumExp := 0.0
+	for _, v := range scaled {
+		sumExp += math.Exp(v - maxScaled)
+	}
+	logZ := maxScaled + math.Log(sumExp)
+	out := make(map[string]float64, len(scaled))
+	for k, v := range scaled {
+		out[k] = v - logZ
+	}
+	return out
+}
+
 // ShortlistFunc selects at most topK candidate option keys (and optional stage-1 prior logits)
 // for a wide choice question (K > MaxOptionsPerSlot) so it can be resolved in a single diffusion pass.
 type ShortlistFunc func(
@@ -462,7 +509,12 @@ func evaluateWideQuestionShortlist(
 	}
 
 	// Normalize exactly over all K options (with tempScale=1.0 since evaluateStandardBatch already scaled).
+	// Preserve shortlist NormalizedH when lifting to all K options so dividing by ln(K) does not dilute
+	// a near-tie inside the top-M shortlist.
 	normProbs, winner, h, normH := NormalizeAndScaleProbabilities(fullProbs, allOptKeys, 1.0)
+	if shortAns.NormalizedH > normH {
+		normH = shortAns.NormalizedH
+	}
 	conf := normProbs[winner]
 	return SystemOneAnswer{
 		Type:           "choice",

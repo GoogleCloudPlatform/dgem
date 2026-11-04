@@ -28,18 +28,18 @@ import (
 )
 
 var (
-	soPort         int
-	soHost         string
-	soUpstreamURL  string
-	soTemperature  float64
-	soMaxSlots     int
-	soBracketSize  int
-	soCatchAll     string
-	soNoulMode     string
-	soOptionOrder  string
-	soLabels       string
-	soPromptLayout string
-	soAPIKey       string
+	soPort                 int
+	soHost                 string
+	soUpstreamURL          string
+	soTemperature          float64
+	soMaxSlots             int
+	soBracketSize          int
+	soCatchAll             string
+	soNoulMode             string
+	soOptionOrder          string
+	soLabels               string
+	soPromptLayout         string
+	soAPIKey               string
 	soNullPrior            bool
 	soDualMirror           bool
 	soPriorAlpha           float64
@@ -90,11 +90,11 @@ func init() {
 	systemoneServeCmd.Flags().BoolVar(&soNullPrior, "null-prior-debias", false, "Divide out positional 'A'-bias prior")
 	systemoneServeCmd.Flags().BoolVar(&soDualMirror, "dual-mirror", false, "Evaluate dual-mirror reversed option ordering")
 	systemoneServeCmd.Flags().Float64Var(&soPriorAlpha, "prior-alpha", 0.50, "Prior alpha exponent for null-prior de-biasing")
-	systemoneServeCmd.Flags().Float64Var(&soPriorWeight, "prior-weight", 0, "Log-linear fusion weight alpha for per-question prior_logits; 0 disables fusion")
+	systemoneServeCmd.Flags().Float64Var(&soPriorWeight, "prior-weight", 0, "Log-linear fusion weight alpha for per-question prior_logits; 0 disables fusion, and cascades should read raw_normalized_entropy")
 	systemoneServeCmd.Flags().Float64Var(&soHesitGate, "hesitation-gate", 0.16, "Raw normalized entropy threshold tau used by --prior-gate-mode")
-	systemoneServeCmd.Flags().StringVar(&soPriorGateMod, "prior-gate-mode", "confident", "Gate schedule for prior_logits fusion: confident (rawNormH < tau), hesitant (rawNormH >= tau), proportional (alpha * rawNormH), or always")
-	systemoneServeCmd.Flags().IntVar(&soShortlistK, "shortlist-topk", 0, "Maximum candidates retained from caller prior_logits on wide choices; falls back to brackets when prior_logits is absent (0 = off, default)")
-	systemoneServeCmd.Flags().BoolVar(&soShortlistContrastive, "shortlist-contrastive", true, "Append [distinguishing: ...] sibling token tags to shortlisted option descriptions (default true)")
+	systemoneServeCmd.Flags().StringVar(&soPriorGateMod, "prior-gate-mode", "confident", "Gate schedule for prior_logits fusion: confident (rawNormH < tau), hesitant (rawNormH >= tau, recommended over confident), proportional (alpha * rawNormH), or always")
+	systemoneServeCmd.Flags().IntVar(&soShortlistK, "shortlist-topk", 0, "Single-pass latency option for wide choices: retain top M options from caller prior_logits (e.g. M=15), falling back to brackets when prior_logits is absent (0 = off, default)")
+	systemoneServeCmd.Flags().BoolVar(&soShortlistContrastive, "shortlist-contrastive", false, "Append [distinguishing: ...] sibling token tags to shortlisted option descriptions (default false, schema-dependent)")
 	systemoneServeCmd.Flags().BoolVar(&soNaiveLimits, "naive-limits", false, "Enforce naive 26-option and 10-slot capacity rejections (for benchmark ablation)")
 
 	systemoneCmd.AddCommand(systemoneServeCmd)
@@ -170,17 +170,17 @@ func runSystemOneServe(cmd *cobra.Command, args []string) error {
 	}
 
 	opts := decisionindex.EngineOptions{
-		MaxSlotsPerPass:   soMaxSlots,
-		MaxOptionsPerSlot: decisionindex.MaxOptionsPerSlot,
-		NaiveLimits:       soNaiveLimits,
-		TemperatureScale:  soTemperature,
-		MaxConcurrency:    4,
-		DualMirror:        soDualMirror,
-		NullPriorDebias:   soNullPrior,
-		PriorAlpha:        soPriorAlpha,
-		BracketSize:       soBracketSize,
-		CatchAll:          soCatchAll,
-		NoulMode:          soNoulMode,
+		MaxSlotsPerPass:      soMaxSlots,
+		MaxOptionsPerSlot:    decisionindex.MaxOptionsPerSlot,
+		NaiveLimits:          soNaiveLimits,
+		TemperatureScale:     soTemperature,
+		MaxConcurrency:       4,
+		DualMirror:           soDualMirror,
+		NullPriorDebias:      soNullPrior,
+		PriorAlpha:           soPriorAlpha,
+		BracketSize:          soBracketSize,
+		CatchAll:             soCatchAll,
+		NoulMode:             soNoulMode,
 		OptionOrder:          soOptionOrder,
 		Labels:               soLabels,
 		PromptLayout:         soPromptLayout,

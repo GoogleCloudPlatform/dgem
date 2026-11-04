@@ -21,6 +21,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"math/rand"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -533,4 +534,161 @@ func TestExecuteSystemOne_WideTournamentAndNoulPriorFusion(t *testing.T) {
 	if noulAns.RawNormalizedH < 0.99 {
 		t.Fatalf("expected pre-fusion RawNormalizedH near 1.0 for 0.48/0.52 split, got %.4f", noulAns.RawNormalizedH)
 	}
+}
+
+func TestFusePriorWithGateMode_ProbabilisticAdversarialAndLabelShift(t *testing.T) {
+	rng := rand.New(rand.NewSource(20261024))
+	optKeys := []string{"class_a", "class_b", "class_c", "class_d"}
+	const numTrials = 500
+
+	// Part 1: Adversarial prior stress test on post-fusion normalized_entropy vs raw_normalized_entropy.
+	// Confident gate fuses on low-hesitation items (including over-confident wrong items whose runner-up or
+	// predicted wrong class receives reinforcement), depressing post-fusion normalized_entropy on errors,
+	// whereas hesitant gate leaves rawNormH < 0.16 untouched and RawNormalizedH stays invariant across all modes.
+	var (
+		confPostH, hesPostH, propPostH, rawPreH          []float64
+		confIsErr, hesIsErr, propIsErr, rawBaselineIsErr []bool
+	)
+	for trial := 0; trial < numTrials; trial++ {
+		gold := optKeys[trial%len(optKeys)]
+		wrong := optKeys[(trial+1)%len(optKeys)]
+
+		logits := make(map[string]float64, len(optKeys))
+		switch {
+		case trial%10 < 6:
+			// Confident correct item
+			logits[gold] = 3.4 + 0.35*rng.NormFloat64()
+			logits[wrong] = -0.5 + 0.35*rng.NormFloat64()
+		case trial%10 < 8:
+			// Moderately confident error (rawNormH around 0.08..0.15)
+			logits[wrong] = 2.7 + 0.25*rng.NormFloat64()
+			logits[gold] = -0.3 + 0.25*rng.NormFloat64()
+		default:
+			// Uncertain item (rawNormH > 0.45)
+			logits[gold] = 0.6 + 0.5*rng.NormFloat64()
+			logits[wrong] = 0.5 + 0.5*rng.NormFloat64()
+		}
+		for _, k := range optKeys {
+			if _, ok := logits[k]; !ok {
+				logits[k] = -1.6 + 0.3*rng.NormFloat64()
+			}
+		}
+		probs, _, _, _ := NormalizeAndScaleProbabilities(expMap(logits), optKeys, 1.0)
+		advPrior := map[string]float64{wrong: 3.2, gold: -1.5}
+
+		_, baseWin, _, _, _, rNormBase, _ := FusePriorWithGateMode(probs, nil, optKeys, 1.0, 0, 0.16, "confident")
+		_, confWin, _, confNormH, _, rNormConf, _ := FusePriorWithGateMode(probs, advPrior, optKeys, 1.0, 0.45, 0.16, "confident")
+		_, hesWin, _, hesNormH, _, rNormHes, _ := FusePriorWithGateMode(probs, advPrior, optKeys, 1.0, 0.35, 0.16, "hesitant")
+		_, propWin, _, propNormH, _, rNormProp, _ := FusePriorWithGateMode(probs, advPrior, optKeys, 1.0, 0.35, 0.16, "proportional")
+
+		if math.Abs(rNormBase-rNormConf) > 1e-12 || math.Abs(rNormBase-rNormHes) > 1e-12 || math.Abs(rNormBase-rNormProp) > 1e-12 {
+			t.Fatalf("trial %d: RawNormalizedH drifted across gate modes", trial)
+		}
+
+		rawPreH = append(rawPreH, rNormBase)
+		rawBaselineIsErr = append(rawBaselineIsErr, baseWin != gold)
+		confPostH = append(confPostH, confNormH)
+		confIsErr = append(confIsErr, confWin != gold)
+		hesPostH = append(hesPostH, hesNormH)
+		hesIsErr = append(hesIsErr, hesWin != gold)
+		propPostH = append(propPostH, propNormH)
+		propIsErr = append(propIsErr, propWin != gold)
+	}
+
+	aurocRaw := computeHesitationAUROC(rawPreH, rawBaselineIsErr)
+	aurocConfPost := computeHesitationAUROC(confPostH, confIsErr)
+	aurocHesRaw := computeHesitationAUROC(rawPreH, hesIsErr)
+	aurocPropRaw := computeHesitationAUROC(rawPreH, propIsErr)
+
+	if aurocConfPost >= aurocRaw-0.01 {
+		t.Fatalf("expected confident post-fusion normalized_entropy AUROC (%.4f) to drop below raw AUROC (%.4f) under adversarial prior", aurocConfPost, aurocRaw)
+	}
+	if aurocHesRaw < 0.75 || aurocPropRaw < 0.75 {
+		t.Fatalf("expected RawNormalizedH under hesitant/proportional gates to maintain high error AUROC (>=0.75), got %.4f / %.4f", aurocHesRaw, aurocPropRaw)
+	}
+
+	// Part 2: Induced base-rate label shift (90% prevalence on class_a, 10% across class_b..d).
+	// Calibrated base-rate log-prior log(pi) improves accuracy and NLL on ambiguous trials under hesitant
+	// and proportional gates while preserving confident minority-class predictions.
+	shiftPrior := map[string]float64{
+		"class_a": math.Log(0.90),
+		"class_b": math.Log(0.10 / 3.0),
+		"class_c": math.Log(0.10 / 3.0),
+		"class_d": math.Log(0.10 / 3.0),
+	}
+	var baseCorrect, hesCorrect, propCorrect int
+	var baseNLL, hesNLL, propNLL float64
+	var minorityConfidentPreserved, minorityConfidentTotal int
+
+	for trial := 0; trial < numTrials; trial++ {
+		isMajority := (trial % 10) < 9
+		gold := "class_a"
+		if !isMajority {
+			gold = optKeys[1+(trial%3)]
+		}
+		ambiguous := (trial % 5) < 3
+		logits := make(map[string]float64, len(optKeys))
+		for _, k := range optKeys {
+			if k == gold {
+				if ambiguous {
+					logits[k] = 0.55 + 0.55*rng.NormFloat64()
+				} else {
+					logits[k] = 3.8 + 0.30*rng.NormFloat64()
+				}
+			} else {
+				if ambiguous {
+					logits[k] = 0.35 + 0.55*rng.NormFloat64()
+				} else {
+					logits[k] = -1.2 + 0.30*rng.NormFloat64()
+				}
+			}
+		}
+		probs, baseWin, _, rawNormH := NormalizeAndScaleProbabilities(expMap(logits), optKeys, 1.0)
+		probsHes, hesWin, _, _, _, _, _ := FusePriorWithGateMode(probs, shiftPrior, optKeys, 1.0, 0.45, 0.16, "hesitant")
+		probsProp, propWin, _, _, _, _, _ := FusePriorWithGateMode(probs, shiftPrior, optKeys, 1.0, 0.45, 0.16, "proportional")
+
+		if baseWin == gold {
+			baseCorrect++
+		}
+		if hesWin == gold {
+			hesCorrect++
+		}
+		if propWin == gold {
+			propCorrect++
+		}
+		baseNLL += -math.Log(math.Max(1e-6, probs[gold]))
+		hesNLL += -math.Log(math.Max(1e-6, probsHes[gold]))
+		propNLL += -math.Log(math.Max(1e-6, probsProp[gold]))
+
+		if !isMajority && rawNormH < 0.16 && baseWin == gold {
+			minorityConfidentTotal++
+			if hesWin == gold {
+				minorityConfidentPreserved++
+			}
+		}
+	}
+
+	if hesCorrect <= baseCorrect || propCorrect <= baseCorrect {
+		t.Fatalf("expected hesitant (%d) and proportional (%d) gates to beat unshifted baseline (%d) under 90%% label shift", hesCorrect, propCorrect, baseCorrect)
+	}
+	if hesNLL >= baseNLL || propNLL >= baseNLL {
+		t.Fatalf("expected hesitant (%.2f) and proportional (%.2f) NLL to improve over baseline (%.2f)", hesNLL, propNLL, baseNLL)
+	}
+	if minorityConfidentTotal == 0 || minorityConfidentPreserved != minorityConfidentTotal {
+		t.Fatalf("expected hesitant gate to preserve 100%% of confident minority predictions (%d/%d)", minorityConfidentPreserved, minorityConfidentTotal)
+	}
+}
+
+func expMap(logits map[string]float64) map[string]float64 {
+	maxL := math.Inf(-1)
+	for _, v := range logits {
+		if v > maxL {
+			maxL = v
+		}
+	}
+	out := make(map[string]float64, len(logits))
+	for k, v := range logits {
+		out[k] = math.Exp(v - maxL)
+	}
+	return out
 }

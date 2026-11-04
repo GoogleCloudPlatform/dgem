@@ -20,6 +20,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"math"
+	"math/rand"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -102,6 +103,9 @@ func TestExecuteSystemOne_WideShortlistWithPriorLogits(t *testing.T) {
 	if opts.ShortlistTopK != 0 || opts.ShortlistFunc != nil {
 		t.Fatalf("expected DefaultEngineOptions to leave ShortlistTopK=0 and ShortlistFunc=nil, got %d / %v", opts.ShortlistTopK, opts.ShortlistFunc)
 	}
+	if opts.ShortlistContrastive {
+		t.Fatalf("expected DefaultEngineOptions().ShortlistContrastive to default to false, got true")
+	}
 	opts.ShortlistTopK = 5
 	opts.ShortlistFunc = PriorLogitsShortlist(5)
 
@@ -138,6 +142,9 @@ func TestExecuteSystemOne_WideShortlistWithPriorLogits(t *testing.T) {
 	}
 	if math.Abs(sum-1.0) > 1e-9 {
 		t.Fatalf("expected probabilities to sum to 1.0, got %.12f", sum)
+	}
+	if ans.NormalizedH < ans.RawNormalizedH-1e-6 {
+		t.Fatalf("expected shortlist NormalizedH (%v) not to be diluted by ln(60) below RawNormalizedH (%v)", ans.NormalizedH, ans.RawNormalizedH)
 	}
 }
 
@@ -516,3 +523,198 @@ func TestExecuteSystemOne_ShortlistContrastiveToggle(t *testing.T) {
 	}
 }
 
+func TestNormalizeCosinePriorLogits_DeterministicInvariants(t *testing.T) {
+	if got := NormalizeCosinePriorLogits(nil, 0.07); got != nil {
+		t.Fatalf("expected nil for empty input, got %v", got)
+	}
+	if got := NormalizeCosinePriorLogits(map[string]float64{"bad": math.NaN(), "inf": math.Inf(1)}, 0.07); got != nil {
+		t.Fatalf("expected nil when all entries are non-finite, got %v", got)
+	}
+
+	cosines := map[string]float64{
+		"opt_a": 0.72,
+		"opt_b": 0.61,
+		"opt_c": 0.44,
+		"opt_d": -0.10,
+	}
+	logits := NormalizeCosinePriorLogits(cosines, 0) // default tau = 0.07
+	if len(logits) != 4 {
+		t.Fatalf("expected 4 normalized logits, got %d", len(logits))
+	}
+
+	// 1. Exact log-probability simplex normalization: sum_k exp(l_k) == 1.0.
+	probSum := 0.0
+	for _, l := range logits {
+		if l > 0 {
+			t.Fatalf("expected log-probabilities <= 0, got %.6f", l)
+		}
+		probSum += math.Exp(l)
+	}
+	if math.Abs(probSum-1.0) > 1e-12 {
+		t.Fatalf("expected exp(logits) to sum to 1.0, got %.15f", probSum)
+	}
+
+	// 2. Strict order preservation: opt_a > opt_b > opt_c > opt_d.
+	if !(logits["opt_a"] > logits["opt_b"] && logits["opt_b"] > logits["opt_c"] && logits["opt_c"] > logits["opt_d"]) {
+		t.Fatalf("expected strict monotonicity matching cosine order, got %v", logits)
+	}
+
+	// 3. Shift invariance: adding +0.25 to every cosine produces identical log-softmax values.
+	shifted := make(map[string]float64, len(cosines))
+	for k, v := range cosines {
+		shifted[k] = v + 0.25
+	}
+	shiftedLogits := NormalizeCosinePriorLogits(shifted, DefaultCosinePriorTemperature)
+	for k, v := range logits {
+		if math.Abs(v-shiftedLogits[k]) > 1e-12 {
+			t.Fatalf("shift invariance violated on %s: %.12f vs %.12f", k, v, shiftedLogits[k])
+		}
+	}
+
+	// 4. Numerical stability at tiny temperature (tau = 1e-4).
+	sharp := NormalizeCosinePriorLogits(cosines, 1e-4)
+	if math.IsNaN(sharp["opt_a"]) || math.IsInf(sharp["opt_a"], 0) || math.Abs(math.Exp(sharp["opt_a"])-1.0) > 1e-12 {
+		t.Fatalf("expected numerically stable peak at tau=1e-4, got %v", sharp)
+	}
+}
+
+func TestNormalizeCosinePriorLogits_ProbabilisticCalibrationAndFusion(t *testing.T) {
+	// 500-trial Monte Carlo wide-shortlist simulation (K=60, M=15):
+	// Ground-truth bi-encoder cosines: gold ~ N(0.64, 0.055^2), distractors ~ N(0.42, 0.075^2).
+	// Stage-2 diffusion shortlist likelihood has noisy near-ties on hard trials where the gold option
+	// and a top distractor receive close logits. Compare hesitant fusion (PriorWeight=0.35, gate=0.16)
+	// using raw unscaled cosines vs temperature-scaled log-softmax cosine priors (tau=0.07).
+	rng := rand.New(rand.NewSource(20261023))
+	const (
+		numTrials = 500
+		numOpts   = 60
+		topM      = 15
+	)
+
+	allKeys := make([]string, numOpts)
+	criteria := make(map[string]string, numOpts)
+	for i := 0; i < numOpts; i++ {
+		k := fmt.Sprintf("intent_%02d", i)
+		allKeys[i] = k
+		criteria[k] = fmt.Sprintf("Domain intent %02d", i)
+	}
+
+	var (
+		rawCosCorrect, normLogitCorrect int
+		rawCosNLL, normLogitNLL         float64
+		rawErrScores, normRawErrScores  []float64
+		rawIsErr, normIsErr             []bool
+	)
+
+	shortlistFn := PriorLogitsShortlist(topM)
+
+	for trial := 0; trial < numTrials; trial++ {
+		goldIdx := trial % numOpts
+		goldKey := allKeys[goldIdx]
+
+		cosines := make(map[string]float64, numOpts)
+		for i, k := range allKeys {
+			if i == goldIdx {
+				cosines[k] = 0.64 + 0.055*rng.NormFloat64()
+			} else {
+				cosines[k] = 0.42 + 0.075*rng.NormFloat64()
+			}
+		}
+		normLogits := NormalizeCosinePriorLogits(cosines, DefaultCosinePriorTemperature)
+
+		// Verify shortlist ranking is identical before and after log-softmax normalization.
+		qRaw := SystemOneQuestion{Type: "choice", Criteria: criteria, PriorLogits: cosines}
+		qNorm := SystemOneQuestion{Type: "choice", Criteria: criteria, PriorLogits: normLogits}
+		shortRaw, _, err := shortlistFn(context.Background(), "query", nil, "q", qRaw, topM)
+		if err != nil {
+			t.Fatalf("shortlist raw failed: %v", err)
+		}
+		shortNorm, _, err := shortlistFn(context.Background(), "query", nil, "q", qNorm, topM)
+		if err != nil {
+			t.Fatalf("shortlist norm failed: %v", err)
+		}
+		for i := range shortRaw {
+			if shortRaw[i] != shortNorm[i] {
+				t.Fatalf("trial %d: shortlist rank mismatch at %d: %q vs %q", trial, i, shortRaw[i], shortNorm[i])
+			}
+		}
+
+		// Simulate noisy Stage-2 diffusion probabilities over shortNorm (with 45% hard near-tie trials).
+		hardTrial := (trial % 20) < 9
+		modelLogits := make(map[string]float64, len(shortNorm))
+		maxL := math.Inf(-1)
+		for rank, k := range shortNorm {
+			var l float64
+			switch {
+			case k == goldKey && !hardTrial:
+				l = 2.6 + 0.6*rng.NormFloat64()
+			case k == goldKey && hardTrial:
+				l = 1.05 + 0.55*rng.NormFloat64()
+			case rank <= 2 && hardTrial:
+				l = 1.15 + 0.55*rng.NormFloat64()
+			default:
+				l = -1.2 + 0.5*rng.NormFloat64()
+			}
+			modelLogits[k] = l
+			if l > maxL {
+				maxL = l
+			}
+		}
+		modelProbs := make(map[string]float64, len(shortNorm))
+		z := 0.0
+		for k, l := range modelLogits {
+			e := math.Exp(l - maxL)
+			modelProbs[k] = e
+			z += e
+		}
+		for k := range modelProbs {
+			modelProbs[k] /= z
+		}
+
+		probsRawCos, winRawCos, _, _, _, rNormH1, _ := FusePriorWithGateMode(
+			modelProbs, cosines, shortNorm, 1.0, 0.35, 0.16, "hesitant",
+		)
+		probsNorm, winNorm, _, _, _, rNormH2, _ := FusePriorWithGateMode(
+			modelProbs, normLogits, shortNorm, 1.0, 0.35, 0.16, "hesitant",
+		)
+
+		if math.Abs(rNormH1-rNormH2) > 1e-12 {
+			t.Fatalf("trial %d: expected pre-fusion RawNormalizedH to be invariant (%.12f vs %.12f)", trial, rNormH1, rNormH2)
+		}
+
+		if winRawCos == goldKey {
+			rawCosCorrect++
+		}
+		if winNorm == goldKey {
+			normLogitCorrect++
+		}
+
+		pGoldRaw := math.Max(1e-6, probsRawCos[goldKey])
+		pGoldNorm := math.Max(1e-6, probsNorm[goldKey])
+		rawCosNLL += -math.Log(pGoldRaw)
+		normLogitNLL += -math.Log(pGoldNorm)
+
+		rawErrScores = append(rawErrScores, rNormH1)
+		rawIsErr = append(rawIsErr, winRawCos != goldKey)
+		normRawErrScores = append(normRawErrScores, rNormH2)
+		normIsErr = append(normIsErr, winNorm != goldKey)
+	}
+
+	rawAcc := float64(rawCosCorrect) / float64(numTrials)
+	normAcc := float64(normLogitCorrect) / float64(numTrials)
+	meanRawNLL := rawCosNLL / float64(numTrials)
+	meanNormNLL := normLogitNLL / float64(numTrials)
+	aurocNorm := computeHesitationAUROC(normRawErrScores, normIsErr)
+
+	// Temperature-scaled log-softmax cosines provide meaningful log-linear discrimination on hard near-ties
+	// whereas raw cosines in [0.3, 0.7] move logits by only ~0.35 * 0.20 = 0.07 nats.
+	if normAcc <= rawAcc+0.03 {
+		t.Fatalf("expected temperature-scaled log-softmax priors (acc=%.3f) to beat raw cosines (acc=%.3f) by >3 pts", normAcc, rawAcc)
+	}
+	if meanNormNLL >= meanRawNLL {
+		t.Fatalf("expected normalized cosine priors to reduce NLL (%.4f vs %.4f)", meanNormNLL, meanRawNLL)
+	}
+	if aurocNorm < 0.75 {
+		t.Fatalf("expected RawNormalizedH error-detection AUROC >= 0.75, got %.4f", aurocNorm)
+	}
+}
