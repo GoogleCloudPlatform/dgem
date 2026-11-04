@@ -25,9 +25,11 @@ banner, issue-template redirect, `go.mod` `Deprecated` line).
 ```bash
 make build                      # ./bin/dgem
 go vet ./... && go test ./...   # unset DGEM_VERTEX_URL first if it is set in your shell
+go -C examples vet ./... && go -C examples test ./...
 python3 -m unittest scripts/matrix/test_matrix.py
 python3 -m unittest deploy/cloudrun/server/test_server_key.py deploy/cloudrun/server/test_media_fields.py \
-  deploy/cloudrun/server/test_upstream_errors.py
+  deploy/cloudrun/server/test_upstream_errors.py deploy/cloudrun/server/test_predict_route.py \
+  deploy/cloudrun/server/test_label_sets.py
 ```
 After changing `studio/src/*`: `npm --prefix studio run build && go build -o bin/dgem .`, then
 `rm -rf studio/dist/* && touch studio/dist/.gitkeep` before committing (build output is not tracked).
@@ -63,8 +65,10 @@ After changing `studio/src/*`: `npm --prefix studio run build && go build -o bin
   `Diagnostics.Questions` and `QuestionAnswer.Probabilities` to empty maps so MCP output validation never sees `null`.
 - **Remote MCP proxy.** `runRemoteMCPProxy` handles each stdin request in its own goroutine with a mutex-guarded
   stdout writer, so long-lived streams never block other requests.
-- **Choice limits.** The serving image maps `choice` options to letters `A`–`Z`: at most 26 options per question.
-  Use a slice or two-stage routing for larger taxonomies (`pkg/decisionindex` brackets them automatically).
+- **Choice limits.** The serving image maps `choice` options to letters `A`–`Z` by default (at most 26 options per
+  question), or up to 52 options when an opt-in `labels` set (`az_aa` or `az_lower`) is requested. Use a slice,
+  wide-option shortlist routing (`--shortlist-topk`), or two-stage routing for larger taxonomies (`pkg/decisionindex`
+  brackets or shortlists them automatically).
 - **`depends_on` / `ask_if`** split questions into two sequential reads; boolean answers are `"yes"`/`"no"`, so
   `ask_if` uses `["yes"]`. Leave them out when one read matters.
 - **Samples.** Templates default to `samples: 1`; use `4` only where agreement matters, via
@@ -113,5 +117,7 @@ third-party material must live in `third_party/<dataset>/` alongside its `LICENS
 - Never commit `.env` files, tokens, keys, `*.log` files or receipts containing endpoint URLs
   (`scripts/redact_receipt.py` can redact them).
 - `make check-public` scans tracked files against a pattern file you provide (`DGEM_LEAK_PATTERNS_FILE`).
+- Before running `make release VERSION=vX.Y.Z`, ensure your tracking upstream (`@{u}`) matches `main` and push the
+  signed release tag to `GoogleCloudPlatform/dgem`.
 - Tear down GPU resources you create for testing (`make gce-teardown`, `make vertex-teardown`,
   `make cloudrun-teardown`).
