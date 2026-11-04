@@ -1,0 +1,47 @@
+{
+  "schema": {
+    "instructions": "Inspect the 3x2 contact sheet image. Panel 0 (top-left) is the query crop; Panels A through E are the candidate reference crops. Identify the decisive visual evidence first, then select the matching candidate or none_of_the_above.",
+    "questions": [
+      {
+        "id": "evidence_feature",
+        "type": "choice",
+        "instructions": "Which visual cue is most decisive when comparing Panel 0 (query) against Panels A through E?",
+        "options": [
+          {"name": "exact_typography_and_badge", "description": "Variant name, pack-size text, and colour badge match one reference panel"},
+          {"name": "pack_size_or_variant_mismatch", "description": "Brand matches, but net weight, count, or sub-variant badge differs from top candidates"},
+          {"name": "occluded_or_illegible_label", "description": "Glare, motion blur, or partial occlusion hides the decisive variant label"},
+          {"name": "unlisted_product_or_empty", "description": "Panel 0 shows an empty slot, foreign item, or product absent from Panels A-E"}
+        ]
+      },
+      {
+        "id": "visual_match_choice",
+        "type": "choice",
+        "instructions": "Which reference panel (A-E) is an exact variant and pack-size match for Panel 0?",
+        "options": [
+          {"name": "panel_a", "description": {{ default "Candidate A (top-middle panel)" .cand_a | toJson }}},
+          {"name": "panel_b", "description": {{ default "Candidate B (top-right panel)" .cand_b | toJson }}},
+          {"name": "panel_c", "description": {{ default "Candidate C (bottom-left panel)" .cand_c | toJson }}},
+          {"name": "panel_d", "description": {{ default "Candidate D (bottom-middle panel)" .cand_d | toJson }}},
+          {"name": "panel_e", "description": {{ default "Candidate E (bottom-right panel)" .cand_e | toJson }}},
+          {"name": "none_of_the_above", "description": "None of Panels A-E match both the exact variant and pack size of Panel 0"}
+        ]
+      },
+      {
+        "id": "pack_size_consistent",
+        "type": "boolean",
+        "instructions": "Does the visible unit count or net weight on Panel 0 match the selected reference panel?"
+      },
+      {
+        "id": "crop_legibility",
+        "type": "score",
+        "instructions": "Visual legibility of the variant and net-weight print on Panel 0",
+        "levels": ["illegible_or_occluded", "partially_readable", "sharp_and_unambiguous"]
+      }
+    ],
+    "samples": {{ default 1 .samples | toJson }}
+  },
+  "state": {
+    "query_context": {{ default "Fine-grained sibling verification over a 3x2 contact sheet" .query_context | toJson }},
+    "shortlist_source": {{ default "stage1_embedding_top5" .shortlist_source | toJson }}
+  }
+}

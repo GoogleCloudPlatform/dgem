@@ -43,6 +43,9 @@ var (
 	soNullPrior    bool
 	soDualMirror   bool
 	soPriorAlpha   float64
+	soPriorWeight  float64
+	soHesitGate    float64
+	soPriorGateMod string
 	soNaiveLimits  bool
 )
 
@@ -85,6 +88,9 @@ func init() {
 	systemoneServeCmd.Flags().BoolVar(&soNullPrior, "null-prior-debias", false, "Divide out positional 'A'-bias prior")
 	systemoneServeCmd.Flags().BoolVar(&soDualMirror, "dual-mirror", false, "Evaluate dual-mirror reversed option ordering")
 	systemoneServeCmd.Flags().Float64Var(&soPriorAlpha, "prior-alpha", 0.50, "Prior alpha exponent for null-prior de-biasing")
+	systemoneServeCmd.Flags().Float64Var(&soPriorWeight, "prior-weight", 0, "Log-linear fusion weight alpha for per-question prior_logits; 0 disables fusion")
+	systemoneServeCmd.Flags().Float64Var(&soHesitGate, "hesitation-gate", 0.16, "Raw normalized entropy threshold tau used by --prior-gate-mode")
+	systemoneServeCmd.Flags().StringVar(&soPriorGateMod, "prior-gate-mode", "confident", "Gate schedule for prior_logits fusion: confident (rawNormH < tau), hesitant (rawNormH >= tau), proportional (alpha * rawNormH), or always")
 	systemoneServeCmd.Flags().BoolVar(&soNaiveLimits, "naive-limits", false, "Enforce naive 26-option and 10-slot capacity rejections (for benchmark ablation)")
 
 	systemoneCmd.AddCommand(systemoneServeCmd)
@@ -174,6 +180,9 @@ func runSystemOneServe(cmd *cobra.Command, args []string) error {
 		OptionOrder:       soOptionOrder,
 		Labels:            soLabels,
 		PromptLayout:      soPromptLayout,
+		PriorWeight:       soPriorWeight,
+		HesitationGate:    soHesitGate,
+		PriorGateMode:     soPriorGateMod,
 	}
 
 	// A network server: image URLs in requests are fetched by pkg/client (and sent upstream as data: URIs) with a client

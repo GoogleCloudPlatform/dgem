@@ -142,6 +142,12 @@ type QuestionAnswer struct {
 	Score  float64 `json:"score,omitempty"`  // For score type
 	Level  string  `json:"level,omitempty"`  // For score type
 	Noul   float64 `json:"noul,omitempty"`   // For boolean/noul type (probability of true/yes)
+
+	// Optional prior-fusion and co-denoised evidence telemetry:
+	PriorLogits map[string]float64 `json:"prior_logits,omitempty"`
+	PriorFused  bool               `json:"prior_fused,omitempty"`
+	RawEntropy  float64            `json:"raw_entropy,omitempty"`
+	Evidence    string             `json:"evidence,omitempty"`
 }
 
 // DisplayType returns a human-friendly type name, replacing "noul" with "boolean".
