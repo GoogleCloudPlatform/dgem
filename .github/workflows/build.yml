@@ -46,12 +46,20 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
+          cache-dependency-path: |
+            go.sum
+            examples/go.sum
 
       - name: Vet
         run: go vet ./...
 
       - name: Run unit tests
         run: go test ./...
+
+      - name: Vet & test Go examples
+        run: |
+          go -C examples vet ./...
+          go -C examples test ./...
 
       - name: Build dgem binary
         run: make build
