@@ -10,6 +10,22 @@ image for a release in your own project with `make cloudrun-build`.
 
 Earlier versions were developed internally; this is the first release in this repository.
 
+- **Pre-gated prior fusion and co-denoised evidence slots (`pkg/decisionindex`, `dgem systemone serve`).**
+  Questions on `/v1/systemone` accept optional `prior_logits` (log-linear Product-of-Experts fusion via
+  `--prior-weight`, `--hesitation-gate`, and `--prior-gate-mode confident|hesitant|proportional|always`, preserving
+  pre-fusion `raw_entropy` and `raw_normalized_entropy` for Stage 2 cascade gating) and `evidence_prompt` +
+  `evidence_criteria` (co-denoising a companion `<question>_evidence` slot on the same diffusion canvas, plus
+  `templates/multimodal/contact_sheet_verify.json.tmpl`).
+- **Wide-option shortlist routing and cosine prior normalization (`pkg/decisionindex`, `dgem systemone serve`).**
+  `--shortlist-topk` (`ShortlistFunc`, `PriorLogitsShortlist`, `LexicalOverlapShortlist`) resolves wide choice
+  questions ($K > 26$) in a single forward pass over the top-$M$ options plus catch-all keys while preserving the
+  shortlist's `normalized_entropy` when lifting probabilities to all $K$ options (falling back to 2-stage bracket
+  tournaments when `prior_logits` is absent). `NormalizeCosinePriorLogits` converts bi-encoder cosine similarities
+  into temperature-scaled log-softmax priors (`DefaultCosinePriorTemperature = 0.07`), and `--shortlist-contrastive`
+  defaults to `false`.
+- **Decision Models Practitioner Guide (`docs/practitioners-guide.md`).** End-to-end architectural guide covering
+  Stage-1 restricted-softmax readout, normalized epistemic entropy ($\tilde{H}_m$), graduated production patterns,
+  empirical anti-patterns, and deployment topology selection across Apple Silicon, Cloud Run GPU, and Vertex AI.
 - **Genkit Go `v1.14.0` examples (`examples/`).** Runnable standalone module (`examples/go.mod`) bridging `.json.tmpl`
   decision policies to Genkit's `systemonex` (`POST /v1/systemone`) plugin (`examples/dgemgenkit/`), including
   hesitation-gated tool-approval interrupts (`examples/genkit-tool-approval/`) and two-stage `gemini-3.8-flash`
