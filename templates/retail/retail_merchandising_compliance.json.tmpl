@@ -1,0 +1,58 @@
+{
+  "name": "Retail Merchandising & Brand Safety Compliance (Calibrated)",
+  "description": "Single-pass 4-slot retail SKU merchandising, primary department routing, seasonal targeting, and brand safety compliance with Gemini 3.5 Flash-Lite Stage 2 cascade.",
+  "category": "retail",
+  "layout": "document_first",
+  "isolate": "auto",
+  "schema": {
+    "instructions": "Evaluate the retail product SKU listing across marketplace brand safety compliance, primary merchandising department, target season, and catalog completeness.",
+    "temperature": {
+      "noul": 1.15,
+      "choice": 1.40,
+      "score": 1.10
+    },
+    "questions": [
+      {
+        "name": "brand_safety_compliant",
+        "type": "boolean",
+        "prompt": "Does this product listing comply with marketplace safety and policy rules (no counterfeit claims, prohibited hazardous materials, unverified medical claims, or restricted weapons)?"
+      },
+      {
+        "name": "primary_department",
+        "type": "choice",
+        "prompt": "Which top-level retail merchandising department owns this product SKU?",
+        "options": {
+          "A": "apparel_footwear: clothing, shoes, fashion accessories, athletic wear",
+          "B": "consumer_electronics: computers, audio, smart home, mobile devices, gaming",
+          "C": "home_kitchen_garden: furniture, cookware, appliances, patio, decor",
+          "D": "beauty_personal_care: skincare, cosmetics, haircare, fragrance, grooming",
+          "E": "sports_outdoors: camping, fitness equipment, cycling, team sports",
+          "F": "grocery_gourmet_pet: pantry staples, beverages, specialty foods, pet supplies"
+        }
+      },
+      {
+        "name": "target_season",
+        "type": "choice",
+        "prompt": "What is the primary seasonal merchandising campaign for this product SKU?",
+        "options": {
+          "A": "evergreen_year_round: core catalog staple sold consistently all year",
+          "B": "spring_summer: warm-weather, outdoor, swim, patio, summer travel",
+          "C": "fall_back_to_school: autumn apparel, dorm essentials, study/office supplies",
+          "D": "winter_holiday_gifting: cold-weather gear, festive decor, Q4 gift bundles"
+        }
+      },
+      {
+        "name": "catalog_completeness_score",
+        "type": "score",
+        "prompt": "Rate catalog listing completeness and merchandising quality from 1 (severely incomplete/missing dimensions & specs) to 5 (rich, complete specification ready for featured placement).",
+        "scale_min": 1,
+        "scale_max": 5,
+        "levels": ["1", "2", "3", "4", "5"]
+      }
+    ],
+    "samples": {{ default 1 .samples | toJson }}
+  },
+  "state": {
+    "product": {{ default "No product specification provided." .product | toJson }}
+  }
+}

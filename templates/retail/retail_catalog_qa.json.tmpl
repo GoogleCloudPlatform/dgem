@@ -1,0 +1,45 @@
+{
+  "name": "Retail Catalog QA & Attribute Conflict Detection (Calibrated)",
+  "description": "Detects title-vs-specification contradictions, visual-attribute mismatches, missing mandatory disclosures, and policy violations with Gemini 3.5 Flash-Lite Stage 2 cascade.",
+  "category": "retail",
+  "layout": "document_first",
+  "isolate": "auto",
+  "schema": {
+    "instructions": "Audit the product SKU listing for title-vs-specification contradictions, visual attribute mismatches, missing critical disclosures, and SEO readiness.",
+    "temperature": {
+      "noul": 1.25,
+      "choice": 1.35,
+      "score": 1.15
+    },
+    "questions": [
+      {
+        "name": "auto_publish_approved",
+        "type": "boolean",
+        "prompt": "Can this SKU bypass manual merchandiser review and auto-publish immediately to the storefront without defects or compliance violations?"
+      },
+      {
+        "name": "primary_defect_type",
+        "type": "choice",
+        "prompt": "What is the primary catalog quality defect or compliance status of this SKU?",
+        "options": {
+          "A": "clean_no_defect: title, specifications, and visual attributes are consistent and policy-compliant",
+          "B": "title_spec_conflict: product title contradicts technical specs, dimensions, material, or visual description",
+          "C": "missing_critical_attributes: missing required sizing, voltage, ingredient list, or safety warnings",
+          "D": "policy_or_claim_violation: unsubstantiated medical/eco cure claims, counterfeit brand keyword stuffing, or restricted item"
+        }
+      },
+      {
+        "name": "seo_readiness_score",
+        "type": "score",
+        "prompt": "Rate search and discovery metadata quality from 1 (spammy/broken) to 5 (well-structured brand + model + key attributes).",
+        "scale_min": 1,
+        "scale_max": 5,
+        "levels": ["1", "2", "3", "4", "5"]
+      }
+    ],
+    "samples": {{ default 1 .samples | toJson }}
+  },
+  "state": {
+    "product": {{ default "No product specification provided." .product | toJson }}
+  }
+}

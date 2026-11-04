@@ -32,3 +32,17 @@ func TestMultimodalTemplatesRender(t *testing.T) {
 		}
 	}
 }
+
+// Every shipped retail template renders to valid JSON.
+func TestRetailTemplatesRender(t *testing.T) {
+	for _, name := range []string{"retail_catalog_qa", "retail_deep_taxonomy", "retail_merchandising_compliance"} {
+		out, err := NewEngine().RenderFile("../../templates/retail/"+name+".json.tmpl", map[string]interface{}{})
+		if err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		var v map[string]any
+		if err := json.Unmarshal([]byte(out), &v); err != nil {
+			t.Fatalf("%s: rendered output is not JSON: %v", name, err)
+		}
+	}
+}

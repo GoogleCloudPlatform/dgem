@@ -1,0 +1,88 @@
+{
+  "name": "Retail Deep Taxonomy & Attribute Extraction (32-Option Tournament)",
+  "description": "Evaluates 32 fine-grained Google Product Taxonomy categories via 2-Stage Tournament Bracket Mode (>26 options) alongside primary material, price tier, and gift eligibility.",
+  "category": "retail",
+  "layout": "document_first",
+  "isolate": "auto",
+  "schema": {
+    "instructions": "Classify the product SKU into the exact fine-grained retail taxonomy category (32 options evaluated via 2-stage tournament brackets) and extract primary material, price tier, and gift eligibility.",
+    "temperature": {
+      "noul": 1.45,
+      "choice": 1.45
+    },
+    "questions": [
+      {
+        "name": "google_product_category",
+        "type": "choice",
+        "prompt": "Select the single most accurate fine-grained Google Product Taxonomy leaf category (cat_01 through cat_32) for this SKU.",
+        "options": {
+          "cat_01": "Apparel & Accessories > Clothing > Outerwear > Coats & Jackets: insulated parkas, rain shells, down jackets, tailored blazers",
+          "cat_02": "Apparel & Accessories > Clothing > Activewear & Athletic Apparel: compression leggings, running shorts, moisture-wicking tops",
+          "cat_03": "Apparel & Accessories > Clothing > Everyday Tops, Dresses & Knitwear: merino sweaters, button-down shirts, casual dresses",
+          "cat_04": "Apparel & Accessories > Shoes > Athletic & Trail Running Footwear: marathon road shoes, trail runners, cross-training sneakers",
+          "cat_05": "Apparel & Accessories > Shoes > Boots, Dress & Casual Footwear: Goodyear-welt leather boots, loafers, waterproof chelsea boots",
+          "cat_06": "Apparel & Accessories > Handbags, Wallets, Watches & Eyewear: polarized sunglasses, leather totes, RFID wallets, field watches",
+          "cat_07": "Electronics > Computers > Laptops, Ultrabooks & Mobile Workstations: notebook computers, 2-in-1 convertibles, creator laptops",
+          "cat_08": "Electronics > Computers > Monitors, Mechanical Keyboards & Docks: 4K displays, ergonomic split keyboards, Thunderbolt docks",
+          "cat_09": "Electronics > Audio > Headphones, Wireless Earbuds & Studio Speakers: ANC headphones, bookshelf speakers, Bluetooth soundbars",
+          "cat_10": "Electronics > Communications > Smartphones, Cases & MagSafe Chargers: unlocked 5G handsets, GaN chargers, rugged phone cases",
+          "cat_11": "Electronics > Smart Home > Security Cameras, Thermostats & Lighting: Matter smart bulbs, PoE doorbells, smart HVAC sensors",
+          "cat_12": "Electronics > Video Game Consoles, VR Headsets & Pro Controllers: handheld gaming PCs, Hall-effect gamepads, sim racing wheels",
+          "cat_13": "Electronics > Cameras, Gimbal Stabilizers & Action Video Gear: mirrorless camera bodies, 3-axis gimbals, waterproof action cams",
+          "cat_14": "Home & Garden > Kitchen & Dining > Countertop Espresso & Small Appliances: dual-boiler espresso machines, air fryers, high-speed blenders",
+          "cat_15": "Home & Garden > Kitchen & Dining > Cookware, Dutch Ovens & Chef Cutlery: tri-ply stainless skillets, enameled cast iron, forged knives",
+          "cat_16": "Home & Garden > Kitchen & Dining > Tableware, Vacuum Drinkware & Barware: stoneware dinner sets, insulated tumblers, crystal glassware",
+          "cat_17": "Home & Garden > Furniture > Ergonomic Office, Living & Bedroom Furniture: mesh task chairs, standing desks, solid oak bed frames",
+          "cat_18": "Home & Garden > Linens & Bedding > Mattresses, Duvets & Cooling Pillows: percale sheet sets, down comforters, memory foam pillows",
+          "cat_19": "Home & Garden > Household Appliances > HEPA Purifiers, Vacuums & Dehumidifiers: LiDAR robot vacuums, true-HEPA air purifiers, humidifiers",
+          "cat_20": "Home & Garden > Lawn, Patio, Pellet Grills & Outdoor Living: Wi-Fi pellet smokers, modular patio sofas, cordless string trimmers",
+          "cat_21": "Health & Beauty > Personal Care > Facial Skincare, Retinol Serums & SPF: vitamin C serums, mineral sunscreens, barrier moisturizers",
+          "cat_22": "Health & Beauty > Personal Care > Cosmetics, Lip Oils & Mineral Makeup: liquid foundations, eyeshadow palettes, tinted lip balms",
+          "cat_23": "Health & Beauty > Personal Care > Hair Care, Ionic Dryers & Styling Tools: brushless hair dryers, ceramic flat irons, bond-repair masks",
+          "cat_24": "Health & Beauty > Personal Care > Fine Fragrance, Bath & Body Grooming: eau de parfum, botanical body washes, safety razors",
+          "cat_25": "Health & Beauty > Health Care > Percussion Massagers & Recovery Devices: deep-tissue massage guns, red-light therapy panels, tens units",
+          "cat_26": "Sporting Goods > Outdoor Recreation > Backpacking Tents, Sleeping Bags & Packs: ultralight 3-season tents, down quilts, hydration packs",
+          "cat_27": "Sporting Goods > Exercise & Fitness > Adjustable Dumbbells, Rowing & Yoga: cast-iron kettlebells, folding rowers, natural rubber yoga mats",
+          "cat_28": "Sporting Goods > Cycling, Paddleboarding & Winter Snow Sports Gear: MIPS road helmets, inflatable SUP boards, ski goggles",
+          "cat_29": "Food, Beverages & Tobacco > Beverages > Specialty Whole-Bean Coffee & Matcha: single-origin espresso beans, ceremonial matcha, functional teas",
+          "cat_30": "Food, Beverages & Tobacco > Food Items > Artisanal Olive Oil, Honey & Pantry: cold-pressed extra virgin olive oil, raw manuka honey, dark chocolate",
+          "cat_31": "Animals & Pet Supplies > Pet Nutrition > Freeze-Dried Raw Food & Joint Chews: grain-free salmon kibble, probiotic chews, freeze-dried liver treats",
+          "cat_32": "Animals & Pet Supplies > Pet Gear > Orthopedic Pet Beds, Harnesses & Smart Feeders: memory-foam dog beds, no-pull reflective harnesses, automatic feeders"
+        }
+      },
+      {
+        "name": "material_primary",
+        "type": "choice",
+        "prompt": "What is the primary physical material or formulation group of this product?",
+        "options": {
+          "A": "natural_textile: organic cotton, merino wool, linen, silk, genuine leather, goose down",
+          "B": "synthetic_polymer: recycled nylon, polyester, elastane, polycarbonate, silicone, ABS",
+          "C": "metal_alloy: stainless steel, anodized aluminum, cast iron, titanium, brass",
+          "D": "wood_bamboo_natural: solid hardwood, bamboo, rattan, cork, natural rubber",
+          "E": "glass_ceramic_stone: borosilicate glass, porcelain, stoneware, marble, quartz",
+          "F": "composite_electronic_consumable: multi-material electronics assembly, topical formulation, or food/pet consumable"
+        }
+      },
+      {
+        "name": "price_tier",
+        "type": "choice",
+        "prompt": "Which retail merchandising price tier applies to this SKU?",
+        "options": {
+          "A": "value_budget: entry-level everyday value under $35",
+          "B": "mid_market_core: mainstream retail core tier ($35 to $149)",
+          "C": "premium_specialty: high-performance enthusiast or specialty tier ($150 to $499)",
+          "D": "luxury_designer: flagship luxury, designer, or pro-grade tier ($500+)"
+        }
+      },
+      {
+        "name": "gift_eligible",
+        "type": "boolean",
+        "prompt": "Is this product suitable for gift-wrapping and inclusion in curated holiday gift guides?"
+      }
+    ],
+    "samples": {{ default 1 .samples | toJson }}
+  },
+  "state": {
+    "product": {{ default "No product specification provided." .product | toJson }}
+  }
+}
