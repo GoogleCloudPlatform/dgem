@@ -52,6 +52,16 @@ type SystemOneQuestion struct {
 	Type         string            `json:"type"`
 	Instructions any               `json:"instructions"`
 	Criteria     map[string]string `json:"criteria"`
+	// PriorLogits are optional caller-supplied per-option log-prior scores keyed by option name.
+	// Ignored by default; used for pre-gated log-linear fusion when EngineOptions.PriorWeight > 0, and reused
+	// for wide-option shortlist ranking when ShortlistFunc is enabled.
+	PriorLogits map[string]float64 `json:"prior_logits,omitempty"`
+	// EvidencePrompt requests a co-denoised evidence slot (<q>_evidence) ahead of the choice slot on the same canvas.
+	EvidencePrompt string `json:"evidence_prompt,omitempty"`
+	// EvidenceCriteria are the caller-supplied options for <q>_evidence (required when EvidencePrompt is set; at least 2 options).
+	EvidenceCriteria map[string]string `json:"evidence_criteria,omitempty"`
+	// EvidenceOrder is the EvidenceCriteria keys in the order the request listed them (set by UnmarshalJSON).
+	EvidenceOrder []string `json:"-"`
 	// Levels are a score question's levels, lowest first (criteria given as an array; set by UnmarshalJSON).
 	Levels []string `json:"-"`
 	// Order is the criteria keys in the order the request listed them (set by UnmarshalJSON). Go maps drop order;
@@ -66,15 +76,31 @@ type SystemOneQuestion struct {
 // gateway silently forwarded the whole request unbatched.
 func (q *SystemOneQuestion) UnmarshalJSON(b []byte) error {
 	var raw struct {
-		Type         string          `json:"type"`
-		Instructions any             `json:"instructions"`
-		Criteria     json.RawMessage `json:"criteria"`
+		Type             string             `json:"type"`
+		Instructions     any                `json:"instructions"`
+		Criteria         json.RawMessage    `json:"criteria"`
+		PriorLogits      map[string]float64 `json:"prior_logits"`
+		EvidencePrompt   string             `json:"evidence_prompt"`
+		EvidenceCriteria json.RawMessage    `json:"evidence_criteria"`
 	}
 	if err := json.Unmarshal(b, &raw); err != nil {
 		return err
 	}
 	q.Type, q.Instructions = raw.Type, raw.Instructions
+	q.PriorLogits, q.EvidencePrompt = raw.PriorLogits, raw.EvidencePrompt
 	q.Criteria, q.Levels, q.Order = nil, nil, nil
+	q.EvidenceCriteria, q.EvidenceOrder = nil, nil
+	if ec := bytes.TrimSpace(raw.EvidenceCriteria); len(ec) > 0 && !bytes.Equal(ec, []byte("null")) {
+		var obj map[string]json.RawMessage
+		if err := json.Unmarshal(ec, &obj); err != nil {
+			return fmt.Errorf("evidence_criteria must be an object of options: %w", err)
+		}
+		q.EvidenceCriteria = make(map[string]string, len(obj))
+		for k, v := range obj {
+			q.EvidenceCriteria[k] = criterionText(v)
+		}
+		q.EvidenceOrder = fieldKeyOrder(b, "evidence_criteria")
+	}
 	c := bytes.TrimSpace(raw.Criteria)
 	switch {
 	case len(c) == 0 || bytes.Equal(c, []byte("null")):
@@ -106,6 +132,10 @@ func (q *SystemOneQuestion) UnmarshalJSON(b []byte) error {
 // criteriaKeyOrder returns the keys of the question's "criteria" object in source order, or nil if they can't be
 // read. It walks the question JSON with a token decoder because json.Unmarshal into a map loses order.
 func criteriaKeyOrder(question []byte) []string {
+	return fieldKeyOrder(question, "criteria")
+}
+
+func fieldKeyOrder(question []byte, fieldName string) []string {
 	dec := json.NewDecoder(bytes.NewReader(question))
 	if t, err := dec.Token(); err != nil || t != json.Delim('{') {
 		return nil
@@ -115,7 +145,7 @@ func criteriaKeyOrder(question []byte) []string {
 		if err != nil {
 			return nil
 		}
-		if k, _ := kt.(string); k != "criteria" {
+		if k, _ := kt.(string); k != fieldName {
 			var skip json.RawMessage
 			if err := dec.Decode(&skip); err != nil {
 				return nil
@@ -206,10 +236,25 @@ func subQuestion(q SystemOneQuestion, keys []string) SystemOneQuestion {
 		return iok && !jok
 	})
 	crit := make(map[string]string, len(keys))
+	var priors map[string]float64
+	if len(q.PriorLogits) > 0 {
+		priors = make(map[string]float64, len(keys))
+	}
 	for _, k := range keys {
 		crit[k] = q.Criteria[k]
+		if priors != nil {
+			if p, ok := q.PriorLogits[k]; ok {
+				priors[k] = p
+			}
+		}
 	}
-	return SystemOneQuestion{Type: "choice", Instructions: FormatInstructions(q.Instructions), Criteria: crit, Order: order}
+	return SystemOneQuestion{
+		Type:         "choice",
+		Instructions: FormatInstructions(q.Instructions),
+		Criteria:     crit,
+		PriorLogits:  priors,
+		Order:        order,
+	}
 }
 
 func criterionText(v json.RawMessage) string {
@@ -417,6 +462,12 @@ type SystemOneAnswer struct {
 	Entropy     float64  `json:"entropy,omitempty"`
 	NormalizedH float64  `json:"normalized_entropy,omitempty"`
 	PassesUsed  int      `json:"passes_used,omitempty"`
+	// RawEntropy and RawNormalizedH preserve the pre-prior-fusion token uncertainty when PriorLogits are supplied.
+	RawEntropy     float64 `json:"raw_entropy,omitempty"`
+	RawNormalizedH float64 `json:"raw_normalized_entropy,omitempty"`
+	PriorFused     bool    `json:"prior_fused,omitempty"`
+	// Evidence records the co-denoised evidence slot choice when EvidencePrompt is set on the question.
+	Evidence string `json:"evidence,omitempty"`
 }
 
 // SystemOneResponse matches the response envelope validated by decision_index.
@@ -457,20 +508,26 @@ func addServerTime(ctx context.Context, ms float64) {
 
 // EngineOptions configures the Decision Index execution adapter.
 type EngineOptions struct {
-	MaxSlotsPerPass   int
-	MaxOptionsPerSlot int
-	NaiveLimits       bool    // If true, mimics naive 26-option / 10-slot capacity rejections (HTTP 422 Unsupported)
-	TemperatureScale  float64 // Post-hoc slot temperature scaling T* (1.0 = unscaled, default)
-	MaxConcurrency    int
-	DualMirror        bool    // Evaluate forward + reversed option orderings on the same diffusion canvas
-	NullPriorDebias   bool    // Divide out content-free positional 'A'-bias prior
-	PriorAlpha        float64 // Damping exponent alpha in [0, 1] for null-prior de-biasing
-	BracketSize       int     // Max options per Round-1 bracket for wide (>26) choices; <=1 means BracketSize
-	CatchAll          string  // Wide-option catch-all handling: "off" (default), "final", "both" or "verify"; see catchAllKeys
-	NoulMode          string  // How yes/no questions are read: "noul" (default) or "choice" (2-option choice; see noulAsChoice)
-	Labels            string  // Server label set for choice options: "az" (default, 26) or "az_aa"/"az_lower" (52). Wide sets read up to 52 options natively and bracket above that with 52-wide brackets
-	OptionOrder       string  // How options are labelled A, B, C…: "alpha" (default, sorted keys) or "source" (request order)
-	PromptLayout      string  // Server prompt layout: "document_first" (default: state first, then questions) or "schema_first"/"" (questions as the system prompt)
+	MaxSlotsPerPass      int
+	MaxOptionsPerSlot    int
+	NaiveLimits          bool    // If true, mimics naive 26-option / 10-slot capacity rejections (HTTP 422 Unsupported)
+	TemperatureScale     float64 // Post-hoc slot temperature scaling T* (1.0 = unscaled, default)
+	MaxConcurrency       int
+	DualMirror           bool    // Evaluate forward + reversed option orderings on the same diffusion canvas
+	NullPriorDebias      bool    // Divide out content-free positional 'A'-bias prior
+	PriorAlpha           float64 // Damping exponent alpha in [0, 1] for null-prior de-biasing
+	BracketSize          int     // Max options per Round-1 bracket for wide (>26) choices; <=1 means BracketSize
+	CatchAll             string  // Wide-option catch-all handling: "off" (default), "final", "both" or "verify"; see catchAllKeys
+	NoulMode             string  // How yes/no questions are read: "noul" (default) or "choice" (2-option choice; see noulAsChoice)
+	Labels               string  // Server label set for choice options: "az" (default, 26) or "az_aa"/"az_lower" (52). Wide sets read up to 52 options natively and bracket above that with 52-wide brackets
+	OptionOrder          string  // How options are labelled A, B, C…: "alpha" (default, sorted keys) or "source" (request order)
+	PromptLayout         string  // Server prompt layout: "document_first" (default: state first, then questions) or "schema_first"/"" (questions as the system prompt)
+	PriorWeight          float64 // Log-linear fusion weight alpha >= 0 for PriorLogits; 0 disables fusion (cascades should gate on RawNormalizedH)
+	HesitationGate       float64 // Raw normalized entropy threshold tau in [0, 1] used by PriorGateMode (default 0.16)
+	PriorGateMode        string  // Gate schedule for PriorLogits: "confident" (default: fuse when rawNormH < tau), "hesitant" (rawNormH >= tau; recommended for tie-break priors), "proportional" (weight * rawNormH), or "always"
+	ShortlistTopK        int     // Candidate count M <= MaxOptionsPerSlot retained by ShortlistFunc for wide choices (default 0 = off)
+	ShortlistContrastive bool    // Append [distinguishing: ...] sibling token tags on shortlisted wide choices (default false; schema-dependent)
+	ShortlistFunc        ShortlistFunc
 }
 
 // DefaultEngineOptions returns production settings with Wide-Option Tournament + Multi-Slot Batching enabled (T*=1.0).
@@ -485,7 +542,12 @@ func DefaultEngineOptions() EngineOptions {
 		BracketSize:       BracketSize,
 		// document_first: on the wave-2 canary (dev suites, paired) it raised di_catchall 0.790 -> 0.870 and rag_dev
 		// 0.705 -> 0.770 with JevBench and di_wide unchanged; out-of-scope recall on di_catchall fell 1.00 -> 0.825.
-		PromptLayout: "document_first",
+		PromptLayout:         "document_first",
+		PriorWeight:          0, // opt-in: prior_logits are ignored unless the operator sets --prior-weight
+		HesitationGate:       0.16,
+		PriorGateMode:        "confident",
+		ShortlistTopK:        0,
+		ShortlistContrastive: false,
 	}
 }
 
@@ -556,6 +618,11 @@ func ExecuteSystemOne(ctx context.Context, cli *client.Client, req SystemOneRequ
 	if opts.TemperatureScale <= 0 {
 		opts.TemperatureScale = 1.0
 	}
+	switch opts.PriorGateMode {
+	case "", "confident", "hesitant", "proportional", "always":
+	default:
+		return nil, fmt.Errorf("%w: unsupported prior_gate_mode %q (expected confident, hesitant, proportional, or always)", ErrInvalidRequest, opts.PriorGateMode)
+	}
 
 	if err := req.MergeMedia(); err != nil {
 		return nil, err
@@ -567,6 +634,20 @@ func ExecuteSystemOne(ctx context.Context, cli *client.Client, req SystemOneRequ
 		kind, err := questionKind(k, q)
 		if err != nil {
 			return nil, err
+		}
+		if strings.TrimSpace(q.EvidencePrompt) != "" {
+			if kind != kindChoice {
+				return nil, fmt.Errorf("%w: question %q: evidence_prompt is only supported on choice questions", ErrInvalidRequest, k)
+			}
+			if len(q.EvidenceCriteria) < 2 {
+				return nil, fmt.Errorf("%w: question %q: evidence_prompt needs evidence_criteria with at least two options", ErrInvalidRequest, k)
+			}
+			if _, clash := req.Questions[k+"_evidence"]; clash {
+				return nil, fmt.Errorf("%w: question %q: evidence slot id %q is already a question", ErrInvalidRequest, k, k+"_evidence")
+			}
+			if len(q.Criteria) > opts.MaxOptionsPerSlot {
+				return nil, fmt.Errorf("%w: question %q: evidence_prompt is not supported on wide questions (%d options > %d)", ErrInvalidRequest, k, len(q.Criteria), opts.MaxOptionsPerSlot)
+			}
 		}
 		kinds[k] = kind
 		qKeys = append(qKeys, k)
@@ -613,13 +694,25 @@ func ExecuteSystemOne(ctx context.Context, cli *client.Client, req SystemOneRequ
 		}
 	}
 
-	// 1. Process standard questions (K <= 26) in Multi-Slot Canvas Batches of size opts.MaxSlotsPerPass
-	for i := 0; i < len(standardKeys); i += opts.MaxSlotsPerPass {
-		end := i + opts.MaxSlotsPerPass
-		if end > len(standardKeys) {
-			end = len(standardKeys)
+	// 1. Process standard questions (K <= 26) in Multi-Slot Canvas Batches of size opts.MaxSlotsPerPass.
+	// A question with EvidencePrompt adds a companion <q>_evidence slot on the same canvas, consuming 2 slots.
+	for i := 0; i < len(standardKeys); {
+		var batchKeys []string
+		slotsUsed := 0
+		for i < len(standardKeys) {
+			k := standardKeys[i]
+			q := req.Questions[k]
+			cost := 1
+			if kinds[k] == kindChoice && strings.TrimSpace(q.EvidencePrompt) != "" {
+				cost = 2
+			}
+			if len(batchKeys) > 0 && slotsUsed+cost > opts.MaxSlotsPerPass {
+				break
+			}
+			batchKeys = append(batchKeys, k)
+			slotsUsed += cost
+			i++
 		}
-		batchKeys := standardKeys[i:end]
 		multiBatches++
 
 		batchAns, passes, err := evaluateStandardBatch(ctx, cli, stateText, req.Images, batchKeys, req.Questions, kinds, opts)
@@ -634,11 +727,20 @@ func ExecuteSystemOne(ctx context.Context, cli *client.Client, req SystemOneRequ
 		mu.Unlock()
 	}
 
-	// 2. Process wide questions (27 <= K <= 255) via 2-Stage Bracket Tournament Routing
+	// 2. Process wide questions (27 <= K <= 255+) via ShortlistFunc or 2-Stage Bracket Tournament Routing
 	for _, k := range wideKeys {
 		wideQs++
 		q := req.Questions[k]
-		ans, passes, err := evaluateWideQuestionTournament(ctx, cli, stateText, req.Images, k, q, opts.TemperatureScale, opts.BracketSize, opts.CatchAll, opts.PromptLayout, opts.OptionOrder, opts.Labels)
+		var (
+			ans    SystemOneAnswer
+			passes int
+			err    error
+		)
+		if opts.ShortlistFunc != nil {
+			ans, passes, err = evaluateWideQuestionShortlist(ctx, cli, stateText, req.Images, k, q, opts)
+		} else {
+			ans, passes, err = evaluateWideQuestionTournament(ctx, cli, stateText, req.Images, k, q, opts)
+		}
 		if err != nil {
 			return nil, err
 		}
@@ -709,6 +811,9 @@ func evaluateStandardBatch(
 					"name":        ok,
 					"description": strings.TrimSpace(qSpec.Criteria[ok]),
 				})
+			}
+			if evPrompt := strings.TrimSpace(qSpec.EvidencePrompt); evPrompt != "" {
+				questionsPayload = append(questionsPayload, buildEvidenceSlotPayload(qKey, qSpec, opts.OptionOrder))
 			}
 			questionsPayload = append(questionsPayload, map[string]any{
 				"id":           qKey,
@@ -791,6 +896,27 @@ func evaluateStandardBatch(
 					}
 				}
 			}
+			if noulPriors := noulPriorLogits(qSpec.PriorLogits); len(noulPriors) > 0 {
+				pRaw := math.Max(0.0, math.Min(1.0, pYes))
+				rawNoulProbs := map[string]float64{"yes": pRaw, "no": 1.0 - pRaw}
+				fusedProbs, _, h, normH, rawH, rawNormH, fused := FusePriorWithGateMode(
+					rawNoulProbs, noulPriors, []string{"yes", "no"}, tempScale, opts.PriorWeight, opts.HesitationGate, opts.PriorGateMode,
+				)
+				fusedYes := fusedProbs["yes"]
+				conf := math.Max(fusedYes, 1.0-fusedYes)
+				out[qKey] = SystemOneAnswer{
+					Type:           "noul",
+					Noul:           &fusedYes,
+					Confidence:     &conf,
+					PassesUsed:     1,
+					Entropy:        h,
+					NormalizedH:    normH,
+					RawEntropy:     rawH,
+					RawNormalizedH: rawNormH,
+					PriorFused:     fused,
+				}
+				continue
+			}
 			if tempScale != 1.0 && tempScale > 0 {
 				logitYes := math.Log(math.Max(1e-12, pYes)) / tempScale
 				logitNo := math.Log(math.Max(1e-12, 1.0-pYes)) / tempScale
@@ -847,9 +973,21 @@ func evaluateStandardBatch(
 			}
 		}
 
-		scaledProbs, winner, h, normH := NormalizeAndScaleProbabilities(probs, optKeys, tempScale)
+		scaledProbs, winner, h, normH, rawH, rawNormH, fused := FusePriorWithGateMode(
+			probs, qSpec.PriorLogits, optKeys, tempScale, opts.PriorWeight, opts.HesitationGate, opts.PriorGateMode,
+		)
 		conf := scaledProbs[winner]
-		out[qKey] = SystemOneAnswer{
+		var evidenceVal string
+		if strings.TrimSpace(qSpec.EvidencePrompt) != "" {
+			if evAns, ok := resp.Answers[qKey+"_evidence"]; ok {
+				if evAns.Choice != "" {
+					evidenceVal = evAns.Choice
+				} else {
+					evidenceVal = evAns.Label
+				}
+			}
+		}
+		ans := SystemOneAnswer{
 			Type:          "choice",
 			Choice:        winner,
 			Probabilities: scaledProbs,
@@ -857,7 +995,14 @@ func evaluateStandardBatch(
 			Entropy:       h,
 			NormalizedH:   normH,
 			PassesUsed:    1,
+			Evidence:      evidenceVal,
 		}
+		if len(qSpec.PriorLogits) > 0 {
+			ans.RawEntropy = rawH
+			ans.RawNormalizedH = rawNormH
+			ans.PriorFused = fused
+		}
+		out[qKey] = ans
 	}
 
 	return out, 1, nil
@@ -923,13 +1068,14 @@ func evaluateWideQuestionTournament(
 	images []string,
 	qKey string,
 	qSpec SystemOneQuestion,
-	tempScale float64,
-	bracketSize int,
-	catchAllMode string,
-	layout string,
-	optionOrder string,
-	labels string,
+	opts EngineOptions,
 ) (SystemOneAnswer, int, error) {
+	tempScale := opts.TemperatureScale
+	bracketSize := opts.BracketSize
+	catchAllMode := opts.CatchAll
+	layout := opts.PromptLayout
+	optionOrder := opts.OptionOrder
+	labels := opts.Labels
 	optKeys := optionKeys(qSpec, optionOrder)
 	numOpts := len(optKeys)
 	limit := optionLimit(labels)
@@ -958,7 +1104,15 @@ func evaluateWideQuestionTournament(
 		}
 	}
 	if numOpts <= limit {
-		batchMap, passes, err := evaluateStandardBatch(ctx, cli, stateText, images, []string{qKey}, map[string]SystemOneQuestion{qKey: qSpec}, nil, EngineOptions{TemperatureScale: tempScale, PromptLayout: layout, OptionOrder: optionOrder, Labels: labels})
+		batchMap, passes, err := evaluateStandardBatch(ctx, cli, stateText, images, []string{qKey}, map[string]SystemOneQuestion{qKey: qSpec}, nil, EngineOptions{
+			TemperatureScale: tempScale,
+			PromptLayout:     layout,
+			OptionOrder:      optionOrder,
+			Labels:           labels,
+			PriorWeight:      opts.PriorWeight,
+			HesitationGate:   opts.HesitationGate,
+			PriorGateMode:    opts.PriorGateMode,
+		})
 		if err != nil {
 			return SystemOneAnswer{}, passes, err
 		}
@@ -1099,9 +1253,11 @@ func evaluateWideQuestionTournament(
 	// Catch-alls are in no bracket's option list, so fusion treats them as finalists carrying final-round mass only.
 	combined := fuseBracketProbabilities(brackets, round1, finalistSet, finalAns.Probabilities)
 
-	scaledProbs, winner, h, normH := NormalizeAndScaleProbabilities(combined, optKeys, tempScale)
+	scaledProbs, winner, h, normH, rawH, rawNormH, fused := FusePriorWithGateMode(
+		combined, qSpec.PriorLogits, optKeys, tempScale, opts.PriorWeight, opts.HesitationGate, opts.PriorGateMode,
+	)
 	conf := scaledProbs[winner]
-	return SystemOneAnswer{
+	ans := SystemOneAnswer{
 		Type:          "choice",
 		Choice:        winner,
 		Probabilities: scaledProbs,
@@ -1109,7 +1265,13 @@ func evaluateWideQuestionTournament(
 		Entropy:       h,
 		NormalizedH:   normH,
 		PassesUsed:    passesUsed,
-	}, passesUsed, nil
+	}
+	if len(qSpec.PriorLogits) > 0 {
+		ans.RawEntropy = rawH
+		ans.RawNormalizedH = rawNormH
+		ans.PriorFused = fused
+	}
+	return ans, passesUsed, nil
 }
 
 // NormalizeAndScaleProbabilities applies temperature scaling T > 0, guarantees strict positivity and
@@ -1156,6 +1318,126 @@ func NormalizeAndScaleProbabilities(raw map[string]float64, optKeys []string, te
 		normH = entropy / math.Log(float64(kCount))
 	}
 	return scaled, winner, entropy, normH
+}
+
+// FusePriorWithHesitationGate implements Pre-Gated Product-of-Experts Prior Fusion
+// using the default "confident" gate schedule (fusing when rawNormH < hesitationGate).
+func FusePriorWithHesitationGate(
+	rawProbs map[string]float64,
+	priorLogits map[string]float64,
+	optKeys []string,
+	tempScale float64,
+	priorWeight float64,
+	hesitationGate float64,
+) (probs map[string]float64, winner string, h, normH, rawH, rawNormH float64, fused bool) {
+	return FusePriorWithGateMode(rawProbs, priorLogits, optKeys, tempScale, priorWeight, hesitationGate, "confident")
+}
+
+// FusePriorWithGateMode implements Pre-Gated Product-of-Experts Prior Fusion.
+// It always computes temperature-scaled token probabilities and raw normalized hesitation (rawNormH = H_raw / ln K)
+// before touching priorLogits so downstream cascade telemetry (RawNormalizedH) is never masked by priors.
+// Supported gateMode schedules:
+//   - "" or "confident": fuse with priorWeight when hesitationGate <= 0 || rawNormH < hesitationGate.
+//   - "hesitant":        fuse with priorWeight when rawNormH >= hesitationGate (breaks ties on uncertain items).
+//   - "proportional":    fuse with effective weight priorWeight * rawNormH.
+//   - "always":          fuse with priorWeight across all items while still preserving pre-fusion rawNormH.
+func FusePriorWithGateMode(
+	rawProbs map[string]float64,
+	priorLogits map[string]float64,
+	optKeys []string,
+	tempScale float64,
+	priorWeight float64,
+	hesitationGate float64,
+	gateMode string,
+) (probs map[string]float64, winner string, h, normH, rawH, rawNormH float64, fused bool) {
+	baseProbs, baseWinner, baseH, baseNormH := NormalizeAndScaleProbabilities(rawProbs, optKeys, tempScale)
+	rawH, rawNormH = baseH, baseNormH
+	if len(priorLogits) == 0 || priorWeight <= 0 || len(optKeys) <= 1 {
+		return baseProbs, baseWinner, baseH, baseNormH, rawH, rawNormH, false
+	}
+
+	effWeight := priorWeight
+	switch gateMode {
+	case "", "confident":
+		if hesitationGate > 0 && rawNormH >= hesitationGate {
+			return baseProbs, baseWinner, baseH, baseNormH, rawH, rawNormH, false
+		}
+	case "hesitant":
+		if hesitationGate > 0 && rawNormH < hesitationGate {
+			return baseProbs, baseWinner, baseH, baseNormH, rawH, rawNormH, false
+		}
+	case "proportional":
+		effWeight = priorWeight * rawNormH
+		if effWeight <= 1e-9 {
+			return baseProbs, baseWinner, baseH, baseNormH, rawH, rawNormH, false
+		}
+	case "always":
+	default:
+		if hesitationGate > 0 && rawNormH >= hesitationGate {
+			return baseProbs, baseWinner, baseH, baseNormH, rawH, rawNormH, false
+		}
+	}
+
+	logits := make(map[string]float64, len(optKeys))
+	maxLogit := math.Inf(-1)
+	for _, k := range optKeys {
+		p := math.Max(1e-9, baseProbs[k])
+		l := math.Log(p) + effWeight*priorLogits[k]
+		logits[k] = l
+		if l > maxLogit {
+			maxLogit = l
+		}
+	}
+
+	unnorm := make(map[string]float64, len(optKeys))
+	for _, k := range optKeys {
+		unnorm[k] = math.Exp(logits[k] - maxLogit)
+	}
+	fusedProbs, fusedWinner, fusedH, fusedNormH := NormalizeAndScaleProbabilities(unnorm, optKeys, 1.0)
+	return fusedProbs, fusedWinner, fusedH, fusedNormH, rawH, rawNormH, true
+}
+
+// noulPriorLogits normalizes yes/no or true/false keys in q.PriorLogits to {"yes", "no"}.
+func noulPriorLogits(p map[string]float64) map[string]float64 {
+	if len(p) == 0 {
+		return nil
+	}
+	out := make(map[string]float64, 2)
+	for k, v := range p {
+		switch strings.ToLower(strings.TrimSpace(k)) {
+		case "yes", "true":
+			out["yes"] = v
+		case "no", "false":
+			out["no"] = v
+		}
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
+// buildEvidenceSlotPayload constructs a companion choice slot (<qKey>_evidence) placed immediately before <qKey>
+// on the same diffusion canvas using the caller-supplied EvidenceCriteria.
+func buildEvidenceSlotPayload(qKey string, qSpec SystemOneQuestion, optionOrder string) map[string]any {
+	evQ := SystemOneQuestion{
+		Criteria: qSpec.EvidenceCriteria,
+		Order:    qSpec.EvidenceOrder,
+	}
+	evKeys := optionKeys(evQ, optionOrder)
+	evOpts := make([]map[string]string, 0, len(evKeys))
+	for _, k := range evKeys {
+		evOpts = append(evOpts, map[string]string{
+			"name":        k,
+			"description": strings.TrimSpace(qSpec.EvidenceCriteria[k]),
+		})
+	}
+	return map[string]any{
+		"id":           qKey + "_evidence",
+		"type":         "choice",
+		"instructions": strings.TrimSpace(qSpec.EvidencePrompt),
+		"options":      evOpts,
+	}
 }
 
 func sortedOptionKeys(m map[string]string) []string {
@@ -1453,8 +1735,9 @@ func FitsServingImage(req SystemOneRequest) bool {
 			return false
 		}
 		// The serving image's Jev parser takes "type" literally (noul, choice, score): an empty type or a synonym
-		// (bool, boolean) is resolved only here.
-		if q.Type != kind {
+		// (bool, boolean) is resolved only here. Questions using EvidencePrompt or PriorLogits
+		// also require adapter execution.
+		if q.Type != kind || strings.TrimSpace(q.EvidencePrompt) != "" || len(q.PriorLogits) > 0 {
 			return false
 		}
 	}

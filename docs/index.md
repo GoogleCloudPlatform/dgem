@@ -27,7 +27,7 @@ For teams who need to know when a decision can be trusted.
 1. [Confidence and calibration](confidence/index.md): what to measure, what we recommend, and the caveats
 2. [Calibrate your policy](confidence/calibrate-your-policy.md) on your own labelled data
 3. [Confidence beyond Shannon](confidence/overview.md) · [The journey to decision models](decision-models-primer.md) ·
-   [Glossary](glossary.md)
+   [Practitioner guide](practitioners-guide.md) · [Glossary](glossary.md)
 4. [Regression matrix](operate/regression-matrix.md): check a serving change against your own baseline
 
 ### 📝 Policies and decisions

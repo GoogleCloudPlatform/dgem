@@ -279,6 +279,7 @@ export default defineConfig({
             { label: 'Confidence and Calibration', slug: 'confidence' },
             { label: 'Calibrate Your Policy', slug: 'confidence/calibrate-your-policy' },
             { label: 'The Journey to Decision Models', slug: 'decision-models-primer' },
+            { label: 'Practitioner Guide', slug: 'practitioners-guide' },
             { label: 'Glossary & Mental Models', slug: 'glossary' },
           ],
         },
