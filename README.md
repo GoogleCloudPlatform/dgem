@@ -218,6 +218,13 @@ Published at [googlecloudplatform.github.io/dgem](https://googlecloudplatform.gi
 
 ---
 
+## Maintainers & Contributors
+
+| Contributor | Role & Focus Areas |
+| :--- | :--- |
+| **G. Hussain Chinoy** ([@ghchinoy](https://github.com/ghchinoy)) | Creator & Core Engine (`pkg/decisionindex`, `/v1/systemone` Gateway, Decision Studio, Apple Silicon `diffgemma`) |
+| **Jigyasu Juneja** ([@jigyasujuneja](https://github.com/jigyasujuneja)) | GKE G4 & Vertex AI GPU Serving (`docs/deploy/`), Decision Index 52-Label & Tournament Scaling (`pkg/decisionindex`), Calibration & Stage 2 Cascades, and Production Application Blueprints ([`docs/policies/applications.md`](docs/policies/applications.md)) |
+
 ## Contributing
 
 See [`CONTRIBUTING.md`](CONTRIBUTING.md) for contributor license agreement (CLA) requirements and community guidelines, and [`CODE_OF_CONDUCT.md`](CODE_OF_CONDUCT.md) for our Code of Conduct. If you encounter a bug or have feedback on templates or evaluation tools, please open an [Issue](https://github.com/GoogleCloudPlatform/dgem/issues).

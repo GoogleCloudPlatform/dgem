@@ -27,7 +27,7 @@ For teams who need to know when a decision can be trusted.
 1. [Confidence and calibration](confidence/index.md): what to measure, what we recommend, and the caveats
 2. [Calibrate your policy](confidence/calibrate-your-policy.md) on your own labelled data
 3. [Confidence beyond Shannon](confidence/overview.md) · [The journey to decision models](decision-models-primer.md) ·
-   [Practitioner guide](practitioners-guide.md) · [Glossary](glossary.md)
+   [Glossary](glossary.md)
 4. [Regression matrix](operate/regression-matrix.md): check a serving change against your own baseline
 
 ### 📝 Policies and decisions
@@ -46,3 +46,10 @@ For people who write policies and use the answers.
 - [Vertex AI vs. Cloud Run](reference/vertex-vs-cloud-run.md)
 - [Apple Silicon engine (`diffgemma`)](reference/metal-engine.md)
 - [How the model decides in one pass](confidence/architecture.md)
+
+## Maintainers & Contributors
+
+| Contributor | Role & Focus Areas |
+| :--- | :--- |
+| **G. Hussain Chinoy** ([@ghchinoy](https://github.com/ghchinoy)) | Creator & Core Engine (`pkg/decisionindex`, `/v1/systemone` Gateway, Decision Studio, Apple Silicon `diffgemma`) |
+| **Jigyasu Juneja** ([@jigyasujuneja](https://github.com/jigyasujuneja)) | GKE G4 & Vertex AI GPU Serving (`docs/deploy/`), Decision Index 52-Label & Tournament Scaling (`pkg/decisionindex`), Calibration & Stage 2 Cascades, and Production Application Blueprints ([Real-world applications](policies/applications.md)) |
