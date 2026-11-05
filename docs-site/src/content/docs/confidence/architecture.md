@@ -135,7 +135,7 @@ For readers arriving from different specialties (Platform Engineering, Search/Re
 | **[Tabular FM (`TabPFN` / `TabFM`)](/dgem/glossary/#tabpfn--tabular-foundation-models)** | Predicts a spreadsheet column by attending to labeled example rows. | Few-shot classification over numerical/embedding feature grids. |
 | **[Cross-Attention Canvas (`dgem`)](/dgem/glossary/#bidirectional-canvas-attention)** | Every input word directly inspects every policy rule and slot. | Zero-shot `AgentDrift` security audit & `LLM-AggreFact` grounding. |
 | **[Normalized Entropy ($\tilde{H}_m$)](/dgem/glossary/#cardinality-normalized-entropy)** | A universal `0.0–1.0` uncertainty gauge adjusted for option count. | Early-exiting a confident 26-way intent while escalating a torn 3-way NLI item. |
-| **[Test-Time Compute (`think > 0`)](/dgem/glossary/#fixed-depth-circuits-tc0-vs-test-time-compute)** | Scratchpad tokens generated only when a problem needs multi-step math. | Solving `2015 + 4 = 2019 > 2018` in `anli-02` (`--cascade-self-think 256`). |
+| **[Test-Time Compute (`think > 0`)](/dgem/glossary/#fixed-depth-circuits-tc0mathsftc0tc0-vs-test-time-compute)** | Scratchpad tokens generated only when a problem needs multi-step math. | Solving `2015 + 4 = 2019 > 2018` in `anli-02` (`--cascade-self-think 256`). |
 
 <details class="term-aside">
 <summary>💡 <strong>Concept Aside: Late Interaction (`GTR` Pooling Bottleneck) vs. Early All-to-All Cross-Attention (`dgem`)</strong> <em>(click to expand)</em></summary>
