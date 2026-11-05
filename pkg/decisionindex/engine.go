@@ -60,6 +60,8 @@ type SystemOneQuestion struct {
 	EvidencePrompt string `json:"evidence_prompt,omitempty"`
 	// EvidenceCriteria are the caller-supplied options for <q>_evidence (required when EvidencePrompt is set; at least 2 options).
 	EvidenceCriteria map[string]string `json:"evidence_criteria,omitempty"`
+	// Taxonomy configures opt-in 2-level hierarchical taxonomy readout (mtp_trie, beam_2pass, hesitation_hybrid) on wide choice questions.
+	Taxonomy *TaxonomySpec `json:"taxonomy,omitempty"`
 	// EvidenceOrder is the EvidenceCriteria keys in the order the request listed them (set by UnmarshalJSON).
 	EvidenceOrder []string `json:"-"`
 	// Levels are a score question's levels, lowest first (criteria given as an array; set by UnmarshalJSON).
@@ -82,12 +84,13 @@ func (q *SystemOneQuestion) UnmarshalJSON(b []byte) error {
 		PriorLogits      map[string]float64 `json:"prior_logits"`
 		EvidencePrompt   string             `json:"evidence_prompt"`
 		EvidenceCriteria json.RawMessage    `json:"evidence_criteria"`
+		Taxonomy         *TaxonomySpec      `json:"taxonomy"`
 	}
 	if err := json.Unmarshal(b, &raw); err != nil {
 		return err
 	}
 	q.Type, q.Instructions = raw.Type, raw.Instructions
-	q.PriorLogits, q.EvidencePrompt = raw.PriorLogits, raw.EvidencePrompt
+	q.PriorLogits, q.EvidencePrompt, q.Taxonomy = raw.PriorLogits, raw.EvidencePrompt, raw.Taxonomy
 	q.Criteria, q.Levels, q.Order = nil, nil, nil
 	q.EvidenceCriteria, q.EvidenceOrder = nil, nil
 	if ec := bytes.TrimSpace(raw.EvidenceCriteria); len(ec) > 0 && !bytes.Equal(ec, []byte("null")) {
@@ -468,6 +471,9 @@ type SystemOneAnswer struct {
 	PriorFused     bool    `json:"prior_fused,omitempty"`
 	// Evidence records the co-denoised evidence slot choice when EvidencePrompt is set on the question.
 	Evidence string `json:"evidence,omitempty"`
+	// TaxonomyModeExecuted records the taxonomy routing mode used (or "tournament_fallback" when server-wide taxonomy routing exceeds 2-level capacity).
+	TaxonomyModeExecuted   string `json:"taxonomy_mode_executed,omitempty"`
+	TaxonomyFallbackReason string `json:"taxonomy_fallback_reason,omitempty"`
 }
 
 // SystemOneResponse matches the response envelope validated by decision_index.
@@ -528,6 +534,8 @@ type EngineOptions struct {
 	ShortlistTopK        int     // Candidate count M <= MaxOptionsPerSlot retained by ShortlistFunc for wide choices (default 0 = off)
 	ShortlistContrastive bool    // Append [distinguishing: ...] sibling token tags on shortlisted wide choices (default false; schema-dependent)
 	ShortlistFunc        ShortlistFunc
+	TaxonomyMode         string // Experimental opt-in hierarchical taxonomy routing for wide choices: "" (default off), "mtp_naive", "mtp_trie", "beam_2pass", or "hesitation_hybrid"
+	TaxonomyDelimiter    string // Prefix delimiter used when building a default 2-level taxonomy trie (default "_")
 }
 
 // DefaultEngineOptions returns production settings with Wide-Option Tournament + Multi-Slot Batching enabled (T*=1.0).
@@ -623,6 +631,9 @@ func ExecuteSystemOne(ctx context.Context, cli *client.Client, req SystemOneRequ
 	default:
 		return nil, fmt.Errorf("%w: unsupported prior_gate_mode %q (expected confident, hesitant, proportional, or always)", ErrInvalidRequest, opts.PriorGateMode)
 	}
+	if !validTaxonomyMode(opts.TaxonomyMode) {
+		return nil, fmt.Errorf("%w: unsupported taxonomy_mode %q (expected mtp_naive, mtp_trie, beam_2pass, or hesitation_hybrid)", ErrInvalidRequest, opts.TaxonomyMode)
+	}
 
 	if err := req.MergeMedia(); err != nil {
 		return nil, err
@@ -648,6 +659,11 @@ func ExecuteSystemOne(ctx context.Context, cli *client.Client, req SystemOneRequ
 			if len(q.Criteria) > opts.MaxOptionsPerSlot {
 				return nil, fmt.Errorf("%w: question %q: evidence_prompt is not supported on wide questions (%d options > %d)", ErrInvalidRequest, k, len(q.Criteria), opts.MaxOptionsPerSlot)
 			}
+		}
+		// A caller's taxonomy block is configuration for operator-enabled taxonomy routing; with routing off it is
+		// ignored, so it is only validated when the operator has enabled it.
+		if strings.TrimSpace(opts.TaxonomyMode) != "" && q.Taxonomy != nil && !validTaxonomyMode(q.Taxonomy.Mode) {
+			return nil, fmt.Errorf("%w: question %q: unsupported taxonomy mode %q (expected mtp_naive, mtp_trie, beam_2pass, or hesitation_hybrid)", ErrInvalidRequest, k, q.Taxonomy.Mode)
 		}
 		kinds[k] = kind
 		qKeys = append(qKeys, k)
@@ -736,9 +752,12 @@ func ExecuteSystemOne(ctx context.Context, cli *client.Client, req SystemOneRequ
 			passes int
 			err    error
 		)
-		if opts.ShortlistFunc != nil {
+		switch {
+		case strings.TrimSpace(opts.TaxonomyMode) != "":
+			ans, passes, err = evaluateHierarchicalQuestion(ctx, cli, stateText, req.Images, k, q, opts)
+		case opts.ShortlistFunc != nil:
 			ans, passes, err = evaluateWideQuestionShortlist(ctx, cli, stateText, req.Images, k, q, opts)
-		} else {
+		default:
 			ans, passes, err = evaluateWideQuestionTournament(ctx, cli, stateText, req.Images, k, q, opts)
 		}
 		if err != nil {
@@ -1737,7 +1756,7 @@ func FitsServingImage(req SystemOneRequest) bool {
 		// The serving image's Jev parser takes "type" literally (noul, choice, score): an empty type or a synonym
 		// (bool, boolean) is resolved only here. Questions using EvidencePrompt or PriorLogits
 		// also require adapter execution.
-		if q.Type != kind || strings.TrimSpace(q.EvidencePrompt) != "" || len(q.PriorLogits) > 0 {
+		if q.Type != kind || strings.TrimSpace(q.EvidencePrompt) != "" || len(q.PriorLogits) > 0 || q.Taxonomy != nil {
 			return false
 		}
 	}
