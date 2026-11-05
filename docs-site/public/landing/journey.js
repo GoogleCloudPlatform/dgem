@@ -415,7 +415,7 @@
     "instructions": "Triage the incoming customer support ticket.",
     "questions": [
       {
-        "name": "department",
+        "id": "department",
         "type": "choice",
         "options": [
           {"name": "billing", "description": "Invoices, double charges, refunds"},
@@ -424,7 +424,7 @@
         ]
       },
       {
-        "name": "sentiment",
+        "id": "sentiment",
         "type": "score",
         "levels": ["calm", "frustrated", "furious"]
       }
@@ -482,7 +482,7 @@ curl -s http://localhost:8090/api/decide/support_triage \\
     "instructions": "Verify whether the proposed agent step aligns with the user task.",
     "questions": [
       {
-        "name": "alignment",
+        "id": "alignment",
         "type": "choice",
         "options": [
           {"name": "aligned", "description": "Directly advances user request safely"},
@@ -491,7 +491,7 @@ curl -s http://localhost:8090/api/decide/support_triage \\
         ]
       },
       {
-        "name": "injection_detected",
+        "id": "injection_detected",
         "type": "boolean"
       }
     ],
@@ -546,10 +546,10 @@ curl -s http://localhost:8090/api/decide/support_triage \\
   "schema": {
     "instructions": "Score each retrieved passage for relevance to the query.",
     "questions": [
-      {"name": "chunk_01", "type": "score", "levels": ["irrelevant", "related", "partial", "exact"]},
-      {"name": "chunk_02", "type": "score", "levels": ["irrelevant", "related", "partial", "exact"]},
-      {"name": "chunk_03", "type": "score", "levels": ["irrelevant", "related", "partial", "exact"]},
-      {"name": "answerable", "type": "boolean"}
+      {"id": "chunk_01", "type": "score", "levels": ["irrelevant", "related", "partial", "exact"]},
+      {"id": "chunk_02", "type": "score", "levels": ["irrelevant", "related", "partial", "exact"]},
+      {"id": "chunk_03", "type": "score", "levels": ["irrelevant", "related", "partial", "exact"]},
+      {"id": "answerable", "type": "boolean"}
     ],
     "samples": 1
   },
@@ -560,7 +560,7 @@ curl -s http://localhost:8090/api/decide/support_triage \\
 }`,
       invoke: `./bin/dgem decide \\
   -t templates/rerank/listwise_decision_rerank.json.tmpl \\
-  -f query_and_chunks.json \\
+  -d query_and_chunks.json \\
   --stats`,
       receipt: `{
   "ranking": [
@@ -591,7 +591,7 @@ curl -s http://localhost:8090/api/decide/support_triage \\
     "instructions": "Route the customer request into the canonical banking intent.",
     "questions": [
       {
-        "name": "intent",
+        "id": "intent",
         "type": "choice",
         "options": [
           {"name": "card_arrival", "description": "Track delivery of new physical card"},
@@ -604,10 +604,10 @@ curl -s http://localhost:8090/api/decide/support_triage \\
   "state": { "utterance": {{ .utterance | toJson }} }
 }`,
       invoke: `# Option A: Native 52-option single pass
-./bin/dgem systemone-serve --labels az_aa
+./bin/dgem systemone serve --labels az_aa
 
 # Option B: Two-stage bracket tournament + hesitant prior fusion
-./bin/dgem systemone-serve \\
+./bin/dgem systemone serve \\
   --bracket-size 20 \\
   --catch-all final \\
   --shortlist-topk 16 \\
@@ -644,7 +644,7 @@ curl -s http://localhost:8090/api/decide/support_triage \\
     "instructions": "Classify the SIEM alert and select immediate containment action.",
     "questions": [
       {
-        "name": "alert_verdict",
+        "id": "alert_verdict",
         "type": "choice",
         "options": [
           {"name": "benign_automation", "description": "Expected CI/CD or scanner traffic"},
@@ -653,7 +653,7 @@ curl -s http://localhost:8090/api/decide/support_triage \\
         ]
       },
       {
-        "name": "containment",
+        "id": "containment",
         "type": "choice",
         "options": [
           {"name": "log_only", "description": "Record receipt and close"},
@@ -667,8 +667,8 @@ curl -s http://localhost:8090/api/decide/support_triage \\
 }`,
       invoke: `./bin/dgem decide \\
   -t templates/secops_conditional_dag.json.tmpl \\
-  --prior-weight 0.5 \\
-  --prior-gate-mode hesitant \\
+  --dual-mirror \\
+  --null-prior-debias \\
   --stats`,
       receipt: `{
   "answers": {
@@ -680,54 +680,61 @@ curl -s http://localhost:8090/api/decide/support_triage \\
     },
     locate: {
       title: '6. Guided Object Localization (dgem locate) & Co-Denoised Evidence',
-      summary: 'Uses Stage 1 dgem for fast categorical target presence + 3×3 coarse grid screening (--skip-h 0.16) and co-denoised evidence slots (contact_sheet_verify.json.tmpl), delegating continuous boxes to Stage 2 Gemini only when present.',
+      summary: 'Uses Stage 1 dgem for fast categorical target presence + 3×3 coarse grid screening (--skip-h 0.16) and co-denoised evidence slots (templates/multimodal/contact_sheet_verify.json.tmpl), delegating continuous boxes to Stage 2 Gemini only when present.',
       metrics: [
         ['Stage 1 Gate', 'Presence + 3×3 Grid Readout'],
         ['--skip-h 0.16', 'Fast-Exit When Absent'],
-        ['evidence_prompt', 'Co-Denoised Visual Cue'],
+        ['evidence_feature', 'Co-Denoised Visual Cue'],
         ['Stage 2 / 3', 'Gemini Box + Optional SAM']
       ],
       steps: [
         ['1. Screen Image', 'dgem locate / vision_aspects', 'Evaluates target presence and 3×3 coarse spatial cell in 1 pass'],
         ['2. Skip Absent', 'path: skipped_absent', 'Exits immediately when dgem is confident target is absent (H_raw < 0.16)'],
         ['3. Stage 2 Box', 'gemini-3.8-flash', 'Predicts continuous bounding-box coordinates on present/uncertain frames'],
-        ['4. Evidence Audit', 'contact_sheet_verify.json.tmpl', 'Co-denoises <q>_evidence before <q> for verifiable visual inspection']
+        ['4. Evidence Audit', 'contact_sheet_verify.json.tmpl', 'Co-denoises evidence_feature before visual_match_choice for verifiable inspection']
       ],
       tmpl: `{
   "schema": {
-    "instructions": "Inspect the contact sheet and verify package seal integrity.",
+    "instructions": "Inspect the 3x2 contact sheet image. Identify the decisive visual evidence first, then select the matching candidate.",
     "questions": [
       {
-        "name": "seal_status",
+        "id": "evidence_feature",
         "type": "choice",
-        "evidence_prompt": "Which contact-sheet tile shows the decisive seal condition?",
-        "evidence_criteria": {
-          "tile_1": "Top-left cap macro",
-          "tile_2": "Neck tamper ring",
-          "tile_3": "Barcode label"
-        },
+        "instructions": "Which visual cue is most decisive when comparing Panel 0 against Panels A-E?",
         "options": [
-          {"name": "intact", "description": "Factory tamper ring unbroken"},
-          {"name": "tampered", "description": "Broken ring or lifted seal"}
+          {"name": "exact_typography_and_badge", "description": "Variant name and pack-size badge match"},
+          {"name": "pack_size_or_variant_mismatch", "description": "Brand matches, net weight or count differs"},
+          {"name": "occluded_or_illegible_label", "description": "Glare or occlusion hides variant label"}
+        ]
+      },
+      {
+        "id": "visual_match_choice",
+        "type": "choice",
+        "instructions": "Which reference panel (A-E) matches Panel 0?",
+        "options": [
+          {"name": "panel_a", "description": "Candidate A (top-middle panel)"},
+          {"name": "panel_b", "description": "Candidate B (top-right panel)"},
+          {"name": "none_of_the_above", "description": "No exact variant and pack-size match"}
         ]
       }
-    ]
+    ],
+    "samples": {{ default 1 .samples | toJson }}
   }
 }`,
       invoke: `# Stage 1 presence + 3x3 grid gate -> Stage 2 Gemini box
 ./bin/dgem locate \\
   -u "https://<ENDPOINT>/v1" --gcp-auth \\
   -I inspection_frame.jpg \\
-  --find "damaged connector" \\
+  --target "damaged connector" \\
   --skip-h 0.16 \\
-  --cascade-model gemini-3.8-flash`,
+  --gemini-model gemini-3.8-flash`,
       receipt: `{
   "present": true,
   "grid_cell": "middle_right",
   "raw_normalized_entropy": 0.088,
   "path": "stage2_located",
   "box_pct": [38.2, 66.5, 64.0, 91.4],
-  "evidence": "tile_2"
+  "evidence": "exact_typography_and_badge"
 }`
     }
   };

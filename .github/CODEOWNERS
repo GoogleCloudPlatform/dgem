@@ -1,0 +1,7 @@
+# Default owner for everything in the repository
+* @ghchinoy
+
+# Wide-option shortlist routing & interactive docs-site landing page
+/pkg/decisionindex/shortlist.go @ghchinoy @jigyasujuneja
+/docs-site/src/pages/index.astro @ghchinoy @jigyasujuneja
+/docs-site/public/landing/ @ghchinoy @jigyasujuneja
