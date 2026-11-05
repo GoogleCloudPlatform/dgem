@@ -1,0 +1,672 @@
+---
+// Copyright 2026 Google LLC
+// Licensed under the Apache License, Version 2.0
+---
+<!DOCTYPE html>
+<html lang="en" data-theme="light">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>dgem — Zero-Shot Decision Model on DiffusionGemma</title>
+  <meta name="description" content="Declarative Policy-as-Template engine, Lit WebComponents Decision Studio, Model Context Protocol (MCP) Server, HTTP Gateway API, and single-pass discrete diffusion slot readouts across Vertex AI, Cloud Run GPU, and Apple Silicon Metal.">
+  <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%231a73e8'/%3E%3Ccircle cx='10' cy='10' r='2.6' fill='%23fff'/%3E%3Ccircle cx='16' cy='16' r='2.6' fill='%23fbbc04'/%3E%3Ccircle cx='22' cy='22' r='2.6' fill='%2334a853'/%3E%3C/svg%3E">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Google+Sans+Flex:opsz,wght@8..144,400..700&family=Google+Sans+Code:wght@400;500;600&display=swap">
+  <script is:inline>
+    (() => {
+      try {
+        const saved = localStorage.getItem('starlight-theme') || localStorage.getItem('theme');
+        document.documentElement.dataset.theme = (saved === 'dark' || saved === 'light') ? saved : 'light';
+      } catch {
+        document.documentElement.dataset.theme = 'light';
+      }
+    })();
+  </script>
+  <link rel="stylesheet" href="/dgem/landing/base.css">
+  <link rel="stylesheet" href="/dgem/landing/index.css">
+</head>
+<body>
+  <div class="g-brand-bar" aria-hidden="true"></div>
+  <header class="top">
+    <div class="top-inner">
+      <a href="/dgem/" class="brand" id="nav-brand">
+        <svg class="brand-mark" width="22" height="22" viewBox="0 0 24 24" aria-hidden="true">
+          <circle cx="5" cy="5" r="2.3" fill="#4285f4"></circle>
+          <circle cx="12" cy="5" r="2.1" fill="currentColor" opacity=".25"></circle>
+          <circle cx="19" cy="5" r="2.1" fill="currentColor" opacity=".25"></circle>
+          <circle cx="5" cy="12" r="2.1" fill="currentColor" opacity=".25"></circle>
+          <circle cx="12" cy="12" r="2.3" fill="#34a853"></circle>
+          <circle cx="19" cy="12" r="2.1" fill="currentColor" opacity=".25"></circle>
+          <circle cx="5" cy="19" r="2.1" fill="currentColor" opacity=".25"></circle>
+          <circle cx="12" cy="19" r="2.1" fill="currentColor" opacity=".25"></circle>
+          <circle cx="19" cy="19" r="2.3" fill="#fbbc04"></circle>
+        </svg>
+        <span>dgem</span>
+        <span class="brand-sub">Decision Model on DiffusionGemma</span>
+      </a>
+      <nav class="nav" aria-label="Primary">
+        <a href="/dgem/decision-models-primer/">Primer</a>
+        <a href="/dgem/deploy/">Deploy</a>
+        <a href="/dgem/confidence/">Confidence</a>
+        <a href="/dgem/policies/first-policy/">Policies</a>
+        <a href="/dgem/practitioners-guide/">Practitioner Guide</a>
+        <a href="/dgem/visualizer.html">Visualizer</a>
+        <a href="/dgem/reference/cli/">Reference</a>
+        <a href="https://github.com/GoogleCloudPlatform/dgem" class="ext" rel="noopener">GitHub ↗</a>
+        <button type="button" class="theme-toggle" id="theme-toggle" aria-label="Toggle light and dark theme" title="Switch light / dark mode">
+          <svg class="icon-sun" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="4"></circle><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41"></path></svg>
+          <svg class="icon-moon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"></path></svg>
+        </button>
+      </nav>
+    </div>
+  </header>
+
+  <main class="home">
+    <!-- HERO WITH LIVE 1-PASS SLOT UNMASKING SANDBOX -->
+    <section class="hero" id="top">
+      <div class="hero-left">
+        <div class="overline-meta">
+          <span class="meta-tag">v0.4 · Apache 2.0</span>
+          <span class="meta-sep">·</span>
+          <span>GoogleCloudPlatform / dgem</span>
+          <span class="meta-sep">·</span>
+          <span>DiffusionGemma</span>
+        </div>
+        <h1>
+          One forward pass.<br>
+          <span class="sub-tone">Calibrated decisions across every slot.</span>
+        </h1>
+        <p class="lead">
+          Turn declarative <code>.json.tmpl</code> schemas into zero-shot Decision Policies that unmask up to 8 choice, boolean, or ordinal score slots simultaneously in <code>~135–265 ms</code> on a warm GPU—returning exact per-option probabilities and pre-fusion normalized hesitation (<code>raw_normalized_entropy</code>) across Decision Studio, MCP, REST, and Go.
+        </p>
+
+        <div class="install-box">
+          <button class="install" id="hero-copy-cmd" type="button" data-copy="./bin/dgem decide -t templates/support_triage.json.tmpl --stats" aria-label="Copy dgem decide command">
+            <span class="install-cmd">
+              <span class="prompt">$</span>
+              <code>./bin/dgem decide -t templates/support_triage.json.tmpl --stats</code>
+            </span>
+            <span class="copy-ic" aria-hidden="true">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
+              <span>Copy</span>
+            </span>
+            <span class="ic-ok" aria-hidden="true">✓ Copied</span>
+          </button>
+        </div>
+
+        <div class="cta-row">
+          <a class="btn-primary" id="cta-deploy" href="/dgem/deploy/">Build &amp; deploy →</a>
+          <a class="btn-ghost" id="cta-first-policy" href="/dgem/policies/first-policy/">Write your first policy</a>
+          <a class="btn-ghost" id="cta-visualizer" href="/dgem/visualizer.html">Concept Visualizer</a>
+          <a class="btn-ghost" id="cta-explainer" href="/dgem/dgem-explainer.html">Technical Explainer</a>
+        </div>
+
+        <div class="hero-kpis" aria-label="Core dgem operating characteristics">
+          <div class="hkpi">
+            <strong>~135–265 ms</strong>
+            <span>Single-pass warm GPU readout</span>
+          </div>
+          <div class="hkpi">
+            <strong>Up to 8 Slots</strong>
+            <span>Simultaneous discrete unmasking</span>
+          </div>
+          <div class="hkpi">
+            <strong>H_raw = H / ln K</strong>
+            <span>Pre-fusion [0, 1] hesitation gate</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- INTERACTIVE LIVE 1-PASS DENOISE SANDBOX -->
+      <div class="sbx" data-sandbox aria-label="Interactive single-pass diffusion slot unmasking demo">
+        <div class="sbx-top">
+          <div class="sbx-title">
+            <span class="sbx-dot" aria-hidden="true"></span>
+            <span>Live 1-Pass Slot Readout Simulator (Illustrative)</span>
+          </div>
+          <button type="button" class="sbx-run-btn" id="sbx-run-btn" data-sbx-run>↻ Denoise 1 Pass</button>
+        </div>
+
+        <div class="sbx-presets" role="tablist" aria-label="Sample policy inputs">
+          <button type="button" class="sbx-preset is-active" data-sbx-preset="0">1. Clear Billing Ticket</button>
+          <button type="button" class="sbx-preset" data-sbx-preset="1">2. Ambiguous Outage (Escalate)</button>
+          <button type="button" class="sbx-preset" data-sbx-preset="2">3. Hijacked Tool Guardrail</button>
+        </div>
+
+        <div class="sbx-input-card">
+          <div class="sbx-input-lbl">
+            <span>INPUT STATE</span>
+            <code data-sbx-tmpl>templates/support_triage.json.tmpl</code>
+          </div>
+          <div class="sbx-input-txt" data-sbx-input></div>
+        </div>
+
+        <div class="sbx-slots" data-sbx-slots></div>
+        <div class="sbx-gate-bar" data-sbx-gate></div>
+      </div>
+    </section>
+
+    <!-- 4-PILLAR JUMP STRIP -->
+    <nav class="pillar-strip" aria-label="Jump to core sections">
+      <a href="#paradigm" class="pcard">
+        <div class="pcard-top"><span class="pcard-num">01</span><span class="pcard-tag">Why Diffusion</span></div>
+        <strong>O(1) Parallel Slot Unmasking</strong>
+        <span>Unmask up to 8 choice &amp; score slots in 1 step instead of token-by-token JSON loops.</span>
+      </a>
+      <a href="#confidence" class="pcard">
+        <div class="pcard-top"><span class="pcard-num">02</span><span class="pcard-tag">Calibrate</span></div>
+        <strong>Confidence Beyond Shannon</strong>
+        <span>Test pre-fusion H_raw = H / ln K across K=2..52 and hesitation-gated prior fusion.</span>
+      </a>
+      <a href="#explorer" class="pcard">
+        <div class="pcard-top"><span class="pcard-num">03</span><span class="pcard-tag">Policies</span></div>
+        <strong>6-Pattern Policy Workbench</strong>
+        <span>Inspect real .json.tmpl schemas, CLI/REST invocations, and audited JSON receipts.</span>
+      </a>
+      <a href="#targets" class="pcard">
+        <div class="pcard-top"><span class="pcard-num">04</span><span class="pcard-tag">Serve</span></div>
+        <strong>Studio, MCP, REST &amp; GPUs</strong>
+        <span>Switch interactively across Vertex AI Dedicated, Cloud Run GPU failover, and Metal.</span>
+      </a>
+    </nav>
+
+    <!-- PARADIGM SHIFT: AUTOREGRESSIVE LOOP VS DGEM 1-PASS DIFFUSION -->
+    <section class="sec" id="paradigm" data-race>
+      <div class="sec-head-row">
+        <div class="sec-head">
+          <span class="sec-eyebrow">Why Discrete Diffusion for Decisions</span>
+          <h2>Stop decoding JSON punctuation one token at a time.</h2>
+          <p>Autoregressive models spend sequential forward passes emitting braces, quotes, and field names with uncalibrated verbalized confidence. <strong>dgem</strong> places masked decision slots directly in the prompt and unmasks all of them in a single forward pass.</p>
+        </div>
+        <button type="button" class="btn-ghost" id="race-replay-btn" data-race-replay>↻ Replay Comparison</button>
+      </div>
+
+      <div class="race-grid">
+        <div class="race-card">
+          <div class="race-hdr">
+            <h3>Autoregressive JSON Decoding</h3>
+            <span class="race-chip">O(T) Sequential Steps</span>
+          </div>
+          <div class="race-stream">
+            <div class="ar-tokens"><span data-ar-stream></span><span class="ar-cursor" aria-hidden="true"></span></div>
+          </div>
+          <div class="race-foot">
+            <span>Token-by-token latency scales with output length</span>
+            <span>Verbalized confidence is poorly calibrated</span>
+          </div>
+        </div>
+
+        <div class="race-card race-card--dgem">
+          <div class="race-hdr">
+            <h3>dgem Single-Pass Slot Denoise</h3>
+            <span class="race-chip race-chip--fast">O(1) Step · ~135–265 ms Warm GPU</span>
+          </div>
+          <div class="race-stream">
+            <div class="dgem-parallel-pills">
+              <span class="dp-pill is-unmasked" data-dp-pill data-mask="department: [MASK]" data-final="department = billing (0.94)">department = billing (0.94)</span>
+              <span class="dp-pill is-unmasked" data-dp-pill data-mask="priority: [MASK]" data-final="priority = p1 (0.92)">priority = p1 (0.92)</span>
+              <span class="dp-pill is-unmasked" data-dp-pill data-mask="sentiment: [MASK]" data-final="sentiment = 2.34 / 3">sentiment = 2.34 / 3</span>
+              <span class="dp-pill is-unmasked" data-dp-pill data-mask="escalate: [MASK]" data-final="escalate = true (0.90)">escalate = true (0.90)</span>
+            </div>
+          </div>
+          <div class="race-foot">
+            <span>Up to 8 slots unmasked simultaneously</span>
+            <span>Exact softmax probabilities + H_raw ∈ [0, 1]</span>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- SECTION 1: INTERACTIVE 4-STEP LIFECYCLE -->
+    <section class="sec" id="lifecycle" data-ss>
+      <div class="sec-head-row">
+        <div class="sec-head">
+          <span class="sec-eyebrow">End-to-End Workflow</span>
+          <h2>Four primitives, one calibrated decision loop.</h2>
+          <p>Author a declarative <code>.json.tmpl</code> policy, unmask up to 8 slots in one diffusion pass, gate Stage 2 cascades on pre-fusion hesitation, and serve over Studio, MCP, HTTP, or CLI.</p>
+        </div>
+        <button type="button" class="btn-ghost" id="ss-toggle-btn" data-ss-toggle>❚❚ Pause</button>
+      </div>
+
+      <div class="ss">
+        <div class="ss-tabs" role="tablist" aria-label="dgem lifecycle">
+          <button type="button" class="ss-tab is-active" role="tab" aria-selected="true" data-step="0">
+            <span class="ss-num">01</span>
+            <span class="ss-t">Author</span>
+            <span class="ss-d">Declarative .json.tmpl policies</span>
+            <span class="ss-bar"><i></i></span>
+          </button>
+          <button type="button" class="ss-tab" role="tab" aria-selected="false" data-step="1">
+            <span class="ss-num">02</span>
+            <span class="ss-t">Decide</span>
+            <span class="ss-d">1-pass slot denoise &amp; reranking</span>
+            <span class="ss-bar"><i></i></span>
+          </button>
+          <button type="button" class="ss-tab" role="tab" aria-selected="false" data-step="2">
+            <span class="ss-num">03</span>
+            <span class="ss-t">Cascade</span>
+            <span class="ss-d">Pre-fusion H_raw gate &amp; priors</span>
+            <span class="ss-bar"><i></i></span>
+          </button>
+          <button type="button" class="ss-tab" role="tab" aria-selected="false" data-step="3">
+            <span class="ss-num">04</span>
+            <span class="ss-t">Serve</span>
+            <span class="ss-d">Decision Studio, MCP &amp; Gateway</span>
+            <span class="ss-bar"><i></i></span>
+          </button>
+        </div>
+
+        <div class="ss-stage">
+          <!-- PANE 0: AUTHOR -->
+          <div class="ss-pane is-active" data-pane="0">
+            <div class="win">
+              <div class="win-bar"><span class="win-dots"></span><span class="win-title">templates/support_triage.json.tmpl</span><span class="win-pill">Policy-as-Template</span></div>
+              <pre class="code"><code><span class="hl-line">&#123;</span>
+<span class="hl-line">  <span class="k">"schema"</span>: &#123;</span>
+<span class="hl-line">    <span class="k">"instructions"</span>: <span class="s">"Triage the customer support ticket."</span>,</span>
+<span class="hl-line is-lit">    <span class="k">"questions"</span>: [</span>
+<span class="hl-line is-lit">      &#123; <span class="k">"name"</span>: <span class="s">"department"</span>, <span class="k">"type"</span>: <span class="s">"choice"</span>,</span>
+<span class="hl-line is-lit">        <span class="k">"options"</span>: [&#123;<span class="k">"name"</span>: <span class="s">"billing"</span>&#125;, &#123;<span class="k">"name"</span>: <span class="s">"technical"</span>&#125;, &#123;<span class="k">"name"</span>: <span class="s">"account"</span>&#125;] &#125;,</span>
+<span class="hl-line">      &#123; <span class="k">"name"</span>: <span class="s">"sentiment"</span>, <span class="k">"type"</span>: <span class="s">"score"</span>, <span class="k">"levels"</span>: [<span class="s">"calm"</span>, <span class="s">"frustrated"</span>, <span class="s">"furious"</span>] &#125;</span>
+<span class="hl-line">    ],</span>
+<span class="hl-line">    <span class="k">"samples"</span>: &#123;&#123; default <span class="n">1</span> .samples | toJson &#125;&#125;</span>
+<span class="hl-line">  &#125;,</span>
+<span class="hl-line">  <span class="k">"state"</span>: &#123; <span class="k">"ticket"</span>: &#123;&#123; default <span class="s">"No ticket text"</span> .ticket | toJson &#125;&#125; &#125;</span>
+<span class="hl-line">&#125;</span></code></pre>
+            </div>
+            <div class="win">
+              <div class="win-bar"><span class="win-dots"></span><span class="win-title">terminal — dgem decide</span></div>
+              <div class="term-body">
+                <div class="tl"><span class="tp">$</span> <span class="ty" data-text="./bin/dgem decide -t templates/support_triage.json.tmpl -v 'ticket=Charged twice on invoice #9481!' --stats"></span></div>
+                <div class="tl tl--out" data-t="450"><span class="ok">✓</span> Unmasked <b>4 decision slots</b> in 1 forward pass (~155 ms warm GPU)</div>
+                <div class="tl tl--out" data-t="750"><span class="ok">✓</span> department = <b>billing</b> (p=0.942, raw_normalized_entropy=0.062 · <span class="ok">CLEAR &lt;16%</span>)</div>
+                <div class="tl tl--out" data-t="1050"><span class="ok">✓</span> sentiment  = <b>frustrated</b> (expected_score=2.34 / 3.00)</div>
+                <div class="tl tl--out" data-t="1300">  stage2_escalated: <b>false</b> · backend: <code>vertex</code></div>
+              </div>
+            </div>
+          </div>
+
+          <!-- PANE 1: DECIDE -->
+          <div class="ss-pane" data-pane="1">
+            <div class="win">
+              <div class="win-bar"><span class="win-dots"></span><span class="win-title">terminal — listwise decision reranking</span></div>
+              <div class="term-body">
+                <div class="tl"><span class="tp">$</span> <span class="ty" data-text="./bin/dgem decide -t templates/rerank/listwise_decision_rerank.json.tmpl -f query_and_chunks.json --stats"></span></div>
+                <div class="tl tl--out" data-t="450">  Scoring candidate passages + grounding gates in 1 diffusion pass (MaxSlotsPerPass = 8)...</div>
+                <div class="tl tl--out" data-t="800">  Softmax expectation E[r_i] = sum(g * p_i,g) computed across ordinal levels</div>
+                <div class="tl tl--out" data-t="1150"><span class="ok">✓</span> Top passage: <b>chunk_03 (E=3.84/4)</b> · raw_normalized_entropy: <b>0.08 (CLEAR)</b></div>
+              </div>
+            </div>
+            <div class="win">
+              <div class="win-bar"><span class="win-dots"></span><span class="win-title">Single-Pass Slot Readout (MaxSlotsPerPass = 8)</span><span class="win-pill win-pill--live">● O(1) Step</span></div>
+              <div class="rec-scene">
+                <div class="rec-card">
+                  <div class="rec-h">Query: "How do I enable Cloud Run GPU failover in dgem?"</div>
+                  <div class="rec-row"><span>chunk_03 (gateway.md)</span><code>E[r] = 3.84 · p(exact)=0.86</code></div>
+                  <div class="rec-row"><span>chunk_01 (cloud-run.md)</span><code>E[r] = 3.41 · p(exact)=0.58</code></div>
+                  <div class="rec-row"><span>answerability_gate</span><span class="rec-badge">ANSWERABLE · p = 0.964 · H_raw = 0.05</span></div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- PANE 2: CASCADE -->
+          <div class="ss-pane" data-pane="2">
+            <div class="win">
+              <div class="win-bar"><span class="win-dots"></span><span class="win-title">terminal — dgem bench-calibration</span></div>
+              <div class="term-body">
+                <div class="tl"><span class="tp">$</span> <span class="ty" data-text="./bin/dgem bench-calibration --cascade-from my_calibration.json --normalize-entropy --cascade-threshold 0.16 --vertex-model gemini-3.8-flash"></span></div>
+                <div class="tl tl--out" data-t="450">  Gating on pre-fusion raw_normalized_entropy = H / ln(K) (&lt; 0.16 Clear)</div>
+                <div class="tl tl--out" data-t="800">  Fusing priors via FusePriorWithGateMode (--prior-gate-mode hesitant)</div>
+                <div class="tl tl--out" data-t="1150"><span class="ok">✓</span> High-hesitation tail escalated to <b>gemini-3.8-flash</b></div>
+              </div>
+            </div>
+            <div class="win">
+              <div class="win-bar"><span class="win-dots"></span><span class="win-title">Selective Cascade Lift Across Policy Suites (Illustrative)</span><span class="win-pill">H_raw = 0.16 Gate</span></div>
+              <div class="chart">
+                <div class="chart-col">
+                  <div class="chart-bars">
+                    <div class="cbar cbar--a" style="--h:82%"><span>82%</span></div>
+                    <div class="cbar cbar--b" style="--h:95%"><span>95%</span></div>
+                  </div>
+                  <div class="chart-lbl">AgentDrift</div>
+                </div>
+                <div class="chart-col">
+                  <div class="chart-bars">
+                    <div class="cbar cbar--a" style="--h:88%"><span>88%</span></div>
+                    <div class="cbar cbar--b" style="--h:97%"><span>97%</span></div>
+                  </div>
+                  <div class="chart-lbl">PromptInj</div>
+                </div>
+                <div class="chart-col">
+                  <div class="chart-bars">
+                    <div class="cbar cbar--a" style="--h:79%"><span>79%</span></div>
+                    <div class="cbar cbar--b" style="--h:93%"><span>93%</span></div>
+                  </div>
+                  <div class="chart-lbl">AggreFact</div>
+                </div>
+                <div class="chart-col">
+                  <div class="chart-bars">
+                    <div class="cbar cbar--a" style="--h:76%"><span>76%</span></div>
+                    <div class="cbar cbar--b" style="--h:92%"><span>92%</span></div>
+                  </div>
+                  <div class="chart-lbl">ChaosNLI</div>
+                </div>
+                <div class="chart-legend">
+                  <span><i class="lg-a"></i>Stage 1 Single-Pass (illustrative)</span>
+                  <span><i class="lg-b"></i>Stage 1 + Stage 2 Cascade (illustrative)</span>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- PANE 3: SERVE -->
+          <div class="ss-pane" data-pane="3">
+            <div class="win">
+              <div class="win-bar"><span class="win-dots"></span><span class="win-title">terminal — Decision Studio + MCP + HTTP Gateway</span></div>
+              <div class="term-body">
+                <div class="tl"><span class="tp">$</span> <span class="ty" data-text="./bin/dgem serve -u 'https://<ENDPOINT>/v1' --gcp-auth --port 8090"></span></div>
+                <div class="tl tl--out" data-t="450"><span class="ok">✓</span> Decision Studio Web UI listening on <b>http://localhost:8090</b></div>
+                <div class="tl tl--out" data-t="800"><span class="ok">✓</span> Streamable HTTP MCP Server ready at <b>POST /mcp</b> (6 native tools)</div>
+                <div class="tl tl--out" data-t="1150"><span class="ok">✓</span> REST Gateway active at <b>POST /api/decide/&#123;template&#125;</b> (vertex_first)</div>
+              </div>
+            </div>
+            <div class="win">
+              <div class="win-bar"><span class="win-dots"></span><span class="win-title">OpenTelemetry Request Waterfall (dgem serve)</span><span class="win-pill">vertex_first</span></div>
+              <div class="trace-tree">
+                <div class="tr-node tr-node--root"><span>● POST /api/decide/support_triage</span><code>X-DGem-Backend: vertex_first</code></div>
+                <div class="tr-node"><span>├─ RenderTemplate</span><code>support_triage.json.tmpl (0.4 ms)</code></div>
+                <div class="tr-node"><span>├─ VertexDedicatedEndpoint</span><code>/v1/systemone (~155 ms warm GPU)</code></div>
+                <div class="tr-node tr-node--new"><span>└─ HesitationGate</span><code>H_raw=0.062 &lt; 0.16 → 200 OK</code></div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- SECTION 2: INTERACTIVE CONFIDENCE BEYOND SHANNON & PRE-FUSION GATE SIMULATOR -->
+    <section class="sec sec--split" id="confidence">
+      <div class="rl-copy">
+        <span class="sec-eyebrow">Confidence Beyond Shannon</span>
+        <h2>Normalize across K. Always gate before fusing priors.</h2>
+        <p>
+          Raw Shannon entropy (<code>H = -∑ p_i ln p_i</code>) grows with option count <code>ln K</code>: a 2-option boolean gate maxes out at <code>0.693 nats</code> while a 52-option choice reaches <code>3.951 nats</code>. <strong>dgem</strong> normalizes hesitation onto <code>[0, 1]</code> via <code>raw_normalized_entropy = H / ln K</code> and separates Stage 2 cascade gating from empirical prior fusion.
+        </p>
+        <ul class="rl-points">
+          <li><strong>Scale-free hesitation bands</strong> — <code>&lt; 0.16 Clear</code> (fast-path exit), <code>0.16–0.50 Somewhat unsure</code>, and <code>&gt; 0.50 Very unsure</code> across any <code>K</code>.</li>
+          <li><strong>Pre-fusion cascade gate</strong> — try switching the simulator to <code>always</code> with low <code>p_top</code>: an un-gated strong prior artificially depresses post-fusion entropy below <code>0.16</code>! <strong>dgem</strong> gates Stage 2 strictly on pre-fusion <code>raw_normalized_entropy</code> and fuses priors with <code>--prior-gate-mode hesitant</code> (<code>decisionindex.FusePriorWithGateMode</code>).</li>
+          <li><strong>Wide-option catalogs (<code>K &gt; 26</code>)</strong> — combine <code>--labels az_aa</code> / <code>az_lower</code> (up to 52 options), <code>--bracket-size 20</code> two-stage tournaments, or <code>--shortlist-topk M</code> (<code>decisionindex.PriorLogitsShortlist</code>).</li>
+        </ul>
+        <div class="rl-cta">
+          <a class="link-arrow" href="/dgem/confidence/overview/">Confidence Beyond Shannon →</a>
+          <a class="link-arrow" href="/dgem/practitioners-guide/">Practitioner Guide →</a>
+          <a class="link-arrow" href="/dgem/visualizer.html">Full Concept Visualizer →</a>
+        </div>
+      </div>
+
+      <!-- INTERACTIVE ENTROPY & PRIOR GATE LAB -->
+      <div class="slab" data-shannon-lab aria-label="Interactive normalized entropy and prior gate simulator">
+        <div class="slab-hdr">
+          <strong>Interactive Pre-Fusion Hesitation &amp; Prior Gate Lab</strong>
+          <span class="win-pill">τ = 0.16 Threshold</span>
+        </div>
+
+        <div class="slab-controls">
+          <div class="slab-ctrl">
+            <label><span>Option Count (K)</span><span>Scales ln(K)</span></label>
+            <div class="slab-k-btns" role="group" aria-label="Select option count K">
+              <button type="button" class="slab-pill" data-k="2">K=2</button>
+              <button type="button" class="slab-pill" data-k="4">K=4</button>
+              <button type="button" class="slab-pill" data-k="10">K=10</button>
+              <button type="button" class="slab-pill is-active" data-k="26">K=26</button>
+              <button type="button" class="slab-pill" data-k="52">K=52</button>
+            </div>
+          </div>
+
+          <div class="slab-ctrl">
+            <label><span>--prior-gate-mode</span><span>FusePriorWithGateMode</span></label>
+            <div class="slab-mode-btns" role="group" aria-label="Select prior gate mode">
+              <button type="button" class="slab-pill" data-pmode="off">off</button>
+              <button type="button" class="slab-pill is-active" data-pmode="hesitant">hesitant ★</button>
+              <button type="button" class="slab-pill" data-pmode="proportional">proportional</button>
+              <button type="button" class="slab-pill" data-pmode="always">always (naive)</button>
+            </div>
+          </div>
+        </div>
+
+        <div class="slab-ctrl">
+          <label for="slab-ptop-range"><span>Stage 1 Top-Option Probability</span><span data-ptop-lbl>p_top = 0.58</span></label>
+          <input id="slab-ptop-range" class="slab-range" type="range" min="0.15" max="0.97" step="0.01" value="0.58" data-ptop>
+        </div>
+
+        <div class="slab-meters">
+          <div class="smeter">
+            <div class="smeter-lbl">Raw Shannon H</div>
+            <div class="smeter-val" data-m-shannon>1.982 nats</div>
+            <div class="smeter-track"><div class="smeter-fill" data-m-shannon-bar style="width:50%"></div></div>
+            <div class="smeter-sub" data-m-shannon-sub>Max ln(26) = 3.26 nats</div>
+          </div>
+          <div class="smeter">
+            <div class="smeter-lbl">Pre-Fusion H_raw (Gate)</div>
+            <div class="smeter-val" data-m-hraw>0.608</div>
+            <div class="smeter-track"><div class="smeter-fill" data-m-hraw-bar style="width:60%"></div></div>
+            <div class="smeter-sub" data-m-hraw-sub>Very unsure (&gt; 0.50)</div>
+          </div>
+          <div class="smeter">
+            <div class="smeter-lbl">Post-Fusion H_norm</div>
+            <div class="smeter-val" data-m-hpost>0.312</div>
+            <div class="smeter-track"><div class="smeter-fill" data-m-hpost-bar style="width:31%"></div></div>
+            <div class="smeter-sub" data-m-hpost-sub>Mode: hesitant</div>
+          </div>
+        </div>
+
+        <div class="slab-verdict is-warn" data-slab-verdict></div>
+      </div>
+    </section>
+
+    <!-- SECTION 3: 3-TAB INTERACTIVE POLICY WORKBENCH -->
+    <section class="sec" id="explorer">
+      <div class="sec-head">
+        <span class="sec-eyebrow">Interactive Policy Workbench</span>
+        <h2>Six production decision patterns, three live code views.</h2>
+        <p>Select any domain below and toggle between its declarative <code>.json.tmpl</code> schema, CLI / REST invocation, and structured JSON receipt.</p>
+      </div>
+
+      <div class="wb" data-workbench>
+        <div class="wb-cases" role="tablist" aria-label="Production policy patterns">
+          <button type="button" class="wb-case-btn is-active" data-wb-case="triage">1. Support &amp; Incident Triage</button>
+          <button type="button" class="wb-case-btn" data-wb-case="agentdrift">2. AgentDrift &amp; Injection Gate</button>
+          <button type="button" class="wb-case-btn" data-wb-case="rerank">3. Listwise RAG Reranking</button>
+          <button type="button" class="wb-case-btn" data-wb-case="tournament">4. Wide-Option Routing (K&gt;26)</button>
+          <button type="button" class="wb-case-btn" data-wb-case="secops">5. SecOps DAG &amp; Abuse Triage</button>
+          <button type="button" class="wb-case-btn" data-wb-case="locate">6. Guided Localization &amp; Evidence</button>
+        </div>
+
+        <div class="wb-body">
+          <div class="wb-info">
+            <h3 data-wb-title></h3>
+            <p data-wb-summary></p>
+            <div class="wb-metrics" data-wb-metrics></div>
+            <ol class="wb-steps" data-wb-steps></ol>
+          </div>
+
+          <div class="wb-code-pane">
+            <div class="wb-subtabs">
+              <div class="wb-subtab-grp" role="tablist" aria-label="Code view">
+                <button type="button" class="wb-subtab is-active" data-wb-tab="tmpl">Policy .json.tmpl</button>
+                <button type="button" class="wb-subtab" data-wb-tab="invoke">CLI &amp; HTTP Invoke</button>
+                <button type="button" class="wb-subtab" data-wb-tab="receipt">Audited JSON Receipt</button>
+              </div>
+              <button type="button" class="wb-copy-btn" id="wb-copy-btn" data-wb-copy data-copy="" data-label-orig="Copy snippet">Copy snippet</button>
+            </div>
+            <pre class="wb-pre"><code data-wb-pre></code></pre>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- SECTION 4: INTERACTIVE 5x3 INTERFACES & SERVING SWITCHBOARD -->
+    <section class="sec" id="targets">
+      <div class="sec-head">
+        <span class="sec-eyebrow">Five Caller Surfaces · Three Serving Backends</span>
+        <h2>Author once. Call from Studio, MCP, REST, CLI, or Go.</h2>
+        <p>Click any caller interface or GPU/Metal target below to trace its execution path and copy its launch command.</p>
+      </div>
+
+      <div class="swb" data-switchboard>
+        <div class="fw-row fw-row--in" aria-label="Caller interfaces">
+          <button type="button" class="fw-node-btn is-active" data-swb-node="in-studio">
+            <strong>Decision Studio (:8090)</strong>
+            <span>Lit WebComponents UI &amp; live bars</span>
+          </button>
+          <button type="button" class="fw-node-btn" data-swb-node="in-mcp">
+            <strong>MCP Server (/mcp &amp; stdio)</strong>
+            <span>6 native tools for AI coding agents</span>
+          </button>
+          <button type="button" class="fw-node-btn" data-swb-node="in-rest">
+            <strong>HTTP Gateway (/api/decide)</strong>
+            <span>Stateless REST + OTel + failover</span>
+          </button>
+          <button type="button" class="fw-node-btn" data-swb-node="in-cli">
+            <strong>dgem CLI</strong>
+            <span>decide · locate · calibrate · bench</span>
+          </button>
+          <button type="button" class="fw-node-btn" data-swb-node="in-sdk">
+            <strong>Go SDK &amp; Genkit Go</strong>
+            <span>pkg/client · pkg/decisionindex</span>
+          </button>
+        </div>
+
+        <div class="fw-trunk" aria-hidden="true">
+          <svg viewBox="0 0 600 112" class="fw-svg" fill="none" preserveAspectRatio="none">
+            <path d="M60 4 C60 50, 300 28, 300 56" class="fw-line is-lit" data-line-in="0"></path>
+            <path d="M180 4 C180 44, 300 32, 300 56" class="fw-line" data-line-in="1"></path>
+            <path d="M300 4 L300 56" class="fw-line" data-line-in="2"></path>
+            <path d="M420 4 C420 44, 300 32, 300 56" class="fw-line" data-line-in="3"></path>
+            <path d="M540 4 C540 50, 300 28, 300 56" class="fw-line" data-line-in="4"></path>
+            <path d="M300 56 C300 84, 100 68, 100 108" class="fw-line is-lit" data-line-out="0"></path>
+            <path d="M300 56 L300 108" class="fw-line is-lit" data-line-out="1"></path>
+            <path d="M300 56 C300 84, 500 68, 500 108" class="fw-line" data-line-out="2"></path>
+          </svg>
+          <div class="fw-hub">
+            <code>dgem</code>
+            <span>1-Pass Denoise · Pre-Fusion H_raw Gate · Stage 2 Gemini Cascade</span>
+          </div>
+        </div>
+
+        <div class="fw-row fw-row--out" aria-label="Serving backends">
+          <button type="button" class="fw-node-btn" data-swb-node="out-vertex">
+            <strong>Vertex AI Dedicated Endpoint</strong>
+            <span>g4-standard-48 + 1× RTX PRO 6000 · Zero cold start · Primary vertex_first</span>
+          </button>
+          <button type="button" class="fw-node-btn" data-swb-node="out-cloudrun">
+            <strong>Serverless Cloud Run GPU</strong>
+            <span>1× RTX PRO 6000 · Scale-to-zero batch &amp; automatic failover</span>
+          </button>
+          <button type="button" class="fw-node-btn" data-swb-node="out-metal">
+            <strong>Apple Silicon Metal (diffgemma)</strong>
+            <span>Local 4-bit M-series engine · Zero cloud cost · Offline dev</span>
+          </button>
+        </div>
+
+        <div class="swb-detail">
+          <div class="swb-detail-copy">
+            <strong data-swb-title></strong>
+            <span data-swb-desc></span>
+          </div>
+          <div class="swb-detail-cmd">
+            <code data-swb-cmd></code>
+            <button type="button" class="wb-copy-btn" id="swb-copy-btn" data-swb-copy data-copy="" data-label-orig="Copy">Copy</button>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- SECTION 5: DOCUMENTATION SUITE -->
+    <section class="sec" id="docs">
+      <div class="sec-head">
+        <span class="sec-eyebrow">Documentation Suite</span>
+        <h2>Everything you need from laptop prototype to dedicated GPU fleet.</h2>
+      </div>
+      <div class="paths">
+        <a class="path" href="/dgem/decision-models-primer/">
+          <span class="path-k">Conceptual Primer</span>
+          <strong>Decision Models Primer →</strong>
+          <span class="path-d">Why single-pass discrete diffusion slot readouts outperform autoregressive token loops on structured classification and scoring.</span>
+        </a>
+        <a class="path" href="/dgem/deploy/">
+          <span class="path-k">Build, Deploy &amp; Operate</span>
+          <strong>From laptop to production →</strong>
+          <span class="path-d">Run locally on Apple Silicon Metal, deploy to Cloud Run GPU and Vertex AI Dedicated Endpoints, and configure gateway failover.</span>
+        </a>
+        <a class="path" href="/dgem/confidence/">
+          <span class="path-k">Confidence &amp; Calibration</span>
+          <strong>Confidence beyond Shannon →</strong>
+          <span class="path-d">Master pre-fusion raw_normalized_entropy, temperature scaling (dgem calibrate), and selective Stage 2 cascade thresholds.</span>
+        </a>
+        <a class="path" href="/dgem/practitioners-guide/">
+          <span class="path-k">Practitioner Guide</span>
+          <strong>Priors, shortlists &amp; wide K →</strong>
+          <span class="path-d">Combine FusePriorWithGateMode, PriorLogitsShortlist, 52-label choice sets (--labels az_aa), and two-stage brackets.</span>
+        </a>
+        <a class="path" href="/dgem/policies/applications/">
+          <span class="path-k">Policies &amp; Applications</span>
+          <strong>Templates &amp; production patterns →</strong>
+          <span class="path-d">Author .json.tmpl policies across support triage, listwise RAG reranking, agent guardrails, and guided visual localization.</span>
+        </a>
+        <a class="path" href="/dgem/reference/cli/">
+          <span class="path-k">Reference</span>
+          <strong>CLI, Studio, MCP &amp; HTTP API →</strong>
+          <span class="path-d">Complete flags and schemas for dgem decide, dgem locate, dgem serve, dgem mcp, REST endpoints, and benchmark harnesses.</span>
+        </a>
+      </div>
+    </section>
+  </main>
+
+  <footer class="foot">
+    <div class="foot-grid">
+      <div class="foot-brand-col">
+        <a href="/dgem/" class="brand">
+          <span>dgem</span>
+        </a>
+        <p>Zero-Shot Decision Model on DiffusionGemma. Single-pass discrete slot unmasking, pre-fusion normalized hesitation gating, and declarative Policy-as-Template serving.</p>
+      </div>
+      <div class="foot-col">
+        <h3>Foundations</h3>
+        <ul>
+          <li><a href="/dgem/decision-models-primer/">Decision Models Primer</a></li>
+          <li><a href="/dgem/confidence/overview/">Confidence Beyond Shannon</a></li>
+          <li><a href="/dgem/practitioners-guide/">Practitioner Guide</a></li>
+          <li><a href="/dgem/glossary/">Glossary</a></li>
+        </ul>
+      </div>
+      <div class="foot-col">
+        <h3>Build &amp; Policies</h3>
+        <ul>
+          <li><a href="/dgem/deploy/">Deploy Overview</a></li>
+          <li><a href="/dgem/policies/first-policy/">Your First Policy</a></li>
+          <li><a href="/dgem/policies/templates/">Policy Templates</a></li>
+          <li><a href="/dgem/policies/applications/">Real-World Applications</a></li>
+        </ul>
+      </div>
+      <div class="foot-col">
+        <h3>Interactive &amp; Reference</h3>
+        <ul>
+          <li><a href="/dgem/visualizer.html">Interactive Concept Visualizer</a></li>
+          <li><a href="/dgem/dgem-explainer.html">Single-Page Technical Explainer</a></li>
+          <li><a href="/dgem/reference/cli/">CLI &amp; Flags Reference</a></li>
+          <li><a href="/dgem/reference/studio-mcp-api/">Studio, MCP &amp; HTTP API</a></li>
+        </ul>
+      </div>
+    </div>
+    <div class="foot-bottom">
+      <span>Apache 2.0 License · GoogleCloudPlatform/dgem</span>
+      <span><a href="https://github.com/GoogleCloudPlatform/dgem" rel="noopener">github.com/GoogleCloudPlatform/dgem ↗</a></span>
+    </div>
+  </footer>
+
+  <script is:inline src="/dgem/landing/journey.js"></script>
+</body>
+</html>
