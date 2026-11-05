@@ -259,7 +259,50 @@ When combined with discrete diffusion slot readout, multimodal queries bypass th
 
 ---
 
-## 7. Architecture Decision Matrix
+## 7. Wide-Option Tournament Routing (`--labels az_aa`) & Hesitation-Gated Stage 2 Cascades
+
+### The Problem
+Enterprise taxonomies frequently exceed the 26-option `[A-Z]` single-letter slot limit (`K = 30` to `150+` banking intents, retail product taxonomy categories, or support routing queues). At the same time, ambiguous edge-case inputs should escalate to a deeper reasoning model (`gemini-3.8-flash` or `gemini-3.5-flash-lite`) without paying autoregressive latency on the `75%–85%` of routine cases where `DiffusionGemma` is confident.
+
+### The Architecture
+`dgem systemone serve` and `dgem decide` combine native 52-label choice sets (`--labels az_aa | az_lower`), 2-stage tournament brackets (`--bracket-size 20 --catch-all final`), and per-slot hesitation-gated Stage 2 cascades:
+
+```mermaid
+flowchart TD
+  classDef step fill:#e8f0fe,stroke:#1a73e8,color:#174ea6,stroke-width:1.5px;
+  classDef engine fill:#fce8e6,stroke:#d93025,color:#a50e0e,stroke-width:1.5px;
+  classDef out fill:#e6f4ea,stroke:#1e8e3e,color:#0d652d,stroke-width:1.5px;
+
+  A["Caller Input: Policy Schema + Document/Image State"]:::step --> B{"Option Count K"}:::step
+  B -->|"K <= 26 (or <= 52 with --labels az_aa)"| C["Single-Pass /v1/systemone Block Diffusion Readout"]:::engine
+  B -->|"K > Limit (up to 255 options)"| D["2-Stage Balanced Bracket Tournament + Catch-All Final"]:::engine
+  C --> E["Temperature-Scaled Probabilities + Normalized Entropy H_norm"]:::step
+  D --> E
+  E --> F{"H_norm >= Cascade Threshold?"}:::step
+  F -->|"No (~75%-85% of slots)"| G["Immediate Stage 1 Decision (~57 ms GPU pass)"]:::out
+  F -->|"Yes (Ambiguous Edge Case)"| H["Stage 2 Cascade: gemini-3.8-flash / 3.5-flash-lite with Soft Prior"]:::out
+```
+
+1. **52-Label Single-Pass Readout & Balanced Brackets (`--labels az_aa`, `--catch-all final`)**: Reads up to 52 options in a single forward pass when backed by a label-set-aware serving image, and automatically partitions wider choice sets (`up to 255 options`) into balanced Round-1 brackets followed by a Round-2 Finals pass while holding `"none of the listed"` catch-all options for the final (`--catch-all final`).
+2. **Post-Hoc Temperature Calibration (`dgem calibrate`)**: Fits per-slot-type temperatures (`T_noul`, `T_choice`, `T_score`) on 60–250 historical domain records (`p_k(T) = p_k^(1/T) / Z`), cutting Expected Calibration Error (ECE) by `30%–50%` with zero weight updates.
+3. **Selective Stage 2 Escalation (`--cascade-model gemini-3.8-flash --stage2-prior soft`)**: Computes normalized Shannon entropy (`H(p) / ln(K)`) per slot and escalates only high-hesitation slots to Vertex AI Gemini while injecting Stage 1's top-2 distribution as a soft prior.
+
+---
+
+## 8. High-Throughput Retail Catalog Enrichment & Prompt-Injection Guardrails
+
+### The Problem
+E-commerce marketplaces and enterprise RAG pipelines must validate thousands of product listings or retrieved document chunks per minute for title-vs-spec contradictions, 32+ category taxonomy fit, and indirect prompt injections (*"Ignore previous instructions..."*) without running multiple sequential LLM calls per item.
+
+### The Architecture
+Co-denoise quality, taxonomy, and security slots in a single pass using declarative `.json.tmpl` policies:
+
+* **Multi-Slot Retail Catalog Enrichment**: Evaluates `auto_publish_approved` (`boolean`), `primary_defect_type` (`choice`), `google_product_category` (`32-option choice`), and `catalog_completeness_score` (`1–5 score`) in a single `~57 ms` GPU forward pass on Cloud Run GPU or Vertex AI RTX PRO 6000.
+* **Single-Pass RAG Reranking & Prompt-Injection Guardrail (`templates/rerank/listwise_decision_rerank.json.tmpl`, `templates/calibration/prompt_injection.json.tmpl`)**: Scores candidate document relevance while simultaneously screening untrusted passages for instruction-override attempts (`isolate: "auto"`) before they reach a downstream generative agent.
+
+---
+
+## 9. Architecture Decision Matrix
 
 Use this matrix to determine whether **Discrete Diffusion Slot Readout** or **Generative Autoregression** is the right tool:
 
