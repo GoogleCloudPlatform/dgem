@@ -1,0 +1,56 @@
+{
+  "schema": {
+    "instructions": "Inspect the UI screenshot annotated with Set-of-Marks (SoM) numeric callout badges [M1..M8] and select the next discrete action toward the user goal.",
+    "questions": [
+      {
+        "id": "next_target_mark",
+        "type": "choice",
+        "instructions": "Which numbered Set-of-Marks (SoM) UI element should be activated next to accomplish the user goal?",
+        "options": [
+          {"name": "M1", "description": "Mark [M1]: Primary navigation or top-left control"},
+          {"name": "M2", "description": "Mark [M2]: Search input or header action"},
+          {"name": "M3", "description": "Mark [M3]: Primary content card or form field"},
+          {"name": "M4", "description": "Mark [M4]: Secondary content control or filter"},
+          {"name": "M5", "description": "Mark [M5]: Primary call-to-action (CTA) button"},
+          {"name": "M6", "description": "Mark [M6]: Secondary or cancel button"},
+          {"name": "M7", "description": "Mark [M7]: Modal close or dismiss button"},
+          {"name": "M8", "description": "Mark [M8]: Footer or overflow menu control"},
+          {"name": "none_visible", "description": "Target UI control is off-screen, occluded, or requires scrolling before clicking"}
+        ]
+      },
+      {
+        "id": "element_state",
+        "type": "choice",
+        "instructions": "What is the interactive state of the selected target UI element?",
+        "options": [
+          {"name": "interactive_ready", "description": "Visible, enabled, and ready for immediate click or tap"},
+          {"name": "disabled_grayed_out", "description": "Visible but disabled or awaiting prerequisite form input"},
+          {"name": "occluded_by_modal", "description": "Partially or fully blocked by a modal, toast, or cookie banner"},
+          {"name": "requires_scroll", "description": "Not visible in the current viewport; scrolling is required"}
+        ]
+      },
+      {
+        "id": "loop_or_error_detected",
+        "type": "boolean",
+        "instructions": "Is the screen stuck in an inline validation error, blocking dialog, or repeated state?"
+      },
+      {
+        "id": "goal_progress_score",
+        "type": "score",
+        "instructions": "How close is the current screen state to completing the user goal?",
+        "levels": [
+          "blocked_or_regressed",
+          "initial_screen",
+          "intermediate_step_complete",
+          "final_confirmation_visible"
+        ]
+      }
+    ],
+    "samples": {{ default 1 .samples | toJson }}
+  },
+  "state": {
+    "user_goal": {{ default "Click the primary action button to continue" .goal | toJson }},
+    "step_index": {{ default 1 .step | toJson }},
+    "viewport": {{ default "mobile-390x844" .viewport | toJson }}
+  }
+}
