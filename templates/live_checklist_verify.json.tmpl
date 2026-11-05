@@ -1,0 +1,94 @@
+{
+  "schema": {
+    "instructions": "Evaluate the 30-second sliding-window transcript and visual frame context against the 6 operational checklist items and interruption gates.",
+    "questions": [
+      {
+        "id": "item_01_identity_verified",
+        "type": "choice",
+        "instructions": "Status of Checklist Item 1 (Customer or operator identity verification):",
+        "options": [
+          {"name": "unaddressed", "description": "Not yet mentioned or visible in the window"},
+          {"name": "in_progress", "description": "Currently being asked or partially verified"},
+          {"name": "completed_verified", "description": "Explicitly confirmed with required evidence"},
+          {"name": "contradicted", "description": "Statement or visual frame contradicts required protocol"}
+        ]
+      },
+      {
+        "id": "item_02_consent_recorded",
+        "type": "choice",
+        "instructions": "Status of Checklist Item 2 (Mandatory disclosure and consent acknowledgment):",
+        "options": [
+          {"name": "unaddressed", "description": "Not yet mentioned"},
+          {"name": "in_progress", "description": "Disclosure read, awaiting explicit confirmation"},
+          {"name": "completed_verified", "description": "Explicit affirmative consent recorded"},
+          {"name": "contradicted", "description": "Skipped disclosure or customer declined"}
+        ]
+      },
+      {
+        "id": "item_03_scope_confirmed",
+        "type": "choice",
+        "instructions": "Status of Checklist Item 3 (Target account, asset, or equipment scope confirmation):",
+        "options": [
+          {"name": "unaddressed", "description": "Not yet mentioned"},
+          {"name": "in_progress", "description": "Scope partially specified"},
+          {"name": "completed_verified", "description": "Exact asset or account identifier confirmed"},
+          {"name": "contradicted", "description": "Conflicting identifiers stated"}
+        ]
+      },
+      {
+        "id": "item_04_risk_precheck",
+        "type": "choice",
+        "instructions": "Status of Checklist Item 4 (Safety, compliance, or precondition check):",
+        "options": [
+          {"name": "unaddressed", "description": "Not yet checked"},
+          {"name": "in_progress", "description": "Preconditions under review"},
+          {"name": "completed_verified", "description": "All preconditions verified clear"},
+          {"name": "contradicted", "description": "Safety or compliance precondition violated"}
+        ]
+      },
+      {
+        "id": "item_05_action_authorized",
+        "type": "choice",
+        "instructions": "Status of Checklist Item 5 (Explicit authorization before state-changing action):",
+        "options": [
+          {"name": "unaddressed", "description": "Not yet requested"},
+          {"name": "in_progress", "description": "Authorization requested"},
+          {"name": "completed_verified", "description": "Explicit authorization granted"},
+          {"name": "contradicted", "description": "Action executed without authorization"}
+        ]
+      },
+      {
+        "id": "item_06_next_steps_logged",
+        "type": "choice",
+        "instructions": "Status of Checklist Item 6 (Summary of resolution and follow-up owner):",
+        "options": [
+          {"name": "unaddressed", "description": "Not yet summarized"},
+          {"name": "in_progress", "description": "Partial summary in progress"},
+          {"name": "completed_verified", "description": "Resolution and owner confirmed"},
+          {"name": "contradicted", "description": "Ambiguous or conflicting follow-up commitment"}
+        ]
+      },
+      {
+        "id": "speaker_commitment_present",
+        "type": "boolean",
+        "instructions": "Did a participant make a concrete action commitment or deadline promise in this window?"
+      },
+      {
+        "id": "interrupt_urgency",
+        "type": "score",
+        "instructions": "How urgently should the assistant surface an inline checklist alert?",
+        "levels": [
+          "silent_no_alert",
+          "passive_sidebar_update",
+          "soft_nudge_before_closing",
+          "immediate_compliance_interruption"
+        ]
+      }
+    ],
+    "samples": {{ default 1 .samples | toJson }}
+  },
+  "state": {
+    "window_id": {{ default "win-001" .window_id | toJson }},
+    "transcript_window": {{ default "Operator: Before we reset the production credentials, please confirm the asset ID. Caller: Asset ID is prod-db-04 and I authorize the rotation." .transcript | toJson }}
+  }
+}
