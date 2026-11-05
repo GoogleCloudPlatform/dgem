@@ -1,0 +1,94 @@
+{
+  "schema": {
+    "instructions": "Evaluate each candidate trajectory context block (b0 through b7) for the next agent turn under the stated token budget. Choose 'full' when exact content is needed for the next step, 'stub' when a compact summary or signature suffices or relevance is uncertain, and 'drop' when the block is stale, redundant, or unrelated.",
+    "questions": [
+      {
+        "id": "b0",
+        "type": "choice",
+        "instructions": "Retention action for trajectory block b0.",
+        "options": [
+          {"name": "full", "description": "Retain complete block text verbatim."},
+          {"name": "stub", "description": "Replace full body with compact summary or signature stub."},
+          {"name": "drop", "description": "Omit block from active context window."}
+        ]
+      },
+      {
+        "id": "b1",
+        "type": "choice",
+        "instructions": "Retention action for trajectory block b1.",
+        "options": [
+          {"name": "full", "description": "Retain complete block text verbatim."},
+          {"name": "stub", "description": "Replace full body with compact summary or signature stub."},
+          {"name": "drop", "description": "Omit block from active context window."}
+        ]
+      },
+      {
+        "id": "b2",
+        "type": "choice",
+        "instructions": "Retention action for trajectory block b2.",
+        "options": [
+          {"name": "full", "description": "Retain complete block text verbatim."},
+          {"name": "stub", "description": "Replace full body with compact summary or signature stub."},
+          {"name": "drop", "description": "Omit block from active context window."}
+        ]
+      },
+      {
+        "id": "b3",
+        "type": "choice",
+        "instructions": "Retention action for trajectory block b3.",
+        "options": [
+          {"name": "full", "description": "Retain complete block text verbatim."},
+          {"name": "stub", "description": "Replace full body with compact summary or signature stub."},
+          {"name": "drop", "description": "Omit block from active context window."}
+        ]
+      },
+      {
+        "id": "b4",
+        "type": "choice",
+        "instructions": "Retention action for trajectory block b4.",
+        "options": [
+          {"name": "full", "description": "Retain complete block text verbatim."},
+          {"name": "stub", "description": "Replace full body with compact summary or signature stub."},
+          {"name": "drop", "description": "Omit block from active context window."}
+        ]
+      },
+      {
+        "id": "b5",
+        "type": "choice",
+        "instructions": "Retention action for trajectory block b5.",
+        "options": [
+          {"name": "full", "description": "Retain complete block text verbatim."},
+          {"name": "stub", "description": "Replace full body with compact summary or signature stub."},
+          {"name": "drop", "description": "Omit block from active context window."}
+        ]
+      },
+      {
+        "id": "b6",
+        "type": "choice",
+        "instructions": "Retention action for trajectory block b6.",
+        "options": [
+          {"name": "full", "description": "Retain complete block text verbatim."},
+          {"name": "stub", "description": "Replace full body with compact summary or signature stub."},
+          {"name": "drop", "description": "Omit block from active context window."}
+        ]
+      },
+      {
+        "id": "b7",
+        "type": "choice",
+        "instructions": "Retention action for trajectory block b7.",
+        "options": [
+          {"name": "full", "description": "Retain complete block text verbatim."},
+          {"name": "stub", "description": "Replace full body with compact summary or signature stub."},
+          {"name": "drop", "description": "Omit block from active context window."}
+        ]
+      }
+    ],
+    "samples": {{ default 1 .samples | toJson }}
+  },
+  "state": {
+    "task_goal": {{ default "" .task_goal | toJson }},
+    "turn_index": {{ default 0 .turn_index | toJson }},
+    "token_budget": {{ default 4096 .token_budget | toJson }},
+    "blocks": {{ if .blocks }}{{ .blocks | toJson }}{{ else }}[]{{ end }}
+  }
+}
