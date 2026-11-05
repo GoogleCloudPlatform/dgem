@@ -1,0 +1,96 @@
+{
+  "schema": {
+    "instructions": "Arbitrate concurrent file-write and tool-execution lock proposals across 4 parallel worker agents in a single pass.",
+    "questions": [
+      {
+        "id": "agent_1_lock_action",
+        "type": "choice",
+        "instructions": "Lock disposition for Worker Agent 1:",
+        "options": [
+          {"name": "grant_lock", "description": "Grant immediate write/execution lock"},
+          {"name": "serialize_after_peer", "description": "Queue behind higher-priority peer touching overlapping files"},
+          {"name": "abort_redundant", "description": "Cancel proposal because peer already completed equivalent work"},
+          {"name": "escalate_conflict", "description": "Halt and escalate incompatible architectural change"}
+        ]
+      },
+      {
+        "id": "agent_2_lock_action",
+        "type": "choice",
+        "instructions": "Lock disposition for Worker Agent 2:",
+        "options": [
+          {"name": "grant_lock", "description": "Grant immediate write/execution lock"},
+          {"name": "serialize_after_peer", "description": "Queue behind higher-priority peer touching overlapping files"},
+          {"name": "abort_redundant", "description": "Cancel proposal because peer already completed equivalent work"},
+          {"name": "escalate_conflict", "description": "Halt and escalate incompatible architectural change"}
+        ]
+      },
+      {
+        "id": "agent_3_lock_action",
+        "type": "choice",
+        "instructions": "Lock disposition for Worker Agent 3:",
+        "options": [
+          {"name": "grant_lock", "description": "Grant immediate write/execution lock"},
+          {"name": "serialize_after_peer", "description": "Queue behind higher-priority peer touching overlapping files"},
+          {"name": "abort_redundant", "description": "Cancel proposal because peer already completed equivalent work"},
+          {"name": "escalate_conflict", "description": "Halt and escalate incompatible architectural change"}
+        ]
+      },
+      {
+        "id": "agent_4_lock_action",
+        "type": "choice",
+        "instructions": "Lock disposition for Worker Agent 4:",
+        "options": [
+          {"name": "grant_lock", "description": "Grant immediate write/execution lock"},
+          {"name": "serialize_after_peer", "description": "Queue behind higher-priority peer touching overlapping files"},
+          {"name": "abort_redundant", "description": "Cancel proposal because peer already completed equivalent work"},
+          {"name": "escalate_conflict", "description": "Halt and escalate incompatible architectural change"}
+        ]
+      },
+      {
+        "id": "file_write_collision",
+        "type": "boolean",
+        "instructions": "Do two or more worker agents propose modifying the same file path or shared resource simultaneously?"
+      },
+      {
+        "id": "shared_state_hazard",
+        "type": "choice",
+        "instructions": "What is the primary concurrency hazard across the 4 worker proposals?",
+        "options": [
+          {"name": "disjoint_safe", "description": "All worker proposals touch independent files and interfaces"},
+          {"name": "same_file_edit_race", "description": "Overlapping edits to the same source file"},
+          {"name": "interface_signature_break", "description": "One agent changes an exported signature consumed by another agent"},
+          {"name": "duplicate_task_execution", "description": "Multiple agents are repeating the same sub-task"}
+        ]
+      },
+      {
+        "id": "winning_agent",
+        "type": "choice",
+        "instructions": "Which worker agent has the highest-priority valid proposal to execute first?",
+        "options": [
+          {"name": "agent_1", "description": "Worker Agent 1"},
+          {"name": "agent_2", "description": "Worker Agent 2"},
+          {"name": "agent_3", "description": "Worker Agent 3"},
+          {"name": "agent_4", "description": "Worker Agent 4"}
+        ]
+      },
+      {
+        "id": "rollback_severity",
+        "type": "score",
+        "instructions": "Estimated blast radius if all 4 proposals were merged without serialization:",
+        "levels": [
+          "clean_fast_forward",
+          "minor_ textual_rebase",
+          "build_or_test_breakage",
+          "corrupted_shared_state"
+        ]
+      }
+    ],
+    "samples": {{ default 1 .samples | toJson }}
+  },
+  "state": {
+    "agent_1_proposal": {{ default "Edit pkg/decisionindex/engine.go to add PriorLogits validation" .agent_1 | toJson }},
+    "agent_2_proposal": {{ default "Edit pkg/decisionindex/engine.go to refactor ScoreSinglePass" .agent_2 | toJson }},
+    "agent_3_proposal": {{ default "Edit docs/overview.md to update architecture summary" .agent_3 | toJson }},
+    "agent_4_proposal": {{ default "Run go test ./pkg/decisionindex/..." .agent_4 | toJson }}
+  }
+}

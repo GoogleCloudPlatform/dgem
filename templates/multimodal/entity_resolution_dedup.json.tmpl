@@ -1,0 +1,56 @@
+{
+  "schema": {
+    "instructions": "Compare the two candidate catalog listings and their side-by-side product images to determine entity equivalence, pack-quantity consistency, and catalog merge action.",
+    "questions": [
+      {
+        "id": "entity_relation",
+        "type": "choice",
+        "instructions": "What is the relationship between Listing A and Listing B?",
+        "options": [
+          {"name": "exact_duplicate", "description": "Identical brand, product formulation, net volume/weight, and pack multiplier"},
+          {"name": "sibling_variant", "description": "Same brand and product line, but differs in flavor, scent, color, or pack count"},
+          {"name": "counterfeit_or_lookalike", "description": "Imitation packaging, mismatched brand typography, or unauthorized clone"},
+          {"name": "distinct_product", "description": "Different product category, brand, or unrelated item"}
+        ]
+      },
+      {
+        "id": "pack_quantity_match",
+        "type": "choice",
+        "instructions": "Do the unit volume/weight and multipack count match across both listings and images?",
+        "options": [
+          {"name": "identical_pack_and_volume", "description": "Both unit size and pack count (for example, 6x330ml vs 6x330ml) match"},
+          {"name": "multipack_vs_single_mismatch", "description": "Same unit container, but one listing is a multipack/case and the other is a single unit"},
+          {"name": "unit_volume_mismatch", "description": "Same pack count, but different net weight or volume (for example, 250ml vs 500ml)"},
+          {"name": "unreadable_quantity", "description": "Pack count or net volume is occluded or missing in at least one listing"}
+        ]
+      },
+      {
+        "id": "visual_evidence_cue",
+        "type": "choice",
+        "instructions": "Which visual region provides the decisive signal for this comparison?",
+        "options": [
+          {"name": "neck_band_and_cap", "description": "Cap color, neck foil, or tamper seal geometry"},
+          {"name": "front_brand_crest", "description": "Primary brand logo, typography, and sub-brand badge"},
+          {"name": "net_weight_and_multipack_badge", "description": "Printed net weight/volume callout or multipack shrink-wrap count"},
+          {"name": "container_silhouette", "description": "Bottle, can, pouch, or box aspect ratio and form factor"}
+        ]
+      },
+      {
+        "id": "merge_action",
+        "type": "choice",
+        "instructions": "Which catalog deduplication action should be executed?",
+        "options": [
+          {"name": "auto_merge_canonical", "description": "Merge both listings under the same canonical SKU"},
+          {"name": "link_as_variant_family", "description": "Keep separate SKUs linked under a shared parent product family"},
+          {"name": "quarantine_for_human_review", "description": "Route to human catalog steward due to pack-count conflict or counterfeit signal"},
+          {"name": "keep_separate", "description": "Do not merge or link"}
+        ]
+      }
+    ],
+    "samples": {{ default 1 .samples | toJson }}
+  },
+  "state": {
+    "listing_a_title": {{ default "San Pellegrino Sparkling Natural Mineral Water 6x330ml Cans" .title_a | toJson }},
+    "listing_b_title": {{ default "San Pellegrino Sparkling Mineral Water 330ml Single Can" .title_b | toJson }}
+  }
+}
