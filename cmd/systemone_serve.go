@@ -108,7 +108,7 @@ func systemOneHealth(w http.ResponseWriter, _ *http.Request) {
 	_ = json.NewEncoder(w).Encode(map[string]any{
 		"status":   "ok",
 		"service":  "dgem-systemone-adapter",
-		"version":  Version,
+		"version":  buildVersion(),
 		"revision": buildRevision(),
 	})
 }

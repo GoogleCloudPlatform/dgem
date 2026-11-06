@@ -113,12 +113,18 @@ A gateway (`dgem serve`) in front routes to Vertex first and fails over to Cloud
 
 ## Installation & CLI Examples
 
+Install the CLI binary directly with Go 1.24+:
+
 ```bash
-# Clone the repository
+go install github.com/GoogleCloudPlatform/dgem@latest
+dgem --version
+```
+
+Or clone the repository to build locally and use the bundled policy `templates/`:
+
+```bash
 git clone https://github.com/GoogleCloudPlatform/dgem.git
 cd dgem
-
-# Compile dgem binary into bin/
 make build
 ```
 
