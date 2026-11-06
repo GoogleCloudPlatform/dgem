@@ -38,7 +38,7 @@ own services can make decisions on it, and give people access through the [gatew
   into your project (`GCP_PROJECT=<PROJECT> make cloudrun-build`) and pin the commit tag or digest it prints.
 - A **service key** for the serving image, stored in Secret Manager as `dgem-server-key`. When the secret exists, the
   deploy script sets it as `DGEM_SERVER_KEY` on the model and the serving image refuses every `POST` without a
-  matching `X-DGem-Key` header (`GET /health` stays open). Without the secret the script prints a warning and the
+  matching `X-DGem-Key` header (`GET /health` and `GET /ready` stay open). Without the secret the script prints a warning and the
   serving image accepts any `POST` that reaches it. Give the key to the services that call the endpoint (your
   [gateway](gateway.md), batch jobs, probes), not to people:
 
@@ -65,7 +65,7 @@ The default profile (`VERTEX_PROFILE=g4-rtxpro6000`) configures:
 | Replicas | min 1 (`VERTEX_MIN_REPLICAS`), max 2 (`VERTEX_MAX_REPLICAS`), autoscale at 70% GPU duty cycle |
 | Engine | `KV_CACHE_GB=12`, `MAX_SEQS=32`, `MAX_INFLIGHT=8`, `DEFAULT_SAMPLES=1`, vision on |
 | Endpoint | dedicated DNS, display name `dgemma-dedicated-g4` (`VERTEX_ENDPOINT_NAME`; reused if it exists) |
-| Startup | long startup probe (weights load + self-warmup before the replica takes traffic) |
+| Startup | `healthRoute: "/ready"` (`503` until vLLM serves, so crash-looping engines fail deploy instead of taking traffic) |
 
 The script prints the endpoint ID and the invoke URLs:
 
@@ -73,15 +73,17 @@ The script prints the endpoint ID and the invoke URLs:
 https://<ENDPOINT_ID>.<REGION>-<PROJECT_NUMBER>.prediction.vertexai.goog/v1/projects/<PROJECT>/locations/<REGION>/endpoints/<ENDPOINT_ID>/invoke/...
   /v1/chat/completions      structured decisions (what dgem uses)
   /v1/systemone             /v1/systemone decision protocol
-  /health                   readiness
+  /ready                    readiness (200 when vllm_ready, 503 otherwise; Vertex healthRoute)
+  /health                   cold-start telemetry (always 200)
 ```
 
 ## 3. Verify
 
 ```bash
 INVOKE=https://<ENDPOINT_ID>.<REGION>-<PROJECT_NUMBER>.prediction.vertexai.goog/v1/projects/<PROJECT>/locations/<REGION>/endpoints/<ENDPOINT_ID>/invoke
-curl -s -H "Authorization: Bearer $(gcloud auth print-access-token)" $INVOKE/health
-#   -> {"status": "ok", "vllm_ready": true, "phase": "ready", "warmed": true, ...}
+curl -sf -H "Authorization: Bearer $(gcloud auth print-access-token)" $INVOKE/ready
+#   -> HTTP 200: {"status": "ok", "vllm_ready": true, "phase": "ready", "warmed": true, ...}
+#      (/invoke/health always returns 200 once the container starts; check /invoke/ready or "vllm_ready": true)
 
 # Without the service key, decision requests are refused
 curl -s -o /dev/null -w '%{http_code}\n' -X POST -H "Authorization: Bearer $(gcloud auth print-access-token)" \
@@ -133,7 +135,7 @@ A dedicated **private** (PSC) endpoint has no invoke routes, so `/invoke/*` is u
 a single route instead and call it with `:rawPredict`:
 
 ```bash
-ROUTE_MODE=predict ./scripts/deploy_vertex_endpoint.sh   # predictRoute /predict, healthRoute /health
+ROUTE_MODE=predict ./scripts/deploy_vertex_endpoint.sh   # predictRoute /predict, healthRoute /ready
 ```
 
 - Callers inside the VPC use the private host:

@@ -23,7 +23,8 @@
 # Exposed Custom Routes on the Dedicated Endpoint:
 #   POST .../invoke/v1/chat/completions      -> structured_server.py (/v1/chat/completions)
 #   POST .../invoke/v1/systemone             -> native SystemOne/JevBench route (/v1/systemone)
-#   GET  .../invoke/health                   -> container & vLLM readiness telemetry (/health)
+#   GET  .../invoke/ready                    -> readiness probe: 200 when vLLM serves, 503 otherwise (/ready)
+#   GET  .../invoke/health                   -> container & cold-start telemetry, always 200 (/health)
 # ==============================================================================
 set -euo pipefail
 
@@ -122,7 +123,7 @@ UPLOAD_PAYLOAD=$(cat <<EOF
     "containerSpec": {
       "imageUri": "${IMAGE_URI}",
       ${ROUTE_SPEC},
-      "healthRoute": "/health",
+      "healthRoute": "/ready",
       "ports": [
         { "containerPort": 8080 }
       ],
@@ -284,7 +285,8 @@ cat <<EOF
   Mapped Custom Routes:
   • Structured Decision:  ${INVOKE_BASE_URL}/v1/chat/completions
   • SystemOne / JevBench: ${INVOKE_BASE_URL}/v1/systemone
-  • Live Health Probe:    ${INVOKE_BASE_URL}/health
+  • Readiness Probe:      ${INVOKE_BASE_URL}/ready
+  • Cold-Start Telemetry: ${INVOKE_BASE_URL}/health
 
   Use with dgem CLI:
     ./bin/dgem decide -u "${INVOKE_BASE_URL}/v1" --gcp-auth -t templates/support_triage.json.tmpl -v ticket="Double billed"

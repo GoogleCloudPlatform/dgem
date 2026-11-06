@@ -29,7 +29,7 @@ go -C examples vet ./... && go -C examples test ./...
 python3 -m unittest scripts/matrix/test_matrix.py
 python3 -m unittest deploy/cloudrun/server/test_server_key.py deploy/cloudrun/server/test_media_fields.py \
   deploy/cloudrun/server/test_upstream_errors.py deploy/cloudrun/server/test_predict_route.py \
-  deploy/cloudrun/server/test_label_sets.py
+  deploy/cloudrun/server/test_ready_route.py deploy/cloudrun/server/test_label_sets.py
 ```
 After changing `studio/src/*`: `npm --prefix studio run build && go build -o bin/dgem .`, then
 `rm -rf studio/dist/* && touch studio/dist/.gitkeep` before committing (build output is not tracked).
@@ -91,12 +91,13 @@ After changing `studio/src/*`: `npm --prefix studio run build && go build -o bin
   byte-identical) plus `dgem.patch`. Edit `structured_server.py`, then run `scripts/regen_serving_patch.sh`: it
   regenerates the patch in GNU `diff -u` form and checks that it re-applies to the upstream file, as CI does (plain
   `diff -u` on macOS produces different hunks).
-- Keep in the patch: `/health` merging `/tmp/dgemma/warmup_state.json`, HTTP/1.1 keep-alive with listen backlog 256,
+- Keep in the patch: `/health` merging `/tmp/dgemma/warmup_state.json`, `/ready` (`503` until live upstream `/health`
+  answers `200`), HTTP/1.1 keep-alive with listen backlog 256,
   `MAX_INFLIGHT`, `DEFAULT_SAMPLES`, `DEFAULT_LAYOUT` (default `document_first`), `DEFAULT_ISOLATE` (default `auto`),
   the `/predict` / `/rawPredict` aliases, the `X-DGem-Key` check, model-server 4xx answered as 422 (400 on the chat
   route), the audio/video refusal (400), and `DGEM_IMAGE_URLS` (default `deny`).
 - **Service key.** With `DGEM_SERVER_KEY` set (comma-separated to rotate), the serving image refuses every `POST`
-  without a matching `X-DGem-Key` header; `GET /health` stays open. Callers send the first entry of their own
+  without a matching `X-DGem-Key` header; `GET /health` and `GET /ready` stay open. Callers send the first entry of their own
   `DGEM_SERVER_KEY`: `pkg/client`, the gateway proxy in `cmd/serve.go` (which never forwards a caller's header),
   `scripts/matrix/net.py` and `scripts/serving_speed.py` (also used by `probe.py` and `contract_diff.py`). A new
   caller of the serving image sends it too. The key is for services, never for people, and is never committed.

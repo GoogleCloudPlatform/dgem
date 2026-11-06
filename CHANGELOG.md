@@ -6,6 +6,13 @@ image for a release in your own project with `make cloudrun-build`.
 
 ## Unreleased
 
+- **Serving image `/ready` readiness probe (`deploy/cloudrun/server/structured_server.py`, `scripts/deploy_vertex_endpoint.sh`, `deploy/cloudrun/service.yaml`, `scripts/deploy_cloudrun_vllm.sh`).**
+  Adds `GET /ready` and `GET /invoke/ready` returning `503` (with the `_health_info()` JSON payload) until the live
+  upstream `vLLM` `/health` route answers `200`, and `503` again if the upstream engine stops answering (even after
+  `warmup_state.json` recorded an earlier ready state). `GET /health` stays `200` unconditionally for cold-start
+  telemetry (`phase`, `bytes_staged_gb`, `vllm_ready`, `warmed`), while Vertex `healthRoute` and Cloud Run
+  `startupProbe` point at `/ready` so crash-looping deployments do not report healthy.
+
 ## v0.4.1 (2026-11-06)
 
 - **Gateway `/v1/systemone` latency-tail instrumentation and connection pooling (`cmd/serve.go`, `cmd/root.go`).**
