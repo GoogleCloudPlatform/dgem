@@ -38,8 +38,14 @@ After changing `studio/src/*`: `npm --prefix studio run build && go build -o bin
 - **Four-surface parity.** A new decision option or post-processing pass in `dgem decide` (`cmd/decide.go`) is also
   exposed in `GatewayDecideRequest` / `GatewayDecideResponse` (`cmd/serve.go`), the MCP tool inputs (`cmd/mcp.go`),
   and the Studio (`studio/src/dgem-studio.ts`).
-- **Tracing.** Anything that triggers another model pass or a Stage 2 call runs in its own OpenTelemetry child span
-  under `dgem.gateway.decide` (for example `dgem.cascade.gemini`, `dgem.taxonomy.expand`).
+- **Tracing and upstream proxy.** Anything that triggers another model pass or a Stage 2 call runs in its own
+  OpenTelemetry child span under `dgem.gateway.decide` (for example `dgem.cascade.gemini`, `dgem.taxonomy.expand`).
+  `v1ProxyHandler` (`POST /v1/systemone` and `/v1/chat/completions`) emits sequential child spans under
+  `dgem.gateway.proxy` (`dgem.gateway.read_body`, `dgem.gateway.resolve_backend`, `dgem.gateway.prepare_body`,
+  `dgem.gateway.auth_token`, `dgem.gpu.proxy_forward`, `dgem.gateway.write_response`), shares the pooled
+  `proxyHTTPClient` transport (never allocating per-request `http.Client`s), and keeps `inspectVertexEndpointState`
+  refreshes non-blocking within its stale-while-revalidate grace window (probing fast data-plane `{"health": true}` on
+  `:rawPredict` before falling back to `endpoints.get`).
 - **Gateway callers and logs.** `callerAuthHandler` (`cmd/caller_auth.go`) is the only source of the caller identity
   (`dgem.user`); identity headers sent by clients are discarded. Gateway logs carry status, reason, caller and request
   shape, never request content: content goes only to the opt-in, time-limited body log (`cmd/body_log.go`), with
@@ -125,7 +131,9 @@ third-party material must live in `third_party/<dataset>/` alongside its `LICENS
   graph and `.github/CODEOWNERS` (referencing only existing paths on `main`) rather than manual contributor/role tables
   in prose.
 - `make check-public` scans tracked files against a pattern file you provide (`DGEM_LEAK_PATTERNS_FILE`).
-- Before running `make release VERSION=vX.Y.Z`, ensure your tracking upstream (`@{u}`) matches `main` and push the
-  signed release tag to `GoogleCloudPlatform/dgem`.
+- Before running `make release VERSION=vX.Y.Z`, ensure your tracking upstream (`@{u}`) matches `main`, sign the
+  annotated tag (`tag.gpgSign=true`, verified with `git tag -v vX.Y.Z`), and push `refs/tags/vX.Y.Z` to
+  `GoogleCloudPlatform/dgem` (which triggers `.github/workflows/release.yml` to build Decision Studio and attach static
+  CLI archives + `SHA256SUMS` to a draft GitHub Release).
 - Tear down GPU resources you create for testing (`make gce-teardown`, `make vertex-teardown`,
   `make cloudrun-teardown`).
