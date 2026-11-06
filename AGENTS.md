@@ -107,6 +107,11 @@ After changing `studio/src/*`: `npm --prefix studio run build && go build -o bin
   `<CLOUD_RUN_URL>`, `<your-dgem-gateway>`. Never commit project IDs, endpoint IDs or internal hostnames.
 - Keep the Studio glossary (`studio/src/components/dgem-concept-visualizer.ts`, `dgem-about-modal.ts`),
   `docs-site/public/visualizer.html` and `docs/glossary.md` consistent.
+- Standalone Astro pages (`docs-site/src/pages/*.astro`) must never contain hardcoded `data-astro-cid-*` attributes
+  from compiled output, must define every referenced CSS custom property in their loaded stylesheets, and must sync
+  theme state with `localStorage['starlight-theme']`. Every `.json.tmpl` snippet in docs or interactive scripts must
+  use `"id"` on `schema.questions` objects (matching `structured_server.py`) and exact CLI subcommands/flags
+  (`dgem systemone serve`, `dgem decide -d`, `dgem locate --target --gemini-model`).
 
 ## Datasets
 Record the source and licence of every evaluation dataset in `benchmarks/README.md`. Any committed dataset derived from
@@ -116,6 +121,9 @@ third-party material must live in `third_party/<dataset>/` alongside its `LICENS
 ## Hygiene
 - Never commit `.env` files, tokens, keys, `*.log` files or receipts containing endpoint URLs
   (`scripts/redact_receipt.py` can redact them).
+- Keep `README.md` and `docs/index.md` focused on product architecture and usage; rely on GitHub's native Contributors
+  graph and `.github/CODEOWNERS` (referencing only existing paths on `main`) rather than manual contributor/role tables
+  in prose.
 - `make check-public` scans tracked files against a pattern file you provide (`DGEM_LEAK_PATTERNS_FILE`).
 - Before running `make release VERSION=vX.Y.Z`, ensure your tracking upstream (`@{u}`) matches `main` and push the
   signed release tag to `GoogleCloudPlatform/dgem`.
