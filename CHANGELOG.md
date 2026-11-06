@@ -6,12 +6,31 @@ image for a release in your own project with `make cloudrun-build`.
 
 ## Unreleased
 
+## v0.4.1 (2026-11-06)
+
+- **Gateway `/v1/systemone` latency-tail instrumentation and connection pooling (`cmd/serve.go`, `cmd/root.go`).**
+  `v1ProxyHandler` (`POST /v1/systemone` and `/v1/chat/completions`) now emits sequential child spans under
+  `dgem.gateway.proxy` (`dgem.gateway.read_body`, `dgem.gateway.resolve_backend`, `dgem.gateway.prepare_body`,
+  `dgem.gateway.auth_token`, `dgem.gpu.proxy_forward`, and `dgem.gateway.write_response`) with request/response byte
+  counts, Vertex status probe telemetry (`dgem.vertex_status.cache_hit`, `dgem.vertex_status.source`), token cache
+  hit/miss (`dgem.token.cache_hit`), and `httptrace` upstream connection reuse (`dgem.conn.reused`, `dgem.conn.was_idle`,
+  `dgem.conn.idle_ms`). Upstream proxy calls now share a pooled `http.Transport` (`MaxIdleConns: 128`,
+  `MaxIdleConnsPerHost: 64`, `IdleConnTimeout: 90s`) instead of `http.DefaultTransport` (`MaxIdleConnsPerHost: 2`).
+- **Stale-while-revalidate Vertex endpoint status and `:rawPredict` fast health probe (`cmd/serve.go`).**
+  `inspectVertexEndpointState` serves cached `deployed` status immediately within a 90s grace window after its 30s
+  fresh TTL while refreshing asynchronously in the background (`stale_cache`), deduplicates concurrent refreshes per
+  endpoint ID, extracts project/region directly from Vertex endpoint URLs before querying metadata, and probes fast
+  data-plane `{"health": true}` on `:rawPredict` endpoints (sending `X-DGem-Key` when `DGEM_SERVER_KEY` is configured)
+  before falling back to the Vertex `endpoints.get` control-plane API.
 - **Prebuilt CLI release archives and `go install` version reporting (`.github/workflows/release.yml`, `cmd/version.go`).**
   Pushing a `v*.*.*` release tag now builds Decision Studio (`studio/dist`), cross-compiles static `CGO_ENABLED=0` `dgem`
   binaries for `linux/amd64`, `linux/arm64`, `darwin/amd64`, and `darwin/arm64` stamped with the release tag and commit
   revision, packages `dgem`, `templates/`, `LICENSE`, and `README.md` with `SHA256SUMS`, and attaches them to the
   GitHub Release (creating a draft release if needed). Module-mode `go install github.com/GoogleCloudPlatform/dgem@vX.Y.Z`
   builds also fall back to Go's embedded module `BuildInfo` version instead of reporting `"dev"`.
+- **Interactive documentation landing page and `.github/CODEOWNERS` (`docs-site/src/pages/index.astro`, `docs-site/public/landing/`).**
+  Adds an interactive GM3 documentation home page featuring a live slot-denoising simulator, Shannon hesitation lab,
+  and copy-ready policy workbench, plus repository `.github/CODEOWNERS`.
 
 ## v0.4.0 (2026-11-03) — first public release
 
