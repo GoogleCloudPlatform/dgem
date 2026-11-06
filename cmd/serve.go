@@ -25,6 +25,7 @@ import (
 	"math"
 	"net"
 	"net/http"
+	"net/http/httptrace"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -63,7 +64,20 @@ var (
 	serveSystemOneMode  string
 	serveSystemOneTemp  float64
 	backendConfigMu     sync.RWMutex
+	proxyHTTPClient     = newProxyHTTPClient()
 )
+
+func newProxyHTTPClient() *http.Client {
+	tr := http.DefaultTransport.(*http.Transport).Clone()
+	tr.MaxIdleConns = 128
+	tr.MaxIdleConnsPerHost = 64
+	tr.IdleConnTimeout = 90 * time.Second
+	return &http.Client{
+		Timeout:       90 * time.Second,
+		Transport:     tr,
+		CheckRedirect: client.StripKeysOnCrossOriginRedirect,
+	}
+}
 
 var serveCmd = &cobra.Command{
 	Use:     "serve",
@@ -513,6 +527,8 @@ type vertexEndpointLiveStatus struct {
 	DeployedModel string `json:"deployed_model_id,omitempty"`
 	MachineType   string `json:"machine_type,omitempty"`
 	Message       string `json:"message"`
+	CacheHit      bool   `json:"-"`
+	ProbeSource   string `json:"-"` // "cache", "invoke_health", "control_plane", or "unconfigured"
 }
 
 // extractEndpointIDFromURL returns the endpoint ID of a Vertex endpoint URL, "projects/.../endpoints/<ID>" name or bare
@@ -615,14 +631,17 @@ func inspectVertexEndpointState(ctx context.Context, rawVertexURL string) vertex
 	epID := extractEndpointIDFromURL(rawVertexURL)
 	if epID == "" {
 		return vertexEndpointLiveStatus{
-			State:   "quiesced",
-			Message: "No Vertex AI Endpoint configured",
+			State:       "quiesced",
+			Message:     "No Vertex AI Endpoint configured",
+			ProbeSource: "unconfigured",
 		}
 	}
 	vertexStatusCacheMu.RLock()
 	if vertexStatusCached.EndpointID == epID && time.Now().Before(vertexStatusCacheExpires) {
 		cached := vertexStatusCached
 		vertexStatusCacheMu.RUnlock()
+		cached.CacheHit = true
+		cached.ProbeSource = "cache"
 		return cached
 	}
 	vertexStatusCacheMu.RUnlock()
@@ -633,6 +652,7 @@ func inspectVertexEndpointState(ctx context.Context, rawVertexURL string) vertex
 		DisplayName: "dgemma-dedicated-g4",
 		State:       "quiesced",
 		Message:     fmt.Sprintf("Quiesced at 0 GPU replicas ($0.00/hr idle) on Endpoint %s", epID),
+		ProbeSource: "unconfigured",
 	}
 	tok := FetchGCPAccessToken()
 	if tok == "" {
@@ -665,6 +685,7 @@ func inspectVertexEndpointState(ctx context.Context, rawVertexURL string) vertex
 				st.ReplicaCount = 1
 				st.MachineType = defaultVertexMachineLabel
 				st.Message = fmt.Sprintf("Active & Ready (1 replica · %s · /invoke/*)", st.MachineType)
+				st.ProbeSource = "invoke_health"
 				vertexStatusCacheMu.Lock()
 				vertexStatusCached = st
 				vertexStatusCacheExpires = time.Now().Add(30 * time.Second)
@@ -676,6 +697,7 @@ func inspectVertexEndpointState(ctx context.Context, rawVertexURL string) vertex
 	hCancel()
 
 	// 2. Control-Plane Check (endpoints.get & active operations)
+	st.ProbeSource = "control_plane"
 	apiURL := fmt.Sprintf("https://%s-aiplatform.googleapis.com/v1beta1/projects/%s/locations/%s/endpoints/%s", region, projNum, region, epID)
 	reqCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
@@ -800,6 +822,13 @@ func resolveBackendTargetFromParams(ctx context.Context, requestedMode, requeste
 			normURL, err := expandAndValidateVertexURL(rawVx)
 			if err == nil {
 				vStatus := inspectVertexEndpointState(ctx, normURL)
+				if sp := trace.SpanFromContext(ctx); sp.IsRecording() {
+					sp.SetAttributes(
+						attribute.Bool("dgem.vertex_status.cache_hit", vStatus.CacheHit),
+						attribute.String("dgem.vertex_status.source", vStatus.ProbeSource),
+						attribute.String("dgem.vertex_status.state", vStatus.State),
+					)
+				}
 				if vStatus.State == "deployed" {
 					return "vertex", normURL, nil
 				}
@@ -817,6 +846,13 @@ func resolveBackendTargetFromParams(ctx context.Context, requestedMode, requeste
 			return "vertex", "", err
 		}
 		vStatus := inspectVertexEndpointState(ctx, normURL)
+		if sp := trace.SpanFromContext(ctx); sp.IsRecording() {
+			sp.SetAttributes(
+				attribute.Bool("dgem.vertex_status.cache_hit", vStatus.CacheHit),
+				attribute.String("dgem.vertex_status.source", vStatus.ProbeSource),
+				attribute.String("dgem.vertex_status.state", vStatus.State),
+			)
+		}
 		if vStatus.State == "quiesced" {
 			return "vertex", normURL, fmt.Errorf("Vertex AI Dedicated Endpoint '%s' (%s) is currently quiesced at 0 GPU replicas ($0.00/hr zero-idle-cost state). Switch to 'Vertex First (Auto-Failover)' or 'Cloud Run GPU', or click 'Provision Vertex GPU' in the Backend Target menu.", vStatus.DisplayName, vStatus.EndpointID)
 		}
@@ -846,6 +882,10 @@ func requestedBackendMode(r *http.Request, payloadBackend string) string {
 }
 
 func resolveBackendTarget(r *http.Request, payloadBackend, payloadVertexURL string) (string, string, error) {
+	return resolveBackendTargetWithContext(r.Context(), r, payloadBackend, payloadVertexURL)
+}
+
+func resolveBackendTargetWithContext(ctx context.Context, r *http.Request, payloadBackend, payloadVertexURL string) (string, string, error) {
 	targetBackend := strings.TrimSpace(r.Header.Get("X-DGem-Backend"))
 	if targetBackend == "" {
 		targetBackend = strings.TrimSpace(payloadBackend)
@@ -857,7 +897,7 @@ func resolveBackendTarget(r *http.Request, payloadBackend, payloadVertexURL stri
 	if rawVx == "" {
 		rawVx = strings.TrimSpace(payloadVertexURL)
 	}
-	return resolveBackendTargetFromParams(r.Context(), targetBackend, rawVx)
+	return resolveBackendTargetFromParams(ctx, targetBackend, rawVx)
 }
 
 func executeDecideWithWarmup(ctx context.Context, schemaContent, stateContent string, images []string, targetURLOverride ...string) (*client.StructuredDecisionResponse, *client.RequestStats, int, error) {
@@ -1948,262 +1988,6 @@ func runServe(cmd *cobra.Command, args []string) error {
 
 	// 7. Unified Pass-Through Proxy: POST /v1/systemone and the deprecated /v1/chat/completions decision route.
 	// /v1/raw/chat/completions (free-form vLLM generation) is not served: dgem is a decision model.
-	v1ProxyHandler := func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPost {
-			http.Error(w, `{"error": "Method not allowed"}`, http.StatusMethodNotAllowed)
-			return
-		}
-		parentCtx := extractTraceContextFromRequest(r)
-		ctx, proxySpan := gatewayTracer().Start(parentCtx, "dgem.gateway.proxy")
-		defer proxySpan.End()
-		if tid := proxySpan.SpanContext().TraceID().String(); tid != "" {
-			w.Header().Set("X-Dgem-Trace-Id", tid)
-		}
-
-		if u := callerEmail(r); u != "" {
-			proxySpan.SetAttributes(attribute.String("dgem.user", u))
-		}
-		proxySpan.SetAttributes(attribute.String("dgem.route", r.URL.Path))
-
-		bodyBytes, err := io.ReadAll(r.Body)
-		if err != nil {
-			failSpan(proxySpan, http.StatusBadRequest, "failed to read request body: "+err.Error())
-			http.Error(w, `{"error": "failed to read request body"}`, http.StatusBadRequest)
-			return
-		}
-
-		var bodyMeta struct {
-			Backend   string `json:"backend"`
-			VertexURL string `json:"vertex_url"`
-		}
-		_ = json.Unmarshal(bodyBytes, &bodyMeta)
-
-		backendTarget, resolvedURL, bErr := resolveBackendTarget(r, bodyMeta.Backend, bodyMeta.VertexURL)
-		if bErr != nil {
-			failSpan(proxySpan, http.StatusBadRequest, bErr.Error())
-			w.Header().Set("Content-Type", "application/json")
-			w.WriteHeader(http.StatusBadRequest)
-			_ = json.NewEncoder(w).Encode(map[string]interface{}{
-				"error": map[string]string{
-					"message": bErr.Error(),
-					"type":    "backend_unavailable",
-				},
-			})
-			return
-		}
-
-		reqPath := r.URL.Path // "/v1/systemone" or "/v1/chat/completions"
-		if reqPath == "/v1/chat/completions" {
-			setChatCompletionsDeprecation(w)
-		}
-
-		// If this is a JSON POST /v1/systemone request and adapter mode is enabled, evaluate via decisionindex.ExecuteSystemOne
-		if reqPath == "/v1/systemone" && !strings.Contains(r.Header.Get("Content-Type"), "multipart") {
-			// Audio/video fields are refused before any routing, adapter or pass-through.
-			if err := decisionindex.CheckMediaKeys(bodyBytes); err != nil {
-				failSpan(proxySpan, http.StatusBadRequest, err.Error())
-				w.Header().Set("Content-Type", "application/json")
-				w.WriteHeader(http.StatusBadRequest)
-				_ = json.NewEncoder(w).Encode(map[string]interface{}{
-					"error": map[string]string{"message": err.Error(), "type": "invalid_request_error"},
-				})
-				return
-			}
-		}
-		// Image URLs are fetched by the gateway (public addresses only) and forwarded as data: URIs, on every path:
-		// adapter, ?raw=1, pass-through and the chat proxy. The serving image never fetches a caller's URL.
-		if !strings.Contains(r.Header.Get("Content-Type"), "multipart") {
-			nb, err := inlineProxyBodyImages(ctx, reqPath, bodyBytes)
-			if err != nil {
-				failSpan(proxySpan, imageErrorStatus(err), err.Error())
-				w.Header().Set("Content-Type", "application/json")
-				w.WriteHeader(imageErrorStatus(err))
-				_ = json.NewEncoder(w).Encode(map[string]interface{}{
-					"error": map[string]string{"message": err.Error(), "type": "invalid_request_error"},
-				})
-				return
-			}
-			bodyBytes = nb
-		}
-		if reqPath == "/v1/systemone" && serveSystemOneMode != "passthrough" && r.URL.Query().Get("raw") != "1" && !strings.Contains(r.Header.Get("Content-Type"), "multipart") {
-			// A body the adapter can't read is refused, never forwarded unbatched: that silent fall-through sent score
-			// questions to the server in one oversized read. ?raw=1 or --systemone-mode passthrough bypass.
-			proxySpan.SetAttributes(systemOneBodyAttrs(bodyBytes)...)
-			soReq, status, parseErr := decodeSystemOneAdapterRequest(bodyBytes)
-			if parseErr != nil {
-				failSpan(proxySpan, status, "invalid /v1/systemone request: "+parseErr.Error())
-				w.Header().Set("Content-Type", "application/json")
-				w.WriteHeader(status)
-				_ = json.NewEncoder(w).Encode(map[string]interface{}{
-					"error": map[string]string{
-						"message": "invalid /v1/systemone request: " + parseErr.Error() + " (send ?raw=1 to forward a body to the serving image unchanged)",
-						"type":    "invalid_request_error",
-					},
-				})
-				return
-			}
-			proxySpan.SetAttributes(systemOneShapeAttrs(soReq)...)
-			if err := checkSystemOneImages(ctx, soReq.Images); err != nil {
-				failSpan(proxySpan, http.StatusBadRequest, err.Error())
-				w.Header().Set("Content-Type", "application/json")
-				w.WriteHeader(http.StatusBadRequest)
-				_ = json.NewEncoder(w).Encode(map[string]interface{}{
-					"error": map[string]string{"message": err.Error(), "type": "invalid_request_error"},
-				})
-				return
-			}
-			// Listed callers get their request forwarded to the serving image unchanged when it can answer it as sent:
-			// the adapter builds a different prompt (state as JSON, sorted questions and options, its own instructions)
-			// and response shape, which changed a client's small-turn answers when score questions were added to the
-			// adapter. Requests that don't fit still use the adapter.
-			passThrough := systemOneRawCaller(callerEmail(r)) && decisionindex.FitsServingImage(soReq)
-			if passThrough {
-				if nb, err := systemOneForwardBody(bodyBytes, soReq); err == nil {
-					bodyBytes = nb
-				} else {
-					passThrough = false
-				}
-			}
-			if passThrough {
-				proxySpan.SetAttributes(attribute.String("dgem.systemone.mode", "passthrough"))
-			} else {
-				proxySpan.SetAttributes(attribute.String("dgem.systemone.mode", "adapter"))
-				soOpts := decisionindex.DefaultEngineOptions()
-				soOpts.TemperatureScale = serveSystemOneTemp
-				cli := GetClientForURL(resolvedURL)
-				soResp, soErr := decisionindex.ExecuteSystemOne(ctx, cli, soReq, soOpts)
-				if soErr != nil {
-					status, msg := decisionindex.ErrorStatus(soErr)
-					failSpan(proxySpan, status, msg)
-					http.Error(w, msg, status)
-					return
-				}
-				if soResp.EvaluationTrace != nil {
-					proxySpan.SetAttributes(attribute.Int("dgem.systemone.forward_passes", soResp.EvaluationTrace.ForwardPasses))
-				}
-				proxySpan.SetAttributes(attribute.Int("http.status_code", http.StatusOK))
-				w.Header().Set("Content-Type", "application/json")
-				w.Header().Set("X-DGem-Backend-Used", backendTarget)
-				_ = json.NewEncoder(w).Encode(soResp)
-				return
-			}
-		}
-
-		if reqPath == "/v1/systemone" && backendTarget == "local" {
-			proxySpan.SetStatus(codes.Error, "systemone_not_supported_on_local")
-			w.Header().Set("Content-Type", "application/json")
-			w.WriteHeader(http.StatusNotImplemented)
-			_ = json.NewEncoder(w).Encode(map[string]interface{}{
-				"error": map[string]string{
-					"message": "POST /v1/systemone raw/multipart pass-through is not supported on the local Apple Silicon Metal backend (text-only diffgemma; requires Cloud Run or Vertex AI with SigLIP)",
-					"type":    "not_implemented",
-				},
-			})
-			return
-		}
-
-		var targetURL string
-		if backendTarget == "vertex" {
-			if idx := strings.Index(resolvedURL, "/invoke/"); idx != -1 {
-				targetURL = resolvedURL[:idx] + "/invoke" + reqPath
-			} else {
-				targetURL = resolvedURL
-			}
-		} else if backendTarget == "local" {
-			upstreamBase := strings.TrimSuffix(resolvedURL, "/")
-			upstreamBase = strings.TrimSuffix(upstreamBase, "/v1")
-			targetURL = upstreamBase + reqPath
-		} else {
-			upstreamBase := strings.TrimSuffix(viper.GetString("url"), "/")
-			upstreamBase = strings.TrimSuffix(upstreamBase, "/v1")
-			targetURL = upstreamBase + reqPath
-		}
-
-		proxySpan.SetAttributes(
-			attribute.String("dgem.backend", backendTarget),
-			attribute.String("dgem.upstream_url", targetURL),
-			attribute.String("dgem.route", reqPath),
-		)
-		w.Header().Set("X-DGem-Backend-Used", backendTarget)
-
-		deadline := time.Now().Add(serveWakeupTimeout)
-		for attempt := 1; ; attempt++ {
-			attemptStart := time.Now()
-			attemptCtx, attemptSpan := gatewayTracer().Start(ctx, "dgem.gpu.proxy_forward")
-			attemptSpan.SetAttributes(attribute.Int("dgem.attempt", attempt))
-			req, err := http.NewRequestWithContext(attemptCtx, "POST", targetURL, bytes.NewReader(bodyBytes))
-			if err != nil {
-				attemptSpan.End()
-				http.Error(w, err.Error(), http.StatusInternalServerError)
-				return
-			}
-			// Forward the caller's Content-Type: multipart/form-data bodies (image uploads to /v1/systemone) carry
-			// their boundary in it, and forcing application/json made the server parse image bytes as JSON.
-			if ct := r.Header.Get("Content-Type"); ct != "" {
-				req.Header.Set("Content-Type", ct)
-			} else {
-				req.Header.Set("Content-Type", "application/json")
-			}
-			injectTraceContextToRequest(attemptCtx, req)
-			// The serving image's service secret: only the gateway holds it; callers' own X-DGem-Key is never forwarded.
-			if k := client.ServerKeyFromEnv(); k != "" {
-				req.Header.Set(client.ServerKeyHeader, k)
-			}
-			if backendTarget == "vertex" {
-				if tok := FetchGCPAccessToken(); tok != "" {
-					req.Header.Set("Authorization", "Bearer "+tok)
-				}
-			} else if backendTarget == "local" || isLoopbackURL(targetURL) {
-				// No cloud token for local backend
-			} else if viper.GetBool("gcp_auth") || viper.GetString("iap_client_id") != "" {
-				if tok := FetchGCPIdentityToken(viper.GetString("iap_client_id"), targetURL); tok != "" {
-					req.Header.Set("Authorization", "Bearer "+tok)
-				}
-			} else if tok := viper.GetString("token"); tok != "" {
-				req.Header.Set("Authorization", "Bearer "+tok)
-			}
-
-			hc := &http.Client{Timeout: 90 * time.Second, CheckRedirect: client.StripKeysOnCrossOriginRedirect}
-			resp, err := hc.Do(req)
-			if err == nil {
-				respBody, _ := io.ReadAll(resp.Body)
-				resp.Body.Close()
-				attemptMs := time.Since(attemptStart).Milliseconds()
-				attemptSpan.SetAttributes(attribute.Int("http.status_code", resp.StatusCode))
-				if resp.StatusCode >= 500 && strings.Contains(string(respBody), "ConnectionRefusedError") && time.Now().Before(deadline) {
-					attemptSpan.SetStatus(codes.Error, "cold_start_connection_refused")
-					attemptSpan.End()
-					time.Sleep(6 * time.Second)
-					continue
-				}
-				proxySpan.SetAttributes(attribute.Int("http.status_code", resp.StatusCode))
-				if resp.StatusCode >= 400 {
-					// Pass-through (?raw=1, multipart, chat): record the upstream's reason, not just its status.
-					failSpan(proxySpan, resp.StatusCode, fmt.Sprintf("upstream %d: %s", resp.StatusCode, strings.TrimSpace(string(respBody))))
-				}
-				if resp.StatusCode == http.StatusOK {
-					attemptSpan.SetStatus(codes.Ok, "ok")
-					if backendTarget == "cloudrun" {
-						MarkGPUWarm()
-					} else if backendTarget == "local" {
-						RecordLocalReadoutLatency(attemptMs)
-					}
-				}
-				attemptSpan.End()
-				w.Header().Set("Content-Type", "application/json")
-				w.WriteHeader(resp.StatusCode)
-				_, _ = w.Write(respBody)
-				return
-			}
-			attemptSpan.SetStatus(codes.Error, err.Error())
-			attemptSpan.End()
-			if time.Now().After(deadline) || r.Context().Err() != nil {
-				http.Error(w, fmt.Sprintf(`{"error": "upstream unreachable: %s"}`, err.Error()), http.StatusBadGateway)
-				return
-			}
-			time.Sleep(6 * time.Second)
-		}
-	}
 	mux.HandleFunc("/v1/chat/completions", v1ProxyHandler)
 	mux.HandleFunc("/v1/raw/chat/completions", rawChatGoneHandler)
 	mux.HandleFunc("/v1/systemone", v1ProxyHandler)
@@ -2310,6 +2094,401 @@ func rawChatGoneHandler(w http.ResponseWriter, r *http.Request) {
 			"type":    "route_removed",
 		},
 	})
+}
+
+func resolveProxyAuthHeader(ctx context.Context, proxySpan trace.Span, backendTarget, targetURL string) string {
+	_, authSpan := gatewayTracer().Start(ctx, "dgem.gateway.auth_token")
+	defer authSpan.End()
+
+	if backendTarget == "vertex" {
+		tok, cacheHit := FetchGCPAccessTokenWithStats()
+		authSpan.SetAttributes(
+			attribute.String("dgem.auth.kind", "gcp_access_token"),
+			attribute.Bool("dgem.token.cache_hit", cacheHit),
+		)
+		proxySpan.SetAttributes(attribute.Bool("dgem.token.cache_hit", cacheHit))
+		if tok != "" {
+			return "Bearer " + tok
+		}
+		return ""
+	}
+	if backendTarget == "local" || isLoopbackURL(targetURL) {
+		authSpan.SetAttributes(attribute.String("dgem.auth.kind", "none"))
+		return ""
+	}
+	if viper.GetBool("gcp_auth") || viper.GetString("iap_client_id") != "" {
+		tok, cacheHit := FetchGCPIdentityTokenWithStats(viper.GetString("iap_client_id"), targetURL)
+		authSpan.SetAttributes(
+			attribute.String("dgem.auth.kind", "gcp_identity_token"),
+			attribute.Bool("dgem.token.cache_hit", cacheHit),
+		)
+		proxySpan.SetAttributes(attribute.Bool("dgem.token.cache_hit", cacheHit))
+		if tok != "" {
+			return "Bearer " + tok
+		}
+		return ""
+	}
+	if tok := viper.GetString("token"); tok != "" {
+		authSpan.SetAttributes(
+			attribute.String("dgem.auth.kind", "static_token"),
+			attribute.Bool("dgem.token.cache_hit", true),
+		)
+		proxySpan.SetAttributes(attribute.Bool("dgem.token.cache_hit", true))
+		return "Bearer " + tok
+	}
+	authSpan.SetAttributes(attribute.String("dgem.auth.kind", "none"))
+	return ""
+}
+
+// v1ProxyHandler handles POST /v1/systemone and the deprecated /v1/chat/completions decision route.
+func v1ProxyHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, `{"error": "Method not allowed"}`, http.StatusMethodNotAllowed)
+		return
+	}
+	parentCtx := extractTraceContextFromRequest(r)
+	ctx, proxySpan := gatewayTracer().Start(parentCtx, "dgem.gateway.proxy")
+	defer proxySpan.End()
+	if tid := proxySpan.SpanContext().TraceID().String(); tid != "" {
+		w.Header().Set("X-Dgem-Trace-Id", tid)
+	}
+
+	if u := callerEmail(r); u != "" {
+		proxySpan.SetAttributes(attribute.String("dgem.user", u))
+	}
+	proxySpan.SetAttributes(attribute.String("dgem.route", r.URL.Path))
+	if r.ContentLength >= 0 {
+		proxySpan.SetAttributes(attribute.Int64("http.request_content_length", r.ContentLength))
+	}
+
+	_, readSpan := gatewayTracer().Start(ctx, "dgem.gateway.read_body")
+	if r.ContentLength >= 0 {
+		readSpan.SetAttributes(attribute.Int64("http.request_content_length", r.ContentLength))
+	}
+	bodyBytes, err := io.ReadAll(r.Body)
+	readSpan.SetAttributes(attribute.Int("dgem.body_bytes", len(bodyBytes)))
+	proxySpan.SetAttributes(attribute.Int("dgem.body_bytes", len(bodyBytes)))
+	if err != nil {
+		failSpan(readSpan, http.StatusBadRequest, "failed to read request body: "+err.Error())
+		readSpan.End()
+		failSpan(proxySpan, http.StatusBadRequest, "failed to read request body: "+err.Error())
+		http.Error(w, `{"error": "failed to read request body"}`, http.StatusBadRequest)
+		return
+	}
+	readSpan.End()
+
+	var bodyMeta struct {
+		Backend   string `json:"backend"`
+		VertexURL string `json:"vertex_url"`
+	}
+	_ = json.Unmarshal(bodyBytes, &bodyMeta)
+
+	reqMode := requestedBackendMode(r, bodyMeta.Backend)
+	resolveCtx, resolveSpan := gatewayTracer().Start(ctx, "dgem.gateway.resolve_backend")
+	resolveSpan.SetAttributes(attribute.String("dgem.backend_requested", reqMode))
+	proxySpan.SetAttributes(attribute.String("dgem.backend_requested", reqMode))
+	backendTarget, resolvedURL, bErr := resolveBackendTargetWithContext(resolveCtx, r, bodyMeta.Backend, bodyMeta.VertexURL)
+	if bErr != nil {
+		failSpan(resolveSpan, http.StatusBadRequest, bErr.Error())
+		resolveSpan.End()
+		failSpan(proxySpan, http.StatusBadRequest, bErr.Error())
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
+			"error": map[string]string{
+				"message": bErr.Error(),
+				"type":    "backend_unavailable",
+			},
+		})
+		return
+	}
+	resolveSpan.SetAttributes(attribute.String("dgem.backend", backendTarget))
+	resolveSpan.End()
+
+	reqPath := r.URL.Path // "/v1/systemone" or "/v1/chat/completions"
+	if reqPath == "/v1/chat/completions" {
+		setChatCompletionsDeprecation(w)
+	}
+
+	prepCtx, prepSpan := gatewayTracer().Start(ctx, "dgem.gateway.prepare_body")
+	isMultipart := strings.Contains(r.Header.Get("Content-Type"), "multipart")
+
+	// If this is a JSON POST /v1/systemone request and adapter mode is enabled, evaluate via decisionindex.ExecuteSystemOne
+	if reqPath == "/v1/systemone" && !isMultipart {
+		// Audio/video fields are refused before any routing, adapter or pass-through.
+		if err := decisionindex.CheckMediaKeys(bodyBytes); err != nil {
+			failSpan(prepSpan, http.StatusBadRequest, err.Error())
+			prepSpan.End()
+			failSpan(proxySpan, http.StatusBadRequest, err.Error())
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusBadRequest)
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{
+				"error": map[string]string{"message": err.Error(), "type": "invalid_request_error"},
+			})
+			return
+		}
+	}
+	// Image URLs are fetched by the gateway (public addresses only) and forwarded as data: URIs, on every path:
+	// adapter, ?raw=1, pass-through and the chat proxy. The serving image never fetches a caller's URL.
+	if !isMultipart {
+		nb, err := inlineProxyBodyImages(prepCtx, reqPath, bodyBytes)
+		if err != nil {
+			st := imageErrorStatus(err)
+			failSpan(prepSpan, st, err.Error())
+			prepSpan.End()
+			failSpan(proxySpan, st, err.Error())
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(st)
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{
+				"error": map[string]string{"message": err.Error(), "type": "invalid_request_error"},
+			})
+			return
+		}
+		bodyBytes = nb
+		prepSpan.SetAttributes(attribute.Int("dgem.body_inlined_bytes", len(bodyBytes)))
+	}
+	if reqPath == "/v1/systemone" && serveSystemOneMode != "passthrough" && r.URL.Query().Get("raw") != "1" && !isMultipart {
+		// A body the adapter can't read is refused, never forwarded unbatched: that silent fall-through sent score
+		// questions to the server in one oversized read. ?raw=1 or --systemone-mode passthrough bypass.
+		proxySpan.SetAttributes(systemOneBodyAttrs(bodyBytes)...)
+		soReq, status, parseErr := decodeSystemOneAdapterRequest(bodyBytes)
+		if parseErr != nil {
+			failSpan(prepSpan, status, "invalid /v1/systemone request: "+parseErr.Error())
+			prepSpan.End()
+			failSpan(proxySpan, status, "invalid /v1/systemone request: "+parseErr.Error())
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(status)
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{
+				"error": map[string]string{
+					"message": "invalid /v1/systemone request: " + parseErr.Error() + " (send ?raw=1 to forward a body to the serving image unchanged)",
+					"type":    "invalid_request_error",
+				},
+			})
+			return
+		}
+		proxySpan.SetAttributes(systemOneShapeAttrs(soReq)...)
+		if err := checkSystemOneImages(prepCtx, soReq.Images); err != nil {
+			failSpan(prepSpan, http.StatusBadRequest, err.Error())
+			prepSpan.End()
+			failSpan(proxySpan, http.StatusBadRequest, err.Error())
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusBadRequest)
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{
+				"error": map[string]string{"message": err.Error(), "type": "invalid_request_error"},
+			})
+			return
+		}
+		// Listed callers get their request forwarded to the serving image unchanged when it can answer it as sent:
+		// the adapter builds a different prompt (state as JSON, sorted questions and options, its own instructions)
+		// and response shape, which changed a client's small-turn answers when score questions were added to the
+		// adapter. Requests that don't fit still use the adapter.
+		passThrough := systemOneRawCaller(callerEmail(r)) && decisionindex.FitsServingImage(soReq)
+		if passThrough {
+			if nb, err := systemOneForwardBody(bodyBytes, soReq); err == nil {
+				bodyBytes = nb
+			} else {
+				passThrough = false
+			}
+		}
+		if passThrough {
+			prepSpan.SetAttributes(attribute.String("dgem.systemone.mode", "passthrough"))
+			prepSpan.End()
+			proxySpan.SetAttributes(attribute.String("dgem.systemone.mode", "passthrough"))
+		} else {
+			prepSpan.SetAttributes(attribute.String("dgem.systemone.mode", "adapter"))
+			prepSpan.End()
+			proxySpan.SetAttributes(attribute.String("dgem.systemone.mode", "adapter"))
+			soOpts := decisionindex.DefaultEngineOptions()
+			soOpts.TemperatureScale = serveSystemOneTemp
+			cli := GetClientForURL(resolvedURL)
+			soResp, soErr := decisionindex.ExecuteSystemOne(ctx, cli, soReq, soOpts)
+			if soErr != nil {
+				status, msg := decisionindex.ErrorStatus(soErr)
+				failSpan(proxySpan, status, msg)
+				http.Error(w, msg, status)
+				return
+			}
+			if soResp.EvaluationTrace != nil {
+				proxySpan.SetAttributes(attribute.Int("dgem.systemone.forward_passes", soResp.EvaluationTrace.ForwardPasses))
+			}
+			respBytes, mErr := json.Marshal(soResp)
+			if mErr != nil {
+				failSpan(proxySpan, http.StatusInternalServerError, mErr.Error())
+				http.Error(w, mErr.Error(), http.StatusInternalServerError)
+				return
+			}
+			proxySpan.SetAttributes(
+				attribute.Int("http.status_code", http.StatusOK),
+				attribute.Int("dgem.response_bytes", len(respBytes)),
+			)
+			_, writeSpan := gatewayTracer().Start(ctx, "dgem.gateway.write_response")
+			writeSpan.SetAttributes(
+				attribute.Int("http.status_code", http.StatusOK),
+				attribute.Int("dgem.response_bytes", len(respBytes)),
+			)
+			w.Header().Set("Content-Type", "application/json")
+			w.Header().Set("X-DGem-Backend-Used", backendTarget)
+			w.WriteHeader(http.StatusOK)
+			n, _ := w.Write(respBytes)
+			writeSpan.SetAttributes(attribute.Int("dgem.written_bytes", n))
+			writeSpan.End()
+			return
+		}
+	} else {
+		prepSpan.End()
+	}
+
+	if reqPath == "/v1/systemone" && backendTarget == "local" {
+		failSpan(proxySpan, http.StatusNotImplemented, "systemone_not_supported_on_local")
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusNotImplemented)
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
+			"error": map[string]string{
+				"message": "POST /v1/systemone raw/multipart pass-through is not supported on the local Apple Silicon Metal backend (text-only diffgemma; requires Cloud Run or Vertex AI with SigLIP)",
+				"type":    "not_implemented",
+			},
+		})
+		return
+	}
+
+	var targetURL string
+	if backendTarget == "vertex" {
+		if idx := strings.Index(resolvedURL, "/invoke/"); idx != -1 {
+			targetURL = resolvedURL[:idx] + "/invoke" + reqPath
+		} else {
+			targetURL = resolvedURL
+		}
+	} else if backendTarget == "local" {
+		upstreamBase := strings.TrimSuffix(resolvedURL, "/")
+		upstreamBase = strings.TrimSuffix(upstreamBase, "/v1")
+		targetURL = upstreamBase + reqPath
+	} else {
+		upstreamBase := strings.TrimSuffix(viper.GetString("url"), "/")
+		upstreamBase = strings.TrimSuffix(upstreamBase, "/v1")
+		targetURL = upstreamBase + reqPath
+	}
+
+	proxySpan.SetAttributes(
+		attribute.String("dgem.backend", backendTarget),
+		attribute.String("dgem.upstream_url", targetURL),
+		attribute.String("dgem.route", reqPath),
+	)
+	w.Header().Set("X-DGem-Backend-Used", backendTarget)
+
+	deadline := time.Now().Add(serveWakeupTimeout)
+	for attempt := 1; ; attempt++ {
+		authHeader := resolveProxyAuthHeader(ctx, proxySpan, backendTarget, targetURL)
+
+		attemptStart := time.Now()
+		attemptCtx, attemptSpan := gatewayTracer().Start(ctx, "dgem.gpu.proxy_forward")
+		attemptSpan.SetAttributes(attribute.Int("dgem.attempt", attempt))
+
+		var connReused, connWasIdle, gotConnRecorded bool
+		var connIdleMs float64
+		traceCtx := httptrace.WithClientTrace(attemptCtx, &httptrace.ClientTrace{
+			GotConn: func(info httptrace.GotConnInfo) {
+				gotConnRecorded = true
+				connReused = info.Reused
+				connWasIdle = info.WasIdle
+				if info.WasIdle {
+					connIdleMs = float64(info.IdleTime.Microseconds()) / 1000.0
+				}
+			},
+		})
+
+		req, err := http.NewRequestWithContext(traceCtx, "POST", targetURL, bytes.NewReader(bodyBytes))
+		if err != nil {
+			attemptSpan.End()
+			failSpan(proxySpan, http.StatusInternalServerError, err.Error())
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		// Forward the caller's Content-Type: multipart/form-data bodies (image uploads to /v1/systemone) carry
+		// their boundary in it, and forcing application/json made the server parse image bytes as JSON.
+		if ct := r.Header.Get("Content-Type"); ct != "" {
+			req.Header.Set("Content-Type", ct)
+		} else {
+			req.Header.Set("Content-Type", "application/json")
+		}
+		injectTraceContextToRequest(attemptCtx, req)
+		// The serving image's service secret: only the gateway holds it; callers' own X-DGem-Key is never forwarded.
+		if k := client.ServerKeyFromEnv(); k != "" {
+			req.Header.Set(client.ServerKeyHeader, k)
+		}
+		if authHeader != "" {
+			req.Header.Set("Authorization", authHeader)
+		}
+
+		resp, err := proxyHTTPClient.Do(req)
+		if err == nil {
+			respBody, _ := io.ReadAll(resp.Body)
+			resp.Body.Close()
+			attemptMs := time.Since(attemptStart).Milliseconds()
+			attemptSpan.SetAttributes(
+				attribute.Int("http.status_code", resp.StatusCode),
+				attribute.Int("dgem.response_bytes", len(respBody)),
+			)
+			if gotConnRecorded {
+				attemptSpan.SetAttributes(
+					attribute.Bool("dgem.conn.reused", connReused),
+					attribute.Bool("dgem.conn.was_idle", connWasIdle),
+				)
+				if connWasIdle {
+					attemptSpan.SetAttributes(attribute.Float64("dgem.conn.idle_ms", connIdleMs))
+				}
+				proxySpan.SetAttributes(attribute.Bool("dgem.conn.reused", connReused))
+			}
+			if resp.StatusCode >= 500 && strings.Contains(string(respBody), "ConnectionRefusedError") && time.Now().Before(deadline) {
+				attemptSpan.SetStatus(codes.Error, "cold_start_connection_refused")
+				attemptSpan.End()
+				time.Sleep(6 * time.Second)
+				continue
+			}
+			proxySpan.SetAttributes(
+				attribute.Int("http.status_code", resp.StatusCode),
+				attribute.Int("dgem.response_bytes", len(respBody)),
+			)
+			if resp.StatusCode >= 400 {
+				// Pass-through (?raw=1, multipart, chat): record the upstream's reason, not just its status.
+				failSpan(proxySpan, resp.StatusCode, fmt.Sprintf("upstream %d: %s", resp.StatusCode, strings.TrimSpace(string(respBody))))
+			}
+			if resp.StatusCode == http.StatusOK {
+				attemptSpan.SetStatus(codes.Ok, "ok")
+				if backendTarget == "cloudrun" {
+					MarkGPUWarm()
+				} else if backendTarget == "local" {
+					RecordLocalReadoutLatency(attemptMs)
+				}
+			}
+			attemptSpan.End()
+
+			_, writeSpan := gatewayTracer().Start(ctx, "dgem.gateway.write_response")
+			writeSpan.SetAttributes(
+				attribute.Int("http.status_code", resp.StatusCode),
+				attribute.Int("dgem.response_bytes", len(respBody)),
+			)
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(resp.StatusCode)
+			n, writeErr := w.Write(respBody)
+			if writeErr != nil {
+				writeSpan.SetStatus(codes.Error, writeErr.Error())
+			}
+			writeSpan.SetAttributes(attribute.Int("dgem.written_bytes", n))
+			writeSpan.End()
+			return
+		}
+		if gotConnRecorded {
+			attemptSpan.SetAttributes(attribute.Bool("dgem.conn.reused", connReused))
+		}
+		attemptSpan.SetStatus(codes.Error, err.Error())
+		attemptSpan.End()
+		if time.Now().After(deadline) || r.Context().Err() != nil {
+			failSpan(proxySpan, http.StatusBadGateway, "upstream unreachable: "+err.Error())
+			http.Error(w, fmt.Sprintf(`{"error": "upstream unreachable: %s"}`, err.Error()), http.StatusBadGateway)
+			return
+		}
+		time.Sleep(6 * time.Second)
+	}
 }
 
 // decodeSystemOneAdapterRequest reads a /v1/systemone body for the gateway's adapter mode, merging "media" into

@@ -241,21 +241,9 @@ func jwtLifetime(tok string) time.Duration {
 	return time.Until(time.Unix(claims.Exp, 0))
 }
 
-// FetchGCPAccessToken mints an OAuth2 access token (cloud-platform scope) for Vertex AI Endpoints (:rawPredict).
-// It checks (1) GOOGLE_OAUTH_ACCESS_TOKEN, (2) GCP Metadata Server, (3) pure-Go ADC (application_default_credentials.json), and (4) gcloud CLI.
-func FetchGCPAccessToken() string {
-	const cacheKey = "oauth2_access_token|cloud-platform"
-	tokenCacheMu.Lock()
-	if cached, ok := tokenCache[cacheKey]; ok && time.Now().Before(cached.expires) {
-		tokenCacheMu.Unlock()
-		return cached.token
-	}
-	tokenCacheMu.Unlock()
+var mintGCPAccessToken = defaultMintGCPAccessToken
 
-	if envTok := strings.TrimSpace(os.Getenv("GOOGLE_OAUTH_ACCESS_TOKEN")); envTok != "" {
-		return envTok
-	}
-
+func defaultMintGCPAccessToken() (string, time.Duration) {
 	var token string
 	var lifetime time.Duration // 0 = unknown (gcloud may return its own cached token)
 	metaURL := "http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/token"
@@ -306,7 +294,32 @@ func FetchGCPAccessToken() string {
 			token = strings.TrimSpace(string(out))
 		}
 	}
+	return token, lifetime
+}
 
+// FetchGCPAccessToken mints an OAuth2 access token (cloud-platform scope) for Vertex AI Endpoints (:rawPredict).
+// It checks (1) GOOGLE_OAUTH_ACCESS_TOKEN, (2) GCP Metadata Server, (3) pure-Go ADC (application_default_credentials.json), and (4) gcloud CLI.
+func FetchGCPAccessToken() string {
+	tok, _ := FetchGCPAccessTokenWithStats()
+	return tok
+}
+
+// FetchGCPAccessTokenWithStats returns the OAuth2 access token and whether it was served without a network/CLI mint
+// (either from the in-memory tokenCache or GOOGLE_OAUTH_ACCESS_TOKEN).
+func FetchGCPAccessTokenWithStats() (string, bool) {
+	const cacheKey = "oauth2_access_token|cloud-platform"
+	tokenCacheMu.Lock()
+	if cached, ok := tokenCache[cacheKey]; ok && time.Now().Before(cached.expires) {
+		tokenCacheMu.Unlock()
+		return cached.token, true
+	}
+	tokenCacheMu.Unlock()
+
+	if envTok := strings.TrimSpace(os.Getenv("GOOGLE_OAUTH_ACCESS_TOKEN")); envTok != "" {
+		return envTok, true
+	}
+
+	token, lifetime := mintGCPAccessToken()
 	if token != "" {
 		tokenCacheMu.Lock()
 		tokenCache[cacheKey] = cachedToken{
@@ -315,26 +328,32 @@ func FetchGCPAccessToken() string {
 		}
 		tokenCacheMu.Unlock()
 	}
-	return token
+	return token, false
 }
 
 // FetchGCPIdentityToken mints an OIDC identity token for Cloud Run IAM / IAP,
 // or automatically mints an OAuth2 access token when targetURL is a Vertex AI Endpoint (:rawPredict).
 func FetchGCPIdentityToken(explicitAudience, targetURL string) string {
+	tok, _ := FetchGCPIdentityTokenWithStats(explicitAudience, targetURL)
+	return tok
+}
+
+// FetchGCPIdentityTokenWithStats returns the OIDC identity token (or Vertex OAuth2 access token) and whether it hit tokenCache.
+func FetchGCPIdentityTokenWithStats(explicitAudience, targetURL string) (string, bool) {
 	if client.IsVertexEndpointURL(targetURL) && explicitAudience == "" {
-		return FetchGCPAccessToken()
+		return FetchGCPAccessTokenWithStats()
 	}
 
 	cacheKey := explicitAudience + "|" + targetURL
 	tokenCacheMu.Lock()
 	if cached, ok := tokenCache[cacheKey]; ok && time.Now().Before(cached.expires) {
 		tokenCacheMu.Unlock()
-		return cached.token
+		return cached.token, true
 	}
 	if explicitAudience == "" {
 		if cached, ok := tokenCache["adc_id_token"]; ok && time.Now().Before(cached.expires) {
 			tokenCacheMu.Unlock()
-			return cached.token
+			return cached.token, true
 		}
 	}
 	tokenCacheMu.Unlock()
@@ -404,7 +423,7 @@ func FetchGCPIdentityToken(explicitAudience, targetURL string) string {
 		}
 		tokenCacheMu.Unlock()
 	}
-	return token
+	return token, false
 }
 
 // GetClient returns a configured API client using Viper values.
