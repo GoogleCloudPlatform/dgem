@@ -555,15 +555,43 @@ func extractEndpointIDFromURL(raw string) string {
 	return ""
 }
 
+const (
+	vertexStatusDeployedFreshTTL = 30 * time.Second
+	vertexStatusDeployedStaleTTL = 90 * time.Second
+	vertexStatusDeployingTTL     = 5 * time.Second
+	vertexStatusQuiescedTTL      = 10 * time.Second
+)
+
 var (
 	vertexStatusCacheMu      sync.RWMutex
 	vertexStatusCached       vertexEndpointLiveStatus
 	vertexStatusCacheExpires time.Time
+	vertexStatusStaleUntil   time.Time
+
+	vertexStatusRefreshMu       sync.Mutex
+	vertexStatusRefreshInFlight = make(map[string]chan struct{})
+	vertexStatusHTTPClient      = proxyHTTPClient
 )
 
 func invalidateVertexStatusCache() {
 	vertexStatusCacheMu.Lock()
 	vertexStatusCacheExpires = time.Time{}
+	vertexStatusStaleUntil = time.Time{}
+	vertexStatusCacheMu.Unlock()
+}
+
+func storeVertexStatusCache(st vertexEndpointLiveStatus, freshTTL time.Duration) {
+	now := time.Now()
+	cached := st
+	cached.CacheHit = false
+	vertexStatusCacheMu.Lock()
+	vertexStatusCached = cached
+	vertexStatusCacheExpires = now.Add(freshTTL)
+	if st.State == "deployed" {
+		vertexStatusStaleUntil = now.Add(freshTTL + vertexStatusDeployedStaleTTL)
+	} else {
+		vertexStatusStaleUntil = time.Time{}
+	}
 	vertexStatusCacheMu.Unlock()
 }
 
@@ -636,16 +664,105 @@ func inspectVertexEndpointState(ctx context.Context, rawVertexURL string) vertex
 			ProbeSource: "unconfigured",
 		}
 	}
+	now := time.Now()
 	vertexStatusCacheMu.RLock()
-	if vertexStatusCached.EndpointID == epID && time.Now().Before(vertexStatusCacheExpires) {
-		cached := vertexStatusCached
-		vertexStatusCacheMu.RUnlock()
-		cached.CacheHit = true
-		cached.ProbeSource = "cache"
-		return cached
+	if vertexStatusCached.EndpointID == epID {
+		if now.Before(vertexStatusCacheExpires) {
+			cached := vertexStatusCached
+			vertexStatusCacheMu.RUnlock()
+			cached.CacheHit = true
+			cached.ProbeSource = "cache"
+			return cached
+		}
+		if vertexStatusCached.State == "deployed" && now.Before(vertexStatusStaleUntil) {
+			cached := vertexStatusCached
+			vertexStatusCacheMu.RUnlock()
+			startAsyncVertexStatusRefresh(epID, rawVertexURL)
+			cached.CacheHit = true
+			cached.ProbeSource = "stale_cache"
+			return cached
+		}
 	}
 	vertexStatusCacheMu.RUnlock()
 
+	return refreshVertexEndpointStateSync(ctx, epID, rawVertexURL)
+}
+
+func startAsyncVertexStatusRefresh(epID, rawVertexURL string) {
+	vertexStatusRefreshMu.Lock()
+	if _, busy := vertexStatusRefreshInFlight[epID]; busy {
+		vertexStatusRefreshMu.Unlock()
+		return
+	}
+	done := make(chan struct{})
+	vertexStatusRefreshInFlight[epID] = done
+	vertexStatusRefreshMu.Unlock()
+
+	go func() {
+		defer func() {
+			vertexStatusRefreshMu.Lock()
+			delete(vertexStatusRefreshInFlight, epID)
+			close(done)
+			vertexStatusRefreshMu.Unlock()
+		}()
+		_ = probeAndCacheVertexEndpointState(epID, rawVertexURL)
+	}()
+}
+
+func refreshVertexEndpointStateSync(ctx context.Context, epID, rawVertexURL string) vertexEndpointLiveStatus {
+	vertexStatusRefreshMu.Lock()
+	if waitCh, busy := vertexStatusRefreshInFlight[epID]; busy {
+		vertexStatusRefreshMu.Unlock()
+		select {
+		case <-waitCh:
+			vertexStatusCacheMu.RLock()
+			if vertexStatusCached.EndpointID == epID {
+				cached := vertexStatusCached
+				vertexStatusCacheMu.RUnlock()
+				cached.CacheHit = true
+				if cached.ProbeSource == "" {
+					cached.ProbeSource = "cache"
+				}
+				return cached
+			}
+			vertexStatusCacheMu.RUnlock()
+		case <-ctx.Done():
+			return vertexEndpointLiveStatus{
+				EndpointID:  epID,
+				ModelID:     defaultVertexModelID(),
+				DisplayName: "dgemma-dedicated-g4",
+				State:       "quiesced",
+				Message:     "Vertex endpoint status check cancelled",
+				ProbeSource: "unconfigured",
+			}
+		}
+		vertexStatusRefreshMu.Lock()
+	}
+	done := make(chan struct{})
+	vertexStatusRefreshInFlight[epID] = done
+	vertexStatusRefreshMu.Unlock()
+
+	defer func() {
+		vertexStatusRefreshMu.Lock()
+		delete(vertexStatusRefreshInFlight, epID)
+		close(done)
+		vertexStatusRefreshMu.Unlock()
+	}()
+
+	return probeAndCacheVertexEndpointState(epID, rawVertexURL)
+}
+
+func healthBodyReady(body []byte) bool {
+	var info struct {
+		VLLMReady *bool `json:"vllm_ready"`
+	}
+	if json.Unmarshal(body, &info) == nil && info.VLLMReady != nil {
+		return *info.VLLMReady
+	}
+	return true
+}
+
+func probeAndCacheVertexEndpointState(epID, rawVertexURL string) vertexEndpointLiveStatus {
 	st := vertexEndpointLiveStatus{
 		EndpointID:  epID,
 		ModelID:     defaultVertexModelID(),
@@ -659,52 +776,106 @@ func inspectVertexEndpointState(ctx context.Context, rawVertexURL string) vertex
 		return st
 	}
 
-	proj := detectGCPProjectID()
-	projNum := detectGCPProjectNumber()
-	region := strings.TrimSpace(os.Getenv("GCP_REGION"))
-	if region == "" {
-		region = "us-central1"
+	var proj, projNum, region string
+	if vid, err := parseVertexEndpointIdentity(client.NormalizeVertexEndpointURL(rawVertexURL)); err == nil {
+		proj = vid.Project
+		projNum = vid.ProjectNum
+		region = vid.Location
 	}
-	if proj == "" || projNum == "" {
+	if region == "" {
+		region = strings.TrimSpace(os.Getenv("GCP_REGION"))
+		if region == "" {
+			region = "us-central1"
+		}
+	}
+
+	hc := vertexStatusHTTPClient
+	if hc == nil {
+		hc = proxyHTTPClient
+	}
+
+	// 1a. Fast Data-Plane Check for :rawPredict endpoints (PSC or regional): dispatch {"health": true} over the
+	// shared keep-alive transport (~10-15ms) before touching the slower Vertex control-plane endpoints.get API.
+	if strings.Contains(strings.ToLower(rawVertexURL), ":rawpredict") {
+		hCtx, hCancel := context.WithTimeout(context.Background(), 2500*time.Millisecond)
+		if hReq, err := http.NewRequestWithContext(hCtx, http.MethodPost, strings.TrimSpace(rawVertexURL), strings.NewReader(`{"health":true}`)); err == nil {
+			hReq.Header.Set("Content-Type", "application/json")
+			hReq.Header.Set("Authorization", "Bearer "+tok)
+			if k := client.ServerKeyFromEnv(); k != "" {
+				hReq.Header.Set(client.ServerKeyHeader, k)
+			}
+			if hResp, err := hc.Do(hReq); err == nil {
+				hBody, _ := io.ReadAll(hResp.Body)
+				hResp.Body.Close()
+				if hResp.StatusCode == http.StatusOK && healthBodyReady(hBody) {
+					hCancel()
+					st.State = "deployed"
+					st.ReplicaCount = 1
+					st.MachineType = defaultVertexMachineLabel
+					st.Message = fmt.Sprintf("Active & Ready (1 replica · %s · :rawPredict)", st.MachineType)
+					st.ProbeSource = "rawpredict_health"
+					storeVertexStatusCache(st, vertexStatusDeployedFreshTTL)
+					return st
+				}
+			}
+		}
+		hCancel()
+	}
+
+	if proj == "" {
+		proj = detectGCPProjectID()
+	}
+	if projNum == "" {
+		if vertexNumberRe.MatchString(proj) {
+			projNum = proj
+		} else {
+			projNum = detectGCPProjectNumber()
+		}
+	}
+	if proj == "" && projNum != "" {
+		proj = projNum
+	}
+	if proj == "" {
 		return st
 	}
 
-	// 1. Fast Data-Plane Check (/invoke/health on Dedicated Endpoint DNS takes ~15ms when deployed). A :rawPredict
-	// endpoint (private/PSC, or regional) has no invoke routes, so its state comes from the control plane only.
-	healthURL := fmt.Sprintf("https://%s.%s-%s.prediction.vertexai.goog/v1/projects/%s/locations/%s/endpoints/%s/invoke/health", epID, region, projNum, proj, region, epID)
-	hCtx, hCancel := context.WithTimeout(context.Background(), 2500*time.Millisecond)
-	if strings.Contains(strings.ToLower(rawVertexURL), ":rawpredict") {
-		hCancel()
-	} else if hReq, err := http.NewRequestWithContext(hCtx, http.MethodGet, healthURL, nil); err == nil {
-		hReq.Header.Set("Authorization", "Bearer "+tok)
-		if hResp, err := http.DefaultClient.Do(hReq); err == nil {
-			hResp.Body.Close()
-			if hResp.StatusCode == http.StatusOK {
-				hCancel()
-				st.State = "deployed"
-				st.ReplicaCount = 1
-				st.MachineType = defaultVertexMachineLabel
-				st.Message = fmt.Sprintf("Active & Ready (1 replica · %s · /invoke/*)", st.MachineType)
-				st.ProbeSource = "invoke_health"
-				vertexStatusCacheMu.Lock()
-				vertexStatusCached = st
-				vertexStatusCacheExpires = time.Now().Add(30 * time.Second)
-				vertexStatusCacheMu.Unlock()
-				return st
+	// 1b. Fast Data-Plane Check (/invoke/health on Dedicated Endpoint DNS takes ~15ms when deployed).
+	if !strings.Contains(strings.ToLower(rawVertexURL), ":rawpredict") && projNum != "" {
+		healthURL := fmt.Sprintf("https://%s.%s-%s.prediction.vertexai.goog/v1/projects/%s/locations/%s/endpoints/%s/invoke/health", epID, region, projNum, proj, region, epID)
+		hCtx, hCancel := context.WithTimeout(context.Background(), 2500*time.Millisecond)
+		if hReq, err := http.NewRequestWithContext(hCtx, http.MethodGet, healthURL, nil); err == nil {
+			hReq.Header.Set("Authorization", "Bearer "+tok)
+			if hResp, err := hc.Do(hReq); err == nil {
+				hBody, _ := io.ReadAll(hResp.Body)
+				hResp.Body.Close()
+				if hResp.StatusCode == http.StatusOK && healthBodyReady(hBody) {
+					hCancel()
+					st.State = "deployed"
+					st.ReplicaCount = 1
+					st.MachineType = defaultVertexMachineLabel
+					st.Message = fmt.Sprintf("Active & Ready (1 replica · %s · /invoke/*)", st.MachineType)
+					st.ProbeSource = "invoke_health"
+					storeVertexStatusCache(st, vertexStatusDeployedFreshTTL)
+					return st
+				}
 			}
 		}
+		hCancel()
 	}
-	hCancel()
 
 	// 2. Control-Plane Check (endpoints.get & active operations)
+	cpProj := projNum
+	if cpProj == "" {
+		cpProj = proj
+	}
 	st.ProbeSource = "control_plane"
-	apiURL := fmt.Sprintf("https://%s-aiplatform.googleapis.com/v1beta1/projects/%s/locations/%s/endpoints/%s", region, projNum, region, epID)
+	apiURL := fmt.Sprintf("https://%s-aiplatform.googleapis.com/v1beta1/projects/%s/locations/%s/endpoints/%s", region, cpProj, region, epID)
 	reqCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	req, err := http.NewRequestWithContext(reqCtx, http.MethodGet, apiURL, nil)
 	if err == nil {
 		req.Header.Set("Authorization", "Bearer "+tok)
-		if resp, err := http.DefaultClient.Do(req); err == nil {
+		if resp, err := hc.Do(req); err == nil {
 			defer resp.Body.Close()
 			if resp.StatusCode == http.StatusOK {
 				var epData vertexEndpointResource
@@ -721,20 +892,14 @@ func inspectVertexEndpointState(ctx context.Context, rawVertexURL string) vertex
 							st.State = "deployed"
 							st.ReplicaCount = dm.Status.AvailableReplicaCount
 							st.Message = fmt.Sprintf("Active & Ready (%d replicas · %s · /invoke/*)", st.ReplicaCount, st.MachineType)
-							vertexStatusCacheMu.Lock()
-							vertexStatusCached = st
-							vertexStatusCacheExpires = time.Now().Add(30 * time.Second)
-							vertexStatusCacheMu.Unlock()
+							storeVertexStatusCache(st, vertexStatusDeployedFreshTTL)
 							return st
 						}
 						// Endpoint has deployedModel registered, but availableReplicaCount is 0 (autoscaled down)
 						st.State = "deploying"
 						st.ReplicaCount = 0
 						st.Message = fmt.Sprintf("Scaling up Vertex AI GPU replica (0 → 1 · %s · /invoke/*)...", st.MachineType)
-						vertexStatusCacheMu.Lock()
-						vertexStatusCached = st
-						vertexStatusCacheExpires = time.Now().Add(5 * time.Second)
-						vertexStatusCacheMu.Unlock()
+						storeVertexStatusCache(st, vertexStatusDeployingTTL)
 						return st
 					}
 				}
@@ -742,10 +907,10 @@ func inspectVertexEndpointState(ctx context.Context, rawVertexURL string) vertex
 		}
 	}
 	// Check if a deployModel LRO operation is currently running on this endpoint
-	opsURL := fmt.Sprintf("https://%s-aiplatform.googleapis.com/v1beta1/projects/%s/locations/%s/operations", region, projNum, region)
+	opsURL := fmt.Sprintf("https://%s-aiplatform.googleapis.com/v1beta1/projects/%s/locations/%s/operations", region, cpProj, region)
 	if opReq, err := http.NewRequestWithContext(reqCtx, http.MethodGet, opsURL, nil); err == nil {
 		opReq.Header.Set("Authorization", "Bearer "+tok)
-		if opResp, err := http.DefaultClient.Do(opReq); err == nil {
+		if opResp, err := hc.Do(opReq); err == nil {
 			defer opResp.Body.Close()
 			var opsData struct {
 				Operations []struct {
@@ -764,10 +929,7 @@ func inspectVertexEndpointState(ctx context.Context, rawVertexURL string) vertex
 			}
 		}
 	}
-	vertexStatusCacheMu.Lock()
-	vertexStatusCached = st
-	vertexStatusCacheExpires = time.Now().Add(10 * time.Second)
-	vertexStatusCacheMu.Unlock()
+	storeVertexStatusCache(st, vertexStatusQuiescedTTL)
 	return st
 }
 
