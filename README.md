@@ -113,14 +113,26 @@ A gateway (`dgem serve`) in front routes to Vertex first and fails over to Cloud
 
 ## Installation & CLI Examples
 
-Install the CLI binary directly with Go 1.24+:
+Download a prebuilt static archive (`linux/{amd64,arm64}`, `darwin/{amd64,arm64}` — bundling `dgem`, Decision Studio, `templates/`, `LICENSE`, and `README.md` alongside `SHA256SUMS`) from [GitHub Releases](https://github.com/GoogleCloudPlatform/dgem/releases) (from `v0.4.1` onward):
+
+```bash
+OS="$(uname -s | tr '[:upper:]' '[:lower:]')"
+ARCH="$(uname -m | sed 's/x86_64/amd64/;s/aarch64/arm64/')"
+TAG="v0.4.1"
+curl -fsSLO "https://github.com/GoogleCloudPlatform/dgem/releases/download/${TAG}/dgem_${TAG}_${OS}_${ARCH}.tar.gz"
+curl -fsSLO "https://github.com/GoogleCloudPlatform/dgem/releases/download/${TAG}/SHA256SUMS"
+tar -xzf "dgem_${TAG}_${OS}_${ARCH}.tar.gz"
+./dgem --version
+```
+
+Or install the CLI binary directly with Go 1.24+:
 
 ```bash
 go install github.com/GoogleCloudPlatform/dgem@latest
 dgem --version
 ```
 
-Or clone the repository to build locally and use the bundled policy `templates/`:
+Or clone the repository to build locally and edit the bundled policy `templates/`:
 
 ```bash
 git clone https://github.com/GoogleCloudPlatform/dgem.git

@@ -6,6 +6,13 @@ image for a release in your own project with `make cloudrun-build`.
 
 ## Unreleased
 
+- **Prebuilt CLI release archives and `go install` version reporting (`.github/workflows/release.yml`, `cmd/version.go`).**
+  Pushing a `v*.*.*` release tag now builds Decision Studio (`studio/dist`), cross-compiles static `CGO_ENABLED=0` `dgem`
+  binaries for `linux/amd64`, `linux/arm64`, `darwin/amd64`, and `darwin/arm64` stamped with the release tag and commit
+  revision, packages `dgem`, `templates/`, `LICENSE`, and `README.md` with `SHA256SUMS`, and attaches them to the
+  GitHub Release (creating a draft release if needed). Module-mode `go install github.com/GoogleCloudPlatform/dgem@vX.Y.Z`
+  builds also fall back to Go's embedded module `BuildInfo` version instead of reporting `"dev"`.
+
 ## v0.4.0 (2026-11-03) — first public release
 
 Earlier versions were developed internally; this is the first release in this repository.
