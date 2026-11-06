@@ -16,46 +16,79 @@ package cmd
 
 import (
 	"fmt"
+	"regexp"
 	"runtime/debug"
+	"strings"
 )
 
 // Build metadata, set at build time with
 //
 //	-ldflags "-X github.com/GoogleCloudPlatform/dgem/cmd.Version=v0.1.0 -X github.com/GoogleCloudPlatform/dgem/cmd.Commit=<sha> -X github.com/GoogleCloudPlatform/dgem/cmd.Date=<rfc3339>"
 //
-// Version is `git describe --tags --match 'v*'`: a release tag such as v0.1.0 on a release build, or
-// v0.1.0-3-gabc1234 for commits after it. Unset values fall back to Go's embedded VCS info.
+// Version is `git describe --tags --match 'v*'`: a release tag such as v0.4.0 on a release build, or
+// v0.4.0-3-gabc1234 for commits after it. Unset values fall back to Go's embedded module/VCS BuildInfo
+// so `go install github.com/GoogleCloudPlatform/dgem@vX.Y.Z` reports vX.Y.Z rather than "dev".
 var (
 	Version = "dev"
 	Commit  = ""
 	Date    = ""
+
+	readBuildInfo = debug.ReadBuildInfo
+	semverTagRe   = regexp.MustCompile(`^v[0-9]+\.[0-9]+\.[0-9]+(?:[-+][0-9A-Za-z.-]+)?$`)
 )
+
+func isSemverTag(v string) bool {
+	return semverTagRe.MatchString(strings.TrimSpace(v))
+}
+
+func buildVersion() string {
+	if Version != "" && Version != "dev" {
+		return Version
+	}
+	if bi, ok := readBuildInfo(); ok && bi != nil && isSemverTag(bi.Main.Version) {
+		return strings.TrimSpace(bi.Main.Version)
+	}
+	if Version != "" {
+		return Version
+	}
+	return "dev"
+}
 
 func buildRevision() string {
 	if Commit != "" {
 		return Commit
 	}
-	if bi, ok := debug.ReadBuildInfo(); ok {
+	if bi, ok := readBuildInfo(); ok && bi != nil {
 		for _, s := range bi.Settings {
-			if s.Key == "vcs.revision" && len(s.Value) >= 7 {
-				return s.Value[:7]
+			if s.Key == "vcs.revision" && s.Value != "" {
+				if len(s.Value) >= 7 {
+					return s.Value[:7]
+				}
+				return s.Value
 			}
 		}
 	}
-	return "unknown"
+	return ""
 }
 
 // VersionInfo is reported by `dgem --version` and the gateway's /health.
 func VersionInfo() map[string]string {
-	return map[string]string{"version": Version, "revision": buildRevision(), "build_date": Date}
+	return map[string]string{"version": buildVersion(), "revision": buildRevision(), "build_date": Date}
 }
 
 func versionString() string {
-	s := fmt.Sprintf("%s (revision %s", Version, buildRevision())
-	if Date != "" {
-		s += ", built " + Date
+	ver := buildVersion()
+	var meta []string
+	if rev := buildRevision(); rev != "" {
+		meta = append(meta, "revision "+rev)
 	}
-	return s + ")"
+	if Date != "" {
+		meta = append(meta, "built "+Date)
+	}
+	if len(meta) == 0 {
+		return ver
+	}
+	return fmt.Sprintf("%s (%s)", ver, strings.Join(meta, ", "))
 }
 
 func init() {

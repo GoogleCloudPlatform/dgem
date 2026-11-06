@@ -1045,7 +1045,7 @@ func gatewayHealth(w http.ResponseWriter, _ *http.Request) {
 	_ = json.NewEncoder(w).Encode(map[string]any{
 		"status":       "ok",
 		"service":      "dgem-gateway",
-		"version":      Version,
+		"version":      buildVersion(),
 		"revision":     buildRevision(),
 		"body_logging": bodyLogStatus(),
 	})
