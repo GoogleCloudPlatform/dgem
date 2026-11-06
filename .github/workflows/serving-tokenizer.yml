@@ -61,5 +61,5 @@ jobs:
           git show ${REF_COMMIT}:deploy/cloudrun/server/structured_server.py > /tmp/ss_ref.py
           DGEM_TOKENIZER_DIR=~/tok DGEM_REF_SERVER=/tmp/ss_ref.py \
             python -m unittest -v deploy/cloudrun/server/test_label_sets.py
-      - name: Server key, upstream error and single-route tests
-        run: python -m unittest -v deploy/cloudrun/server/test_server_key.py deploy/cloudrun/server/test_upstream_errors.py deploy/cloudrun/server/test_predict_route.py
+      - name: Server key, upstream error, single-route and readiness tests
+        run: python -m unittest -v deploy/cloudrun/server/test_server_key.py deploy/cloudrun/server/test_upstream_errors.py deploy/cloudrun/server/test_predict_route.py deploy/cloudrun/server/test_ready_route.py

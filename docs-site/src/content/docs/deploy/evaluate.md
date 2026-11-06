@@ -10,7 +10,7 @@ criterion, so a problem found in step 3 is not mistaken for a model limitation i
 | Step | What you check | Time | Pass when |
 | :--- | :--- | :--- | :--- |
 | 0 | Hardware | — | GPU and host RAM meet the table below |
-| 1 | The container starts | 5–15 min (weight download) | `/health` shows `vllm_ready` and `warmed` |
+| 1 | The container starts | 5–15 min (weight download) | `/ready` returns `200` (`/health` shows `vllm_ready` and `warmed`) |
 | 2 | A first decision | 1 min | Valid answers with probabilities; GPU time in the expected range |
 | 3 | Baseline with the regression matrix (T0, then T1) | ~1 + 10–15 min | T0 gates PASS; T1 numbers recorded, or PASS against a known-good baseline |
 | 4 | Concurrency and the full matrix (optional) | 5–30 min | 0 errors at your concurrency; T2 for multilingual and option-order coverage |
@@ -47,16 +47,15 @@ docker run --gpus all -p 8080:8080 \
 - Leave `API_KEY` unset for the evaluation, or reach the container by host name rather than `localhost` when you
   use the gateway in step 5 (the gateway does not forward keys to loopback addresses).
 
-Poll health until it is ready:
+Poll readiness until the engine serves (`/health` returns `200` as soon as the proxy starts so callers can read cold-start progress, whereas `/ready` returns `503` until `vllm_ready` is `true`):
 
 ```bash
-curl -s http://<GPU_HOST>:8080/health
-# booting: {"phase": "...", "vllm_ready": false, ...}
-# ready:   {"status": "ok", "vllm_ready": true, "phase": "ready", "warmed": true, "version": "<version>", ...}
+curl -sf http://<GPU_HOST>:8080/ready
+# booting (HTTP 503): {"phase": "...", "vllm_ready": false, ...}
+# ready   (HTTP 200): {"status": "ok", "vllm_ready": true, "phase": "ready", "warmed": true, "version": "<version>", ...}
 ```
 
-**Pass:** `vllm_ready` and `warmed` are both `true`. Record `version`, `revision` and `vllm_commit` from this
-response; they identify the build you evaluated.
+**Pass:** `/ready` returns `200` and both `vllm_ready` and `warmed` are `true` (do not rely on `/health` HTTP `200` alone). Record `version`, `revision` and `vllm_commit` from this response; they identify the build you evaluated.
 
 ## 2. Make a first decision
 

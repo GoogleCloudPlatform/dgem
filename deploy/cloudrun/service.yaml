@@ -57,9 +57,10 @@ spec:
         nodeSelector:
           run.googleapis.com/accelerator: nvidia-l4
         startupProbe:
-          tcpSocket:
+          httpGet:
+            path: /ready
             port: 8080
-          initialDelaySeconds: 240
-          periodSeconds: 240
-          failureThreshold: 1
-          timeoutSeconds: 240
+          initialDelaySeconds: 10
+          periodSeconds: 5
+          timeoutSeconds: 4
+          failureThreshold: 180

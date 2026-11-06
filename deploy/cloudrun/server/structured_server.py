@@ -120,10 +120,11 @@ ARGS = None
 TOK = None
 API_KEY = os.environ.get("API_KEY", "")
 # dgem: service-to-service secret. With DGEM_SERVER_KEY set (comma-separated to rotate; every listed key is accepted),
-# every POST needs header X-DGem-Key equal to one of the keys; GET /health stays open. It is for services that call
-# this server (a gateway, batch jobs, probes), never for people: people go through an authenticated gateway, where
-# access is tracked. The Authorization header can't carry it on Vertex or Cloud Run, where it holds the Google token.
+# every POST needs header X-DGem-Key equal to one of the keys; GET /health and GET /ready stay open. It is for services
+# that call this server (a gateway, batch jobs, probes), never for people: people go through an authenticated gateway,
+# where access is tracked. The Authorization header can't carry it on Vertex or Cloud Run, where it holds the Google token.
 SERVER_KEYS = [k.strip().encode() for k in os.environ.get("DGEM_SERVER_KEY", "").split(",") if k.strip()]
+WARMUP_STATE_PATH = os.environ.get("DGEM_WARMUP_STATE_FILE", "/tmp/dgemma/warmup_state.json")
 # dgem: the largest body of a refused request that is read (and dropped) to keep a keep-alive connection in step; a
 # larger one closes the connection instead.
 REFUSED_BODY_LIMIT = 16 << 20
@@ -622,26 +623,30 @@ def upstream_chat(body, timeout=600):
 
 
 def _health_info():
-    """Readiness telemetry for /health: always HTTP 200 (the container is up), with
-    vllm_ready/phase/bytes_staged_gb/warmed from entrypoint.sh's warmup_state.json so the
-    gateway, MCP get_health_and_gpu_status and the Studio can report cold-start progress."""
+    """Readiness telemetry for /health (always HTTP 200) and /ready (503 until vllm_ready is true), with
+    phase/bytes_staged_gb/warmed from entrypoint.sh's warmup_state.json so the gateway, MCP
+    get_health_and_gpu_status and the Studio can report cold-start progress."""
     info = {"status": "ok", "server": "dgem-structured-server",
             "version": os.environ.get("DGEM_VERSION", "dev"),
             "revision": os.environ.get("DGEM_REVISION", "unknown"),
             "vllm_commit": os.environ.get("DGEM_VLLM_COMMIT", ""),
             "vllm_ready": False, "phase": "loading_vllm_siglip", "bytes_staged_gb": 0.0}
     try:
-        with open("/tmp/dgemma/warmup_state.json") as wf:
+        with open(WARMUP_STATE_PATH) as wf:
             info.update(json.load(wf))
     except Exception:
         pass
+    upstream_ok = False
     try:
         with urllib.request.urlopen(ARGS.upstream.rstrip("/") + "/health", timeout=0.4) as r:
-            if r.status == 200:
-                info["vllm_ready"] = True
-                info["phase"] = "ready"
+            upstream_ok = r.status == 200
     except Exception:
         pass
+    info["vllm_ready"] = upstream_ok
+    if upstream_ok:
+        info["phase"] = "ready"
+    elif info.get("phase") == "ready":
+        info["phase"] = "loading_vllm_siglip"
     return info
 
 
@@ -1524,6 +1529,9 @@ class Handler(BaseHTTPRequestHandler):
     def do_GET(self):
         if self.path in ("/health", "/invoke/health", "/"):
             return self._json(200, _health_info())
+        if self.path in ("/ready", "/invoke/ready"):
+            info = _health_info()
+            return self._json(200 if info["vllm_ready"] else 503, info)
         return self._json(404, {"error": {"message": "unknown route"}})
 
     def _read_request(self):

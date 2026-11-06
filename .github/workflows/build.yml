@@ -87,8 +87,8 @@ jobs:
       - name: Run serving image service key tests
         run: python -m unittest -v deploy/cloudrun/server/test_server_key.py
 
-      - name: Run serving image media, upstream error and single-route tests
-        run: python -m unittest -v deploy/cloudrun/server/test_media_fields.py deploy/cloudrun/server/test_upstream_errors.py deploy/cloudrun/server/test_predict_route.py
+      - name: Run serving image media, upstream error, single-route and readiness tests
+        run: python -m unittest -v deploy/cloudrun/server/test_media_fields.py deploy/cloudrun/server/test_upstream_errors.py deploy/cloudrun/server/test_predict_route.py deploy/cloudrun/server/test_ready_route.py
 
       - name: Check the serving patch re-applies to the upstream file
         run: |
