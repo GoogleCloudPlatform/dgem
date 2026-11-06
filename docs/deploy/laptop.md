@@ -47,11 +47,15 @@ docker run --gpus all -p 8080:8080 -v /data/dgemma:/weights -e MODEL=/weights \
 Wait until
 `curl -s localhost:8080/health` shows `"vllm_ready": true` (and `"warmed": true` a few seconds later).
 
-## 2. Build the CLI
+## 2. Install or build the CLI
+
+From a local clone of the repository:
 
 ```bash
 make build        # -> ./bin/dgem
 ```
+
+Or download a prebuilt static release archive (`dgem_<tag>_<os>_<arch>.tar.gz`, which bundles `dgem`, Decision Studio, and `templates/` alongside `SHA256SUMS`) from [GitHub Releases](https://github.com/GoogleCloudPlatform/dgem/releases) (from `v0.4.1` onward), or install with Go (`go install github.com/GoogleCloudPlatform/dgem@latest`).
 
 ## 3. Make your first decision
 
