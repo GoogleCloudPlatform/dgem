@@ -26,9 +26,21 @@ GATEWAY_SERVICE="${GATEWAY_SERVICE:-dgemma-gateway}"
 BUCKET="${GCS_BUCKET:-dgem-weights-${PROJECT}}"
 ALLOW_GROUP="${ALLOW_GROUP:-}"
 if [[ -z "${ALLOW_GROUP}" ]]; then
-  echo "Error: ALLOW_GROUP is required (e.g. ALLOW_GROUP=my-team@example.com). An IAP gateway requires an authorized group or user." >&2
+  echo "Error: ALLOW_GROUP is required (e.g. ALLOW_GROUP=my-team@example.com or ALLOW_GROUP=user:me@gmail.com)." >&2
   exit 1
 fi
+
+case "${ALLOW_GROUP}" in
+  user:*|group:*|serviceAccount:*|domain:*)
+    ALLOW_MEMBER="${ALLOW_GROUP}"
+    ;;
+  *@gmail.com|*@googlemail.com)
+    ALLOW_MEMBER="user:${ALLOW_GROUP}"
+    ;;
+  *)
+    ALLOW_MEMBER="group:${ALLOW_GROUP}"
+    ;;
+esac
 
 GPU_SA_NAME="dgemma-gpu-sa"
 GPU_SA="${GPU_SA_NAME}@${PROJECT}.iam.gserviceaccount.com"
@@ -41,7 +53,7 @@ echo "  Configuring Zero-Trust Service Accounts & IAM / IAP Bindings"
 echo "  Project:       ${PROJECT} (${REGION})"
 echo "  GPU SA:        ${GPU_SA}"
 echo "  Gateway SA:    ${GATEWAY_SA}"
-echo "  Allowed Group: group:${ALLOW_GROUP}"
+echo "  Allowed Member:${ALLOW_MEMBER}"
 echo "================================================================================"
 
 # 1. Create dedicated Service Accounts (idempotent)
@@ -86,7 +98,7 @@ if gcloud run services describe "${GPU_SERVICE}" --project="${PROJECT}" --region
     echo "-> ${GPU_SERVICE} already runs as ${GPU_SA} (skipping revision update to preserve warm GPU)."
   fi
 
-  echo "-> Granting roles/run.invoker on ${GPU_SERVICE} to ${GATEWAY_SA} and group:${ALLOW_GROUP}..."
+  echo "-> Granting roles/run.invoker on ${GPU_SERVICE} to ${GATEWAY_SA} and ${ALLOW_MEMBER}..."
   gcloud run services add-iam-policy-binding "${GPU_SERVICE}" \
     --project="${PROJECT}" \
     --region="${REGION}" \
@@ -94,12 +106,25 @@ if gcloud run services describe "${GPU_SERVICE}" --project="${PROJECT}" --region
     --role="roles/run.invoker" \
     --quiet >/dev/null
 
-  gcloud run services add-iam-policy-binding "${GPU_SERVICE}" \
+  if ! gcloud run services add-iam-policy-binding "${GPU_SERVICE}" \
     --project="${PROJECT}" \
     --region="${REGION}" \
-    --member="group:${ALLOW_GROUP}" \
+    --member="${ALLOW_MEMBER}" \
     --role="roles/run.invoker" \
-    --quiet >/dev/null
+    --quiet >/dev/null 2>&1; then
+    if [[ "${ALLOW_MEMBER}" == group:* ]]; then
+      ALLOW_MEMBER="user:${ALLOW_GROUP}"
+      echo "   (Retrying invoker binding as individual user principal ${ALLOW_MEMBER}...)"
+      gcloud run services add-iam-policy-binding "${GPU_SERVICE}" \
+        --project="${PROJECT}" \
+        --region="${REGION}" \
+        --member="${ALLOW_MEMBER}" \
+        --role="roles/run.invoker" \
+        --quiet >/dev/null
+    else
+      exit 1
+    fi
+  fi
 fi
 
 # 4. Attach dgemma-gateway-sa to dgemma-gateway and bind authorized invokers
@@ -129,65 +154,67 @@ if gcloud run services describe "${GATEWAY_SERVICE}" --project="${PROJECT}" --re
     echo "-> ${GATEWAY_SERVICE} already runs as ${GATEWAY_SA} (skipping redundant revision update)."
   fi
 
-  echo "-> Granting roles/run.invoker on ${GATEWAY_SERVICE} to group:${ALLOW_GROUP}..."
+  echo "-> Granting roles/run.invoker on ${GATEWAY_SERVICE} to ${ALLOW_MEMBER}..."
   gcloud run services add-iam-policy-binding "${GATEWAY_SERVICE}" \
     --project="${PROJECT}" \
     --region="${REGION}" \
-    --member="group:${ALLOW_GROUP}" \
+    --member="${ALLOW_MEMBER}" \
     --role="roles/run.invoker" \
     --quiet >/dev/null
-fi
 
-# 5. Configure Cloud Run Direct IAP on dgemma-gateway (Browser Sign-In + Programmatic CLI Access)
-echo "-> Granting roles/iap.httpsResourceAccessor on ${GATEWAY_SERVICE} to group:${ALLOW_GROUP}..."
-gcloud projects add-iam-policy-binding "${PROJECT}" \
-  --member="group:${ALLOW_GROUP}" \
-  --role="roles/iap.httpsResourceAccessor" \
-  --condition=None \
-  --quiet >/dev/null
+  # 5. Configure Cloud Run Direct IAP on dgemma-gateway (Browser Sign-In + Programmatic CLI Access)
+  echo "-> Granting roles/iap.httpsResourceAccessor on ${GATEWAY_SERVICE} to ${ALLOW_MEMBER}..."
+  gcloud projects add-iam-policy-binding "${PROJECT}" \
+    --member="${ALLOW_MEMBER}" \
+    --role="roles/iap.httpsResourceAccessor" \
+    --condition=None \
+    --quiet >/dev/null || true
 
-gcloud iap web add-iam-policy-binding \
-  --project="${PROJECT}" \
-  --resource-type=cloud-run \
-  --region="${REGION}" \
-  --service="${GATEWAY_SERVICE}" \
-  --member="group:${ALLOW_GROUP}" \
-  --role="roles/iap.httpsResourceAccessor" \
-  --quiet >/dev/null
+  gcloud iap web add-iam-policy-binding \
+    --project="${PROJECT}" \
+    --resource-type=cloud-run \
+    --region="${REGION}" \
+    --service="${GATEWAY_SERVICE}" \
+    --member="${ALLOW_MEMBER}" \
+    --role="roles/iap.httpsResourceAccessor" \
+    --quiet >/dev/null || true
 
-gcloud iap web add-iam-policy-binding \
-  --project="${PROJECT}" \
-  --resource-type=cloud-run \
-  --region="${REGION}" \
-  --service="${GATEWAY_SERVICE}" \
-  --member="serviceAccount:${GATEWAY_SA}" \
-  --role="roles/iap.httpsResourceAccessor" \
-  --quiet >/dev/null
+  gcloud iap web add-iam-policy-binding \
+    --project="${PROJECT}" \
+    --resource-type=cloud-run \
+    --region="${REGION}" \
+    --service="${GATEWAY_SERVICE}" \
+    --member="serviceAccount:${GATEWAY_SA}" \
+    --role="roles/iap.httpsResourceAccessor" \
+    --quiet >/dev/null || true
 
-# Allow gcloud CLI (32555940559...) and Google Cloud SDK ADC (764086051850...) to authenticate programmatically through IAP
-IAP_SETTINGS_TMP="$(mktemp)"
-cat <<EOF >"${IAP_SETTINGS_TMP}"
+  # Allow gcloud CLI (32555940559...) and Google Cloud SDK ADC (764086051850...) to authenticate programmatically through IAP
+  IAP_SETTINGS_TMP="$(mktemp)"
+  cat <<EOF >"${IAP_SETTINGS_TMP}"
 accessSettings:
   oauthSettings:
     programmaticClients:
       - 32555940559.apps.googleusercontent.com
       - 764086051850-6qr4p6gpi6hn506pt8ejuq83di341hur.apps.googleusercontent.com
 EOF
-if [ -n "${IAP_CLIENT_ID:-}" ]; then
-  echo "      - ${IAP_CLIENT_ID}" >>"${IAP_SETTINGS_TMP}"
+  if [ -n "${IAP_CLIENT_ID:-}" ]; then
+    echo "      - ${IAP_CLIENT_ID}" >>"${IAP_SETTINGS_TMP}"
+  fi
+  echo "-> Configuring IAP programmaticClients (enabling --gcp-auth / gcloud auth print-identity-token through IAP)..."
+  gcloud iap settings set "${IAP_SETTINGS_TMP}" \
+    --project="${PROJECT}" \
+    --resource-type=cloud-run \
+    --region="${REGION}" \
+    --service="${GATEWAY_SERVICE}" \
+    --quiet >/dev/null || true
+  rm -f "${IAP_SETTINGS_TMP}"
+else
+  echo "-> ${GATEWAY_SERVICE} not deployed on Cloud Run; skipping Cloud Run gateway IAP bindings."
 fi
-echo "-> Configuring IAP programmaticClients (enabling --gcp-auth / gcloud auth print-identity-token through IAP)..."
-gcloud iap settings set "${IAP_SETTINGS_TMP}" \
-  --project="${PROJECT}" \
-  --resource-type=cloud-run \
-  --region="${REGION}" \
-  --service="${GATEWAY_SERVICE}" \
-  --quiet >/dev/null
-rm -f "${IAP_SETTINGS_TMP}"
 
 echo "================================================================================"
 echo " ✅ Zero-Trust IAM & IAP Setup Complete!"
 echo "    • ${GPU_SERVICE} runs as:     ${GPU_SA} (read-only on gs://${BUCKET}, IAP OFF)"
-echo "    • ${GATEWAY_SERVICE} runs as: ${GATEWAY_SA} (invoker on ${GPU_SERVICE}, IAP ON)"
-echo "    • Authorized Group:           group:${ALLOW_GROUP} (run.invoker + iap.httpsResourceAccessor + CLI programmaticClients)"
+echo "    • ${GATEWAY_SERVICE} runs as: ${GATEWAY_SA} (invoker on ${GPU_SERVICE})"
+echo "    • Authorized Principal:       ${ALLOW_MEMBER} (run.invoker)"
 echo "================================================================================"

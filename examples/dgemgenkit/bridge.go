@@ -20,11 +20,13 @@ package dgemgenkit
 import (
 	"context"
 	"encoding/json"
+	"flag"
 	"fmt"
 	"math"
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/GoogleCloudPlatform/dgem/pkg/client"
@@ -34,6 +36,234 @@ import (
 	"github.com/firebase/genkit/go/genkit"
 	systemonex "github.com/firebase/genkit/go/plugins/systemone/exp"
 )
+
+// Default local endpoint and model constants.
+const (
+	DefaultUpstreamV1URL = "http://127.0.0.1:8080/v1"
+	DefaultModelID       = "diffgemma-26b-a4b-it-q4"
+	DefaultProvider      = "dgem"
+	DefaultTimeout       = 2 * time.Minute
+)
+
+// EndpointConfig configures how Genkit's systemonex plugin connects to dgem.
+//
+// It supports two connection modes seamlessly:
+//  1. Direct Gateway / SystemOne mode: when SystemOneURL (env: DGEM_GATEWAY_URL
+//     or DGEM_SYSTEMONE_URL, flag: -gateway-url) is set, or when URL points to
+//     a gateway / SystemOne endpoint (e.g. http://127.0.0.1:8095, an Apple
+//     container host bridge at http://192.168.64.1:8095, or a remote Cloud Run
+//     gateway at https://<service>.a.run.app), Genkit's systemonex plugin calls
+//     POST /v1/systemone directly over HTTP(S) with appropriate auth headers.
+//  2. In-process /v1 adapter mode: when URL points to a raw OpenAI-compatible
+//     /v1 endpoint (e.g. local diffgemma on http://127.0.0.1:8080/v1) and
+//     SystemOneURL is empty, an in-process /v1/systemone adapter is started
+//     automatically in front of it.
+type EndpointConfig struct {
+	// URL is the upstream /v1 endpoint (env: DGEM_URL) or a direct gateway URL.
+	URL string
+	// SystemOneURL is an explicit dgem gateway or /v1/systemone endpoint URL
+	// (env: DGEM_GATEWAY_URL or DGEM_SYSTEMONE_URL). Takes precedence over URL.
+	SystemOneURL string
+	// ModelID is the dgem model identifier (env: DGEM_MODEL).
+	ModelID string
+	// Provider is the Genkit plugin provider prefix (env: DGEM_PROVIDER; default "dgem").
+	Provider string
+	// Backend selects the gateway backend target via X-DGem-Backend
+	// ("vertex_first", "vertex", "cloudrun", or "local"; env: DGEM_BACKEND).
+	Backend string
+	// AuthToken is an optional Bearer / IAM / OIDC token sent in Authorization
+	// (env: DGEM_AUTH_TOKEN).
+	AuthToken string
+	// GatewayKey is an optional X-DGem-Api-Key for a self-hosted gateway
+	// (env: DGEM_GATEWAY_KEY, scoped by DGEM_GATEWAY_URL).
+	GatewayKey string
+	// ServerKey is an optional X-DGem-Key for a serving image
+	// (env: DGEM_SERVER_KEY).
+	ServerKey string
+	// Timeout is the HTTP request timeout (default 2 minutes).
+	Timeout time.Duration
+}
+
+// EndpointConfigFromEnv returns an EndpointConfig populated from environment
+// variables (DGEM_GATEWAY_URL, DGEM_SYSTEMONE_URL, DGEM_URL, DGEM_MODEL,
+// DGEM_PROVIDER, DGEM_BACKEND, DGEM_AUTH_TOKEN, DGEM_GATEWAY_KEY, DGEM_SERVER_KEY)
+// with sensible local defaults.
+func EndpointConfigFromEnv() EndpointConfig {
+	return EndpointConfig{
+		URL:          firstNonEmpty(os.Getenv("DGEM_URL"), DefaultUpstreamV1URL),
+		SystemOneURL: firstNonEmpty(os.Getenv("DGEM_SYSTEMONE_URL"), os.Getenv("DGEM_GATEWAY_URL")),
+		ModelID:      firstNonEmpty(os.Getenv("DGEM_MODEL"), DefaultModelID),
+		Provider:     firstNonEmpty(os.Getenv("DGEM_PROVIDER"), DefaultProvider),
+		Backend:      strings.TrimSpace(os.Getenv("DGEM_BACKEND")),
+		AuthToken:    strings.TrimSpace(os.Getenv("DGEM_AUTH_TOKEN")),
+		ServerKey:    client.ServerKeyFromEnv(),
+		Timeout:      DefaultTimeout,
+	}
+}
+
+// BindEndpointFlags registers standard CLI flags (-url, -gateway-url, -model,
+// -backend) onto fs, bound to the fields of cfg.
+func BindEndpointFlags(fs *flag.FlagSet, cfg *EndpointConfig) {
+	if cfg.URL == "" {
+		cfg.URL = DefaultUpstreamV1URL
+	}
+	if cfg.ModelID == "" {
+		cfg.ModelID = DefaultModelID
+	}
+	if cfg.Provider == "" {
+		cfg.Provider = DefaultProvider
+	}
+	fs.StringVar(&cfg.URL, "url", cfg.URL, "Upstream diffgemma /v1 URL or direct dgem gateway URL (env: DGEM_URL)")
+	fs.StringVar(&cfg.SystemOneURL, "gateway-url", cfg.SystemOneURL, "Direct dgem gateway or /v1/systemone endpoint URL, e.g. http://127.0.0.1:8095 or https://<gateway>.a.run.app (env: DGEM_GATEWAY_URL or DGEM_SYSTEMONE_URL)")
+	fs.StringVar(&cfg.ModelID, "model", cfg.ModelID, "Upstream dgem model ID (env: DGEM_MODEL)")
+	fs.StringVar(&cfg.Backend, "backend", cfg.Backend, "Optional X-DGem-Backend header for gateway routing: vertex_first, vertex, cloudrun, or local (env: DGEM_BACKEND)")
+}
+
+// GenkitModelName returns the full "<provider>/<model>" identifier for Genkit.
+func (c EndpointConfig) GenkitModelName() string {
+	prov := firstNonEmpty(c.Provider, DefaultProvider)
+	mod := firstNonEmpty(c.ModelID, DefaultModelID)
+	return prov + "/" + mod
+}
+
+// IsDirectSystemOne reports whether cfg will connect directly to a remote or
+// gateway POST /v1/systemone endpoint without starting an in-process /v1 adapter.
+func (c EndpointConfig) IsDirectSystemOne() bool {
+	if strings.TrimSpace(c.SystemOneURL) != "" {
+		return true
+	}
+	return !isRawV1ChatURL(c.URL)
+}
+
+// DescribeTarget returns a concise human-readable description of the active
+// endpoint and connection mode.
+func (c EndpointConfig) DescribeTarget() string {
+	if c.IsDirectSystemOne() {
+		base, path := resolveSystemOneBaseAndPath(firstNonEmpty(c.SystemOneURL, c.URL))
+		if path == "/" {
+			return fmt.Sprintf("direct(%s)", base)
+		}
+		if path == "" {
+			path = "/v1/systemone"
+		}
+		return fmt.Sprintf("direct(%s%s)", base, path)
+	}
+	return fmt.Sprintf("in-process-adapter(%s)", firstNonEmpty(c.URL, DefaultUpstreamV1URL))
+}
+
+func isRawV1ChatURL(raw string) bool {
+	u := strings.TrimRight(strings.TrimSpace(raw), "/")
+	if u == "" {
+		return true
+	}
+	lu := strings.ToLower(u)
+	if strings.HasSuffix(lu, "/v1/systemone") ||
+		strings.HasSuffix(lu, ":rawpredict") ||
+		strings.HasSuffix(lu, ":predict") {
+		return false
+	}
+	return strings.HasSuffix(lu, "/v1") ||
+		strings.HasSuffix(lu, "/v1/chat/completions") ||
+		strings.HasSuffix(lu, "/chat/completions")
+}
+
+func resolveSystemOneBaseAndPath(raw string) (baseURL, path string) {
+	u := strings.TrimRight(strings.TrimSpace(raw), "/")
+	lu := strings.ToLower(u)
+	switch {
+	case strings.HasSuffix(lu, ":rawpredict") || strings.HasSuffix(lu, ":streamrawpredict") || strings.HasSuffix(lu, ":predict"):
+		return u, "/"
+	case strings.HasSuffix(lu, "/v1/systemone"):
+		return u[:len(u)-len("/v1/systemone")], "/v1/systemone"
+	default:
+		return u, ""
+	}
+}
+
+// NewSystemOnePlugin creates a Genkit systemonex.SystemOne plugin from cfg and
+// returns a cleanup function (which stops the in-process adapter if one was
+// started, or is a no-op when connecting directly to a gateway/SystemOne URL).
+func NewSystemOnePlugin(cfg EndpointConfig) (*systemonex.SystemOne, func()) {
+	provider := firstNonEmpty(cfg.Provider, DefaultProvider)
+	timeout := cfg.Timeout
+	if timeout <= 0 {
+		timeout = DefaultTimeout
+	}
+
+	if cfg.IsDirectSystemOne() {
+		target := firstNonEmpty(cfg.SystemOneURL, cfg.URL)
+		baseURL, path := resolveSystemOneBaseAndPath(target)
+
+		headers := make(http.Header)
+		gwKey := strings.TrimSpace(cfg.GatewayKey)
+		if gwKey == "" {
+			if strings.TrimSpace(cfg.SystemOneURL) != "" {
+				gwKey = client.GatewayKeyForRemote(baseURL)
+			} else {
+				gwKey = client.GatewayKeyFor(baseURL)
+			}
+		}
+		if gwKey != "" {
+			headers.Set(client.GatewayKeyHeader, gwKey)
+		}
+		if srvKey := firstNonEmpty(cfg.ServerKey, client.ServerKeyFromEnv()); srvKey != "" {
+			headers.Set(client.ServerKeyHeader, srvKey)
+		}
+		if b := strings.TrimSpace(cfg.Backend); b != "" {
+			headers.Set("X-DGem-Backend", b)
+		}
+
+		apiKey := strings.TrimSpace(cfg.AuthToken)
+		if strings.HasPrefix(strings.ToLower(apiKey), "bearer ") {
+			apiKey = strings.TrimSpace(apiKey[len("bearer "):])
+		}
+
+		plugin := &systemonex.SystemOne{
+			Provider:   provider,
+			BaseURL:    baseURL,
+			Path:       path,
+			APIKey:     apiKey,
+			HTTPClient: &http.Client{Timeout: timeout, CheckRedirect: client.StripKeysOnCrossOriginRedirect},
+		}
+		if len(headers) > 0 {
+			plugin.Headers = headers
+		}
+		return plugin, func() {}
+	}
+
+	adapterSrv := StartInProcessSystemOneAdapterWithConfig(cfg)
+	return &systemonex.SystemOne{
+		Provider: provider,
+		BaseURL:  adapterSrv.URL,
+	}, adapterSrv.Close
+}
+
+// StartInProcessSystemOneAdapterWithConfig starts an in-process HTTP server
+// exposing POST /v1/systemone backed by cfg.URL (/v1/chat/completions).
+func StartInProcessSystemOneAdapterWithConfig(cfg EndpointConfig) *httptest.Server {
+	timeout := cfg.Timeout
+	if timeout <= 0 {
+		timeout = DefaultTimeout
+	}
+	cli := client.NewClient(firstNonEmpty(cfg.URL, DefaultUpstreamV1URL), firstNonEmpty(cfg.ModelID, DefaultModelID), timeout)
+	if cfg.AuthToken != "" {
+		cli.WithAuthToken(cfg.AuthToken)
+	}
+	if cfg.ServerKey != "" {
+		cli.ServerKey = cfg.ServerKey
+	}
+	opts := decisionindex.DefaultEngineOptions()
+	mux := http.NewServeMux()
+	mux.Handle("/v1/systemone", decisionindex.NewSystemOneHTTPHandler(cli, opts))
+	return httptest.NewServer(mux)
+}
+
+func firstNonEmpty(a, b string) string {
+	if strings.TrimSpace(a) != "" {
+		return strings.TrimSpace(a)
+	}
+	return b
+}
 
 // TemplateDecision holds the Genkit systemonex answers for a rendered .json.tmpl
 // policy along with per-slot Shannon entropy H (in nats), normalized

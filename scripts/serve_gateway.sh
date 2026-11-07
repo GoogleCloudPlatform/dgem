@@ -16,6 +16,7 @@
 set -euo pipefail
 
 GATEWAY_PORT="${DGEM_GATEWAY_PORT:-8090}"
+GATEWAY_HOST="${DGEM_GATEWAY_HOST:-127.0.0.1}"
 LOCAL_URL="${DGEM_LOCAL_URL:-http://127.0.0.1:8080/v1}"
 TEMPLATES_DIR="${DGEM_TEMPLATES_DIR:-./templates}"
 PID_FILE="dgem-gateway.pid"
@@ -36,12 +37,13 @@ fi
 
 echo "==> Launching dgem serve (Gateway & Decision Studio) in background..."
 echo "    Local URL:    $LOCAL_URL"
+echo "    Host:         $GATEWAY_HOST"
 echo "    Port:         $GATEWAY_PORT"
 echo "    Templates:    $TEMPLATES_DIR"
 echo "    Logs:         $LOG_FILE"
 echo "    PID file:     $PID_FILE"
 
-nohup "$BIN" serve --local --local-url "$LOCAL_URL" --port "$GATEWAY_PORT" --templates-dir "$TEMPLATES_DIR" > "$LOG_FILE" 2>&1 &
+nohup "$BIN" serve --local --local-url "$LOCAL_URL" --host "$GATEWAY_HOST" --port "$GATEWAY_PORT" --templates-dir "$TEMPLATES_DIR" > "$LOG_FILE" 2>&1 &
 GATEWAY_PID=$!
 echo "$GATEWAY_PID" > "$PID_FILE"
 echo "==> Gateway process started with PID $GATEWAY_PID"
