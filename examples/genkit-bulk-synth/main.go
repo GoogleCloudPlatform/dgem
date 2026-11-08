@@ -119,8 +119,8 @@ type BulkSummary struct {
 }
 
 func main() {
-	upstreamURL := flag.String("url", envOr("DGEM_URL", "http://127.0.0.1:8080/v1"), "Upstream diffgemma or dgem /v1 URL")
-	dgemModelID := flag.String("model", envOr("DGEM_MODEL", "diffgemma-26b-a4b-it-q4"), "Upstream dgem model ID")
+	dgemCfg := dgemgenkit.EndpointConfigFromEnv()
+	dgemgenkit.BindEndpointFlags(flag.CommandLine, &dgemCfg)
 	templatesDir := flag.String("templates", "../../templates", "Path to dgem templates directory")
 	preset := flag.String("preset", "github_spam_triage", "Template preset: 'github_spam_triage' or 'contract_audit'")
 	synthModel := flag.String("synth-model", envOr("DGEM_SYNTH_MODEL", "vertexai/gemini-3.8-flash"), "Genkit model for synthetic batch generation (e.g. 'vertexai/gemini-3.8-flash' or 'googleai/gemini-3.8-flash')")
@@ -133,15 +133,10 @@ func main() {
 
 	ctx := context.Background()
 
-	adapterSrv := dgemgenkit.StartInProcessSystemOneAdapter(*upstreamURL, *dgemModelID)
-	defer adapterSrv.Close()
+	dgemPlugin, closeAdapter := dgemgenkit.NewSystemOnePlugin(dgemCfg)
+	defer closeAdapter()
 
-	plugins := []api.Plugin{
-		&systemonex.SystemOne{
-			Provider: "dgem",
-			BaseURL:  adapterSrv.URL,
-		},
-	}
+	plugins := []api.Plugin{dgemPlugin}
 	if !*curatedOnly {
 		if strings.HasPrefix(*synthModel, "googleai/") {
 			if os.Getenv("GEMINI_API_KEY") != "" || os.Getenv("GOOGLE_API_KEY") != "" {
@@ -157,7 +152,9 @@ func main() {
 	}
 
 	g := genkit.Init(ctx, genkit.WithPlugins(plugins...))
-	dgemGenkitModel := "dgem/" + *dgemModelID
+	dgemGenkitModel := dgemCfg.GenkitModelName()
+
+	fmt.Printf("==> Target: %s  model=%s\n", dgemCfg.DescribeTarget(), dgemGenkitModel)
 
 	summary, err := RunSynthesizeAndBulkDecide(ctx, g, BulkConfig{
 		Preset:       *preset,

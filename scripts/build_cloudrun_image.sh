@@ -63,6 +63,11 @@ gcloud builds submit deploy/cloudrun \
   --config=deploy/cloudrun/cloudbuild.yaml \
   --substitutions="_IMAGE=${AR_TARGET%:*},_TAG=${TAG},_VERSION=${VERSION_STR}"
 
+if [[ "${TAG}" != "latest" ]]; then
+  echo "==> Tagging ${AR_TARGET} as ${AR_TARGET%:*}:latest..."
+  gcloud artifacts docker tags add "${AR_TARGET}" "${AR_TARGET%:*}:latest" --quiet >/dev/null 2>&1 || true
+fi
+
 echo ""
 echo "================================================================================"
 echo "  Container Image Ready!"

@@ -29,7 +29,6 @@ import (
 	"flag"
 	"fmt"
 	"log"
-	"os"
 	"path/filepath"
 
 	"github.com/GoogleCloudPlatform/dgem/examples/dgemgenkit"
@@ -37,7 +36,6 @@ import (
 	"github.com/firebase/genkit/go/ai/tool"
 	"github.com/firebase/genkit/go/genkit"
 	"github.com/firebase/genkit/go/plugins/middleware"
-	systemonex "github.com/firebase/genkit/go/plugins/systemone/exp"
 )
 
 // TransferInput is the input to the resumable transferMoney tool.
@@ -146,25 +144,25 @@ func HandleInterrupts(
 }
 
 func main() {
-	upstreamURL := flag.String("url", envOr("DGEM_URL", "http://127.0.0.1:8080/v1"), "Upstream diffgemma or dgem /v1 URL")
-	modelID := flag.String("model", envOr("DGEM_MODEL", "diffgemma-26b-a4b-it-q4"), "Upstream model ID")
+	dgemCfg := dgemgenkit.EndpointConfigFromEnv()
+	dgemgenkit.BindEndpointFlags(flag.CommandLine, &dgemCfg)
 	templatesDir := flag.String("templates", "../../templates", "Path to dgem templates directory")
 	flag.Parse()
 	*templatesDir = dgemgenkit.ResolveTemplatesDir(*templatesDir)
 
 	ctx := context.Background()
 
-	// Wrap the local diffgemma /v1 endpoint with dgem's POST /v1/systemone adapter
-	// so Genkit's systemonex plugin talks System One directly to local Metal or Cloud.
-	adapterSrv := dgemgenkit.StartInProcessSystemOneAdapter(*upstreamURL, *modelID)
-	defer adapterSrv.Close()
+	// Connect Genkit's systemonex plugin either directly to a dgem gateway /
+	// remote /v1/systemone endpoint (when DGEM_GATEWAY_URL, DGEM_SYSTEMONE_URL,
+	// or -gateway-url is set) or via the in-process adapter in front of a /v1
+	// endpoint (e.g. local diffgemma on :8080/v1).
+	dgemPlugin, closeAdapter := dgemgenkit.NewSystemOnePlugin(dgemCfg)
+	defer closeAdapter()
 
-	dgemPlugin := &systemonex.SystemOne{
-		Provider: "dgem",
-		BaseURL:  adapterSrv.URL,
-	}
 	g := genkit.Init(ctx, genkit.WithPlugins(dgemPlugin))
-	genkitModel := "dgem/" + *modelID
+	genkitModel := dgemCfg.GenkitModelName()
+
+	fmt.Printf("==> Target: %s  model=%s\n", dgemCfg.DescribeTarget(), genkitModel)
 
 	// 1. Run support_triage.json.tmpl through Genkit's systemonex plugin.
 	triagePath := filepath.Join(*templatesDir, "support_triage.json.tmpl")
@@ -299,11 +297,4 @@ func defineScriptedToolCaller(g *genkit.Genkit, name string) string {
 		}, nil
 	})
 	return name
-}
-
-func envOr(key, fallback string) string {
-	if v := os.Getenv(key); v != "" {
-		return v
-	}
-	return fallback
 }

@@ -151,6 +151,15 @@ CLOUDRUN_NETWORK="${CLOUDRUN_NETWORK:-default}"
 CLOUDRUN_SUBNET="${CLOUDRUN_SUBNET:-default}"
 CLOUDRUN_VPC_EGRESS="${CLOUDRUN_VPC_EGRESS:-all-traffic}"
 if [[ "$CLOUDRUN_VPC_EGRESS" != "off" ]]; then
+  PGA_ENABLED="$(gcloud compute networks subnets describe "${CLOUDRUN_SUBNET}" --region="${REGION}" --project="${PROJECT_ID}" --format="value(privateIpGoogleAccess)" 2>/dev/null || true)"
+  if [[ "${PGA_ENABLED}" == "False" ]]; then
+    echo "==> Enabling Private Google Access on subnet '${CLOUDRUN_SUBNET}' (${REGION}) for Direct VPC Egress GCS FUSE staging..."
+    gcloud compute networks subnets update "${CLOUDRUN_SUBNET}" \
+      --region="${REGION}" \
+      --project="${PROJECT_ID}" \
+      --enable-private-ip-google-access \
+      --quiet
+  fi
   DEPLOY_FLAGS+=("--network=${CLOUDRUN_NETWORK}" "--subnet=${CLOUDRUN_SUBNET}" "--vpc-egress=${CLOUDRUN_VPC_EGRESS}")
 fi
 SECRETS=()

@@ -34,12 +34,15 @@ fi
 
 if lsof -i ":$GATEWAY_PORT" >/dev/null 2>&1; then
   PORT_PIDS=$(lsof -t -i ":$GATEWAY_PORT" 2>/dev/null || true)
-  if [[ -n "$PORT_PIDS" ]]; then
-    echo "==> Releasing port $GATEWAY_PORT (PIDs: $PORT_PIDS)..."
-    kill $PORT_PIDS 2>/dev/null || true
-    sleep 1
-    kill -9 $PORT_PIDS 2>/dev/null || true
-  fi
+  for p in $PORT_PIDS; do
+    comm_name=$(ps -p "$p" -o comm= 2>/dev/null | xargs basename 2>/dev/null || true)
+    if [[ "$comm_name" == "dgem" ]]; then
+      echo "==> Releasing port $GATEWAY_PORT (dgem PID: $p)..."
+      kill "$p" 2>/dev/null || true
+      sleep 1
+      kill -9 "$p" 2>/dev/null || true
+    fi
+  done
 fi
 
 echo "==> dgem gateway stopped."

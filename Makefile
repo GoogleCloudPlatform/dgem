@@ -61,7 +61,9 @@ serve: ## Start the diffgemma server in background (32k context on 127.0.0.1:808
 stop: ## Stop the background diffgemma server
 	./scripts/stop_server.sh
 
-gateway-up: build ## Start the dgem gateway & Decision Studio in background (:8090)
+DGEM_GATEWAY_PORT ?= 8090
+
+gateway-up: build ## Start the dgem gateway & Decision Studio in background (:8090 or DGEM_GATEWAY_PORT)
 	./scripts/serve_gateway.sh
 
 gateway-down: ## Stop the background dgem gateway
@@ -71,7 +73,7 @@ local-up: serve gateway-up ## Start full local stack: diffgemma engine (:8080) +
 
 local-down: gateway-down stop ## Stop full local stack: dgem gateway (:8090) + diffgemma engine (:8080)
 
-local-status: ## Check running status of local diffgemma (:8080) and dgem gateway (:8090)
+local-status: ## Check running status of local diffgemma (:8080) and dgem gateway (:8090 or DGEM_GATEWAY_PORT)
 	@echo "=== Local DiffusionGemma Services Status ==="
 	@if [ -f diffgemma.pid ] && kill -0 $$(cat diffgemma.pid) 2>/dev/null; then \
 		echo "  • diffgemma engine:  RUNNING (PID $$(cat diffgemma.pid), port 8080)"; \
@@ -81,9 +83,9 @@ local-status: ## Check running status of local diffgemma (:8080) and dgem gatewa
 		echo "  • diffgemma engine:  STOPPED"; \
 	fi
 	@if [ -f dgem-gateway.pid ] && kill -0 $$(cat dgem-gateway.pid) 2>/dev/null; then \
-		echo "  • dgem gateway:      RUNNING (PID $$(cat dgem-gateway.pid), port 8090)"; \
-	elif lsof -i :8090 >/dev/null 2>&1; then \
-		echo "  • dgem gateway:      LISTENING (port 8090, unmanaged PID $$(lsof -t -i :8090 | tr '\n' ' '))"; \
+		echo "  • dgem gateway:      RUNNING (PID $$(cat dgem-gateway.pid), port $(DGEM_GATEWAY_PORT))"; \
+	elif lsof -i :$(DGEM_GATEWAY_PORT) >/dev/null 2>&1; then \
+		echo "  • dgem gateway:      LISTENING (port $(DGEM_GATEWAY_PORT), unmanaged PID $$(lsof -t -i :$(DGEM_GATEWAY_PORT) | tr '\n' ' '))"; \
 	else \
 		echo "  • dgem gateway:      STOPPED"; \
 	fi
@@ -93,10 +95,11 @@ local-status: ## Check running status of local diffgemma (:8080) and dgem gatewa
 	else \
 		echo "  ✗ diffgemma API:     offline"; \
 	fi
-	@if curl -s -m 1 http://127.0.0.1:8090/health >/dev/null 2>&1; then \
-		echo "  ✓ Decision Studio:   http://localhost:8090 (ready)"; \
-		echo "  ✓ REST API:          http://localhost:8090/api/decide"; \
-		echo "  ✓ MCP Streamable:    http://localhost:8090/mcp"; \
+	@if curl -s -m 1 http://127.0.0.1:$(DGEM_GATEWAY_PORT)/health >/dev/null 2>&1; then \
+		echo "  ✓ Decision Studio:   http://localhost:$(DGEM_GATEWAY_PORT) (ready)"; \
+		echo "  ✓ REST API:          http://localhost:$(DGEM_GATEWAY_PORT)/api/decide"; \
+		echo "  ✓ SystemOne API:     http://localhost:$(DGEM_GATEWAY_PORT)/v1/systemone"; \
+		echo "  ✓ MCP Streamable:    http://localhost:$(DGEM_GATEWAY_PORT)/mcp"; \
 	else \
 		echo "  ✗ Decision Studio:   offline"; \
 	fi
