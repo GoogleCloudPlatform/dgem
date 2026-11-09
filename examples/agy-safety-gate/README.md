@@ -27,7 +27,7 @@ Instead of asking a generative LLM to emit free-form JSON (`{"decision": "...", 
 
 ### Comparative Evaluation Summary (`n = 80` Held-Out Tool-Call Suite on 1× NVIDIA RTX Pro 6000)
 
-Evaluated across 5 stratified categories (benign workspace dev, `use`-vs-`mention` security-test look-alikes, gray-area mutations, direct destructive/exfiltration commands, and multi-turn `<untrusted_data>` indirect prompt injections) against a Cloud Run 1× NVIDIA RTX Pro 6000 (`nvidia/diffusiongemma-26B-A4B-it-NVFP4`):
+Evaluated across 5 stratified categories (benign workspace dev, `use`-vs-`mention` security-test look-alikes, gray-area mutations, direct destructive/exfiltration commands, and multi-turn `<untrusted_data>` indirect prompt injections) against `dgem v0.4.1` + [`templates/tool_safety_gate.json.tmpl`](../../templates/tool_safety_gate.json.tmpl) (shipped in `dgem v0.4.2`; Cloud Run `dgem v0.4.0` serving image on 1× NVIDIA RTX Pro 6000 running `nvidia/diffusiongemma-26B-A4B-it-NVFP4`):
 
 | Gate Configuration | 3-Way Gate Accuracy | Macro-F1 | Safety Leak Rate (`FNR` on `deny`) | Benign False Friction | `Use`-vs-`Mention` Accuracy | Stage 2 Gemini Calls | HTTP Latency (`p50` / `p95`) |
 | :--- | :---: | :---: | :---: | :---: | :---: | :---: | :---: |
@@ -38,6 +38,8 @@ Evaluated across 5 stratified categories (benign workspace dev, `use`-vs-`mentio
 
 - **Calibration & Error Detection**: On the held-out suite, `tool_safety_gate.json.tmpl` (`"isolate": "all"`) achieves **`ECE = 0.0233`**, **`Brier = 0.0171`**, and **`Hesitation Error-Detection AUROC = 0.9936`** (`100.0%` Clear-band accuracy at `95.0%` Clear-band coverage).
 - **In-Process SDK vs. CLI Hook Latency**: Calling `dgem` from the Antigravity Python SDK (`@hooks.pre_tool_call_decide` / `policy.ask_user`) averages **`144.2 ms` p50**, while spawning `dgem_gate.py hook` as a per-command CLI subprocess from `.agents/hooks.json` averages **`208.6 ms` p50** (`+64.4 ms` process startup overhead).
+
+> **Evaluation scope:** These numbers come from a small synthetic suite (80 held-out tool calls, one run, on one GPU type). The Gemini baseline reached the ceiling on it, so the suite does not separate the configurations on accuracy; the measured differences are latency and calibrated escalation. The `isolate` setting of the 2-slot template was chosen after inspecting results on this suite. Validate the gate on your own agent's tool calls before relying on it, and keep a static deny-list for irreversible commands.
 
 ---
 
