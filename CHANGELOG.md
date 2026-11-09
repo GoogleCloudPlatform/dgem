@@ -6,6 +6,19 @@ image for a release in your own project with `make cloudrun-build`.
 
 ## Unreleased
 
+## v0.4.2 (2026-11-09)
+
+Gateway, CLI, policy-template, and agent-integration release (`deploy/cloudrun/` serving container image is unchanged from `v0.4.0`).
+
+- **SecOps & Responsible AI (RAI) `.json.tmpl` policies and Genkit Go `v1.14.0` examples (`templates/`, `examples/`, `cmd/serve.go`, `cmd/mcp.go`).**
+  Adds seven executable decision policies with deterministic slot seeding (`"seed_token": "fixed"`, `"samples": 1`) — `templates/secops_rag_quarantine.json.tmpl` (4-tier `use`-vs-`mention` RAG prompt-injection posture), `templates/secops_iam_change_audit.json.tmpl` (IAM/RBAC/Terraform diff audit), `templates/rai/prompt_safety_guardrail.json.tmpl` (benign figurative/homonym context protection + jailbreak framing), `templates/rai/response_safety_grader.json.tmpl` (single-pass red-team grading), `templates/rai/custom_content_policy.json.tmpl` (configurable `R1`–`R5` moderation), `templates/rai/unbiased_context_qa.json.tmpl` (`cannot_be_determined` abstention), and `templates/rai/provenance_claim_check.json.tmpl` (C2PA Content Credentials verification) — along with `rai/` short-name resolution and Decision Studio / MCP sample variables. Extends `examples/dgemgenkit` with multi-stage conditional DAG execution (`depends_on` / `ask_if`, `Passes`, `Skipped`) and post-hoc `(T, \tau)` calibration helpers (`ApplyTemperature`, `RawHesitation`, `CalibratedProb`, `ExceedsThreshold`, `CalibratedHesitation`), adds standalone `examples/genkit-secops-triage/` and `examples/genkit-rai-guardrails/`, and adds `-preset secops_incident` and `-preset rai_redteam_grader` to `examples/genkit-bulk-synth/`.
+- **Google Antigravity (`agy` CLI & Python SDK) `PreToolUse` safety gate (`examples/agy-safety-gate/`, `templates/tool_safety_gate.json.tmpl`, `cmd/serve.go`).**
+  Adds a zero-dependency Python `PreToolUse` tool-call classifier (`dgem_gate.py`, `sdk_demo.py`, `hooks.example.json`) and 2-slot orthogonal policy (`action_hazard` + `intent_origin` with `"isolate": "all"`), `use`-vs-`mention` awareness, `<untrusted_data>` prompt-injection quarantine, Hesitation-gated (`< 16%`) Stage-2 Gemini escalation, fail-safe fallback to interactive `"ask"`, and methodological evaluation-scope guidance.
+- **Genkit `EndpointConfig` and Cloud Run / local gateway script ergonomics (`examples/dgemgenkit/`, `scripts/`, `Makefile`).**
+  Adds unified `dgemgenkit.EndpointConfig` (`DGEM_GATEWAY_URL`, `-gateway-url`, `-backend`, `-url`, `-model`) supporting both direct `POST /v1/systemone` gateway targets and in-process `/v1` adapters across all Genkit Go examples, configurable service/SA/VPC environment bindings in `scripts/setup_cloudrun_iam.sh`, automatic Private Google Access enablement for VPC egress in `scripts/deploy_cloudrun_vllm.sh`, `:latest` image tagging alongside commit-SHA tags in `scripts/build_cloudrun_image.sh`, and `make gateway-up` / `gateway-down` / `local-up` / `local-down` / `local-status` targets.
+- **Gateway tracing and signed release contributor guidance (`AGENTS.md`).**
+  Documents `dgem.gateway.proxy` child-span invariants, stale-while-revalidate `:rawPredict` health probing, and the SSH-signed annotated release tag workflow (`make release VERSION=vX.Y.Z`).
+
 ## v0.4.1 (2026-11-06)
 
 - **Gateway `/v1/systemone` latency-tail instrumentation and connection pooling (`cmd/serve.go`, `cmd/root.go`).**
