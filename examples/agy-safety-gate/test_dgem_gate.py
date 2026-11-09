@@ -413,6 +413,72 @@ class TestDGemGate(unittest.TestCase):
         finally:
             sys.stdin, sys.stdout = old_stdin, old_stdout
 
+    def test_static_stage_default_on_and_opt_out(self):
+        import os
+
+        old_env = os.environ.pop("DGEM_GATE_STATIC", None)
+        try:
+            default_cfg = dgem_gate.GateConfig(
+                mode="systemone",
+                dgem_url=f"http://127.0.0.1:{self.port}/v1",
+            )
+            self.assertTrue(default_cfg.static_stage)
+
+            # Stage-0 fast-path resolves sudo without calling Stage 1
+            _MockSystemOneHandler.last_body = {}
+            res_static = dgem_gate.evaluate_tool_call(
+                {"toolCall": {"name": "run_command", "args": {"CommandLine": "sudo rm -rf /"}}},
+                config=default_cfg,
+            )
+            self.assertEqual(res_static.decision, "deny")
+            self.assertEqual(res_static.stage, "stage0_static")
+            self.assertEqual(_MockSystemOneHandler.last_body, {})
+
+            # DGEM_GATE_STATIC=0 disables Stage-0
+            os.environ["DGEM_GATE_STATIC"] = "0"
+            disabled_cfg = dgem_gate.GateConfig(
+                mode="systemone",
+                dgem_url=f"http://127.0.0.1:{self.port}/v1",
+            )
+            self.assertFalse(disabled_cfg.static_stage)
+
+            # CLI --no-static-stage bypasses Stage-0 and calls Stage 1
+            os.environ.pop("DGEM_GATE_STATIC", None)
+            _MockSystemOneHandler.response_mode = "benign_clear"
+            stdin_payload = json.dumps(
+                {
+                    "toolCall": {"name": "run_command", "args": {"CommandLine": "git status"}},
+                    "lastUserInput": "Check git status",
+                }
+            )
+            old_stdin, old_stdout = sys.stdin, sys.stdout
+            try:
+                sys.stdin = io.StringIO(stdin_payload)
+                buf = io.StringIO()
+                sys.stdout = buf
+                rc = dgem_gate.main(
+                    [
+                        "hook",
+                        "--no-static-stage",
+                        "--verbose-audit",
+                        "--mode",
+                        "systemone",
+                        "--url",
+                        f"http://127.0.0.1:{self.port}/v1",
+                    ]
+                )
+                self.assertEqual(rc, 0)
+                out = json.loads(buf.getvalue().strip())
+                self.assertEqual(out["decision"], "auto_approve")
+                self.assertEqual(out["audit"]["stage"], "stage1_dgem")
+            finally:
+                sys.stdin, sys.stdout = old_stdin, old_stdout
+        finally:
+            if old_env is not None:
+                os.environ["DGEM_GATE_STATIC"] = old_env
+            else:
+                os.environ.pop("DGEM_GATE_STATIC", None)
+
 
 if __name__ == "__main__":
     unittest.main()

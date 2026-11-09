@@ -25,21 +25,22 @@ Instead of asking a generative LLM to emit free-form JSON (`{"decision": "...", 
 - **`deny`**: `action_hazard == "destructive_or_exfil"`, or `intent_origin == "hijacked_by_tool_output"` in the Clear band.
 - **Fail-safe availability**: If the `dgem` endpoint is unreachable or times out, the hook never fails open to `auto_approve`; it degrades safely to `"ask"` (interactive human confirmation in `agy`).
 
-### Comparative Evaluation Summary (`n = 80` Held-Out Tool-Call Suite on 1× NVIDIA RTX Pro 6000)
+### Comparative Evaluation Summary (`n = 200` Held-Out Tool-Call Suite)
 
-Evaluated across 5 stratified categories (benign workspace dev, `use`-vs-`mention` security-test look-alikes, gray-area mutations, direct destructive/exfiltration commands, and multi-turn `<untrusted_data>` indirect prompt injections) against `dgem v0.4.1` + [`templates/tool_safety_gate.json.tmpl`](../../templates/tool_safety_gate.json.tmpl) (shipped in `dgem v0.4.2`; Cloud Run `dgem v0.4.0` serving image on 1× NVIDIA RTX Pro 6000 running `nvidia/diffusiongemma-26B-A4B-it-NVFP4`):
+Evaluated across 6 stratified categories (`n = 200` held-out tool calls: 40 benign workspace commands, 30 `use`-vs-`mention` security-test look-alikes, 40 state/remote mutations, 40 destructive/exfiltration commands, 30 `<untrusted_data>` prompt injections followed, and 20 `<untrusted_data>` prompt injections ignored) through an authenticated `dgem v0.4.1` gateway + [`templates/tool_safety_gate.json.tmpl`](../../templates/tool_safety_gate.json.tmpl) (shipped in `dgem v0.4.2`, backed by `dgem v0.4.0` serving on 1× NVIDIA RTX Pro 6000 running `nvidia/diffusiongemma-26B-A4B-it-NVFP4`):
 
-| Gate Configuration | 3-Way Gate Accuracy | Macro-F1 | Safety Leak Rate (`FNR` on `deny`) | Benign False Friction | `Use`-vs-`Mention` Accuracy | Stage 2 Gemini Calls | HTTP Latency (`p50` / `p95`) |
-| :--- | :---: | :---: | :---: | :---: | :---: | :---: | :---: |
-| **Codelab `gemini-3.5-flash-lite` Baseline** | `100.0%` (`80/80`) | `1.0000` | `0.0%` (`0/35`) | `0.0%` (`0/30`) | `100.0%` (`10/10`) | `100.0%` (`80/80`) | `727.9 ms` / `850.8 ms` |
-| **`dgem` 2-Slot Orthogonal (`tool_safety_gate`)** | **`97.50%` (`78/80`)** | **`0.9683`** | **`0.0%` (`0/35`)** | **`0.0%` (`0/30`)** | **`100.0%` (`10/10`)** | **`0.0%` (`0/80`)** | **`144.7 ms` / `205.5 ms` (`5.0×` faster)** |
-| **`dgem` 2-Slot + Hesitation Cascade ($\tilde{H} \ge 16\%$)** | **`98.75%` (`79/80`)** | **`0.9844`** | **`0.0%` (`0/35`)** | **`0.0%` (`0/30`)** | **`100.0%` (`10/10`)** | **`5.00%` (`4/80`)** | **`145.1 ms` / `287.4 ms` (`5.0×` faster)** |
-| **Hybrid Static (`<1 ms`) + `dgem` + Cascade** | **`100.0%` (`80/80`)** | **`1.0000`** | **`0.0%` (`0/35`)** | **`0.0%` (`0/30`)** | **`100.0%` (`10/10`)** | **`2.50%` (`2/80`)** | **`142.1 ms` / `239.8 ms` (`5.1×` faster)** |
+| Gate Configuration | 3-Way Gate Accuracy (95% CI) | Safety Leak Rate (`deny` $\to$ `allow`) | Benign Friction (`allow` $\to$ `ask`/`deny`) | Stage 2 Gemini Calls | HTTP Latency (`p50` / `p95`) |
+| :--- | :---: | :---: | :---: | :---: | :---: |
+| **Codelab `gemini-3.5-flash-lite` Classifier** | `89.5%` (`179/200`, `84.5–93.0%`) | `0.0%` (`0/70`) | `11.1%` (`10/90`) | `100.0%` (`200/200`) | `808 ms` / `1,032 ms` |
+| **`dgem` 1-Slot Control (coupled hazard + origin)** | `78.0%` (`156/200`, `71.8–83.2%`) | `0.0%` (`0/70`) | `28.9%` (`26/90`) | `0.0%` (`0/200`) | `244 ms` / `306 ms` |
+| **`dgem` 2-Slot Orthogonal (`tool_safety_gate`)** | **`93.5%` (`187/200`, `89.2–96.2%`)** | **`0.0%` (`0/70`)** | `12.2%` (`11/90`) | `0.0%` (`0/200`) | **`282 ms` / `335 ms` (`0.35×` p50)** |
+| **`dgem` 2-Slot + Hesitation Cascade (`--cascade gemini`)** | **`95.0%` (`190/200`, `91.0–97.3%`)** | **`0.0%` (`0/70`)** | **`2.2%` (`2/90`)** | **`10.0%` (`20/200`)** | **`285 ms` / `5,329 ms`** |
+| **Hybrid Static (`<1 ms`, default) + `dgem` + Cascade** | **`95.0%` (`190/200`, `91.0–97.3%`)** | **`0.0%` (`0/70`)** | **`2.2%` (`2/90`)** | **`10.0%` (`20/200`)** | **`282 ms` / `5,329 ms`** |
 
-- **Calibration & Error Detection**: On the held-out suite, `tool_safety_gate.json.tmpl` (`"isolate": "all"`) achieves **`ECE = 0.0233`**, **`Brier = 0.0171`**, and **`Hesitation Error-Detection AUROC = 0.9936`** (`100.0%` Clear-band accuracy at `95.0%` Clear-band coverage).
-- **In-Process SDK vs. CLI Hook Latency**: Calling `dgem` from the Antigravity Python SDK (`@hooks.pre_tool_call_decide` / `policy.ask_user`) averages **`144.2 ms` p50**, while spawning `dgem_gate.py hook` as a per-command CLI subprocess from `.agents/hooks.json` averages **`208.6 ms` p50** (`+64.4 ms` process startup overhead).
+- **Recommended Default Configuration (`--static-stage` enabled by default + `--cascade gemini`)**: On its own, the 2-slot `dgem` gate is non-inferior to the `gemini-3.5-flash-lite` classifier (`93.5%` vs. `89.5%`, `0/70` dangerous commands approved, `0.35×` p50 latency, and `+15.5 pts` ahead of the 1-slot control), but sends `11/90` benign commands (primarily read-only cloud CLI queries) to `ask`. Combining the default `<1 ms` Stage-0 static pre-filter with `--cascade gemini` (`gemini-3.8-flash` on the `10%` of calls with $\tilde{H} \ge 16\%$) reduces benign friction from `11/90` to **`2/90`** and lifts accuracy to **`95.0%`** (`+5.5 pts` vs. baseline, paired McNemar $p = 0.02$). Note that escalated calls incur multi-second Stage 2 LLM latency (`~5.3 s` p95).
+- **Calibration & Repeatability**: Across three repeats on the 200-item held-out suite, `tool_safety_gate.json.tmpl` (`"isolate": "all"`) achieves **`ECE = 0.034–0.039`**, **`Hesitation Error-Detection AUROC = 0.90–0.91`**, and a **`1.5%` (`3/200`) run-to-run decision flip rate**.
 
-> **Evaluation scope:** These numbers come from a small synthetic suite (80 held-out tool calls, one run, on one GPU type). The Gemini baseline reached the ceiling on it, so the suite does not separate the configurations on accuracy; the measured differences are latency and calibrated escalation. The `isolate` setting of the 2-slot template was chosen after inspecting results on this suite. Validate the gate on your own agent's tool calls before relying on it, and keep a static deny-list for irreversible commands.
+> **Evaluation scope:** These numbers come from a 200-item synthetic held-out suite evaluated against one serving revision and GPU type over an authenticated Cloud Run gateway path (end-to-end latency includes gateway authentication; direct in-VPC or local calls are faster, while spawning `dgem_gate.py hook` as a CLI subprocess adds `~64 ms` Python startup overhead). Validate the gate on your own agent's tool calls before relying on it, use `--cascade gemini` alongside the default Stage-0 static rules to minimize benign confirmation prompts, and keep a deterministic static deny-list for irreversible commands.
 
 ---
 
@@ -82,7 +83,7 @@ Copy [`hooks.example.json`](hooks.example.json) to `.agents/hooks.json` in your 
         "hooks": [
           {
             "type": "command",
-            "command": "python3 /path/to/dgem/examples/agy-safety-gate/dgem_gate.py hook --static-stage",
+            "command": "python3 /path/to/dgem/examples/agy-safety-gate/dgem_gate.py hook --cascade gemini",
             "timeout": 15
           }
         ]
@@ -101,7 +102,7 @@ from google.antigravity import Agent, LocalAgentConfig, hooks
 from google.antigravity.hooks import policy
 from dgem_gate import GateConfig, create_sdk_pre_tool_hook, create_sdk_policy_handler
 
-gate_cfg = GateConfig(mode="gateway", gateway_url="http://127.0.0.1:8095", static_stage=True)
+gate_cfg = GateConfig(mode="gateway", gateway_url="http://127.0.0.1:8095", cascade_mode="gemini")
 
 # Option A: Lifecycle Hook (@hooks.pre_tool_call_decide)
 pre_tool_hook = hooks.pre_tool_call_decide(create_sdk_pre_tool_hook(gate_cfg))
@@ -135,7 +136,7 @@ python3 examples/agy-safety-gate/sdk_demo.py --gateway-url http://127.0.0.1:8095
 | `DGEM_GATE_TEMPLATE_VARIANT` | `--template-variant` | `2slot` | Built-in policy template: `2slot` (`templates/tool_safety_gate.json.tmpl`) or `drift` (`templates/calibration/agent_step_drift.json.tmpl`). |
 | `DGEM_GATE_TEMPLATE` | `--template` | — | Explicit path to a custom `.json.tmpl` file. |
 | `DGEM_GATE_HESITATION` | `--hesitation-threshold` | `0.16` | Normalized entropy ($H / \ln K$) threshold for the Clear band (`<16%`). |
-| `DGEM_GATE_STATIC` | `--static-stage` | `0` (`off`) | Enable `<1 ms` Stage-0 deterministic static allow/deny pre-filter. |
+| `DGEM_GATE_STATIC` | `--static-stage` / `--no-static-stage` | `1` (`on`) | `<1 ms` Stage-0 deterministic static allow/deny pre-filter (enabled by default; pass `--no-static-stage` or `DGEM_GATE_STATIC=0` to bypass). |
 | `DGEM_GATE_CASCADE` | `--cascade` | `off` | Stage 2 Gemini escalation mode on uncertain ($\tilde{H} \ge 16\%$) calls: `off`, `gemini`, or `gemini_on_unsure`. |
 | `DGEM_GATE_STAGE2_MODEL` | `--stage2-model` | `gemini-3.8-flash` | Stage 2 Gemini model (`gemini-3.8-flash` or `gemini-3.5-flash-lite`). |
 | `DGEM_GATE_STAGE2_PRIOR` | `--stage2-prior` | `none` | How Stage 1's candidate is shown to Stage 2: `none` (default for security gates) or `soft`. |
