@@ -34,7 +34,8 @@ class PredictRouteTest(unittest.TestCase):
         m = self.mod
         m.Handler._systemone = lambda self, req, images: self._json(200, {"route": "systemone", "images": len(images)})
         m.Handler._chat = lambda self, req: self._json(200, {"route": "chat"})
-        m._health_info = lambda: {"route": "health", "status": "ok"}
+        self.vllm_ready = True
+        m._health_info = lambda: {"route": "health", "status": "ok", "vllm_ready": self.vllm_ready}
         srv = m._Server(("127.0.0.1", 0), m.Handler)
         threading.Thread(target=srv.serve_forever, daemon=True).start()
         self.addCleanup(srv.shutdown)
@@ -56,7 +57,12 @@ class PredictRouteTest(unittest.TestCase):
         for path in ("/predict", "/rawPredict"):
             self.assertEqual(self.post(path, chat)[1]["route"], "chat")
             self.assertEqual(self.post(path, so)[1]["route"], "systemone")
-            self.assertEqual(self.post(path, {"health": True})[1]["route"], "health")
+            self.assertEqual(self.post(path, {"health": True}), (200, {"route": "health", "status": "ok", "vllm_ready": True}))
+            self.vllm_ready = False
+            self.assertEqual(self.post(path, {"ready": True})[0], 503)
+            self.assertEqual(self.post(path, {"health": True})[0], 200)
+            self.vllm_ready = True
+            self.assertEqual(self.post(path, {"ready": True})[0], 200)
         # explicit routes unchanged
         self.assertEqual(self.post("/v1/systemone", so)[1]["route"], "systemone")
         self.assertEqual(self.post("/v1/chat/completions", chat)[1]["route"], "chat")

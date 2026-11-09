@@ -90,6 +90,10 @@ class TestRawPredictRouting(unittest.TestCase):
         self.assertEqual(net.route(rp, "/v1/systemone", {"q": 1}), (rp, {"q": 1}, None))
         self.assertEqual(net.route(rp, "/health", None, "GET"), (rp, {"health": True}, "POST"))
         self.assertEqual(net.route(rp, "/health"), (rp, {"health": True}, "POST"))
+        self.assertEqual(net.route(rp, "/ready"), (rp, {"ready": True}, "POST"))
+        vx_inv = "https://123.us-central1-456.prediction.vertexai.goog/v1/projects/456/locations/us-central1/endpoints/123/invoke"
+        self.assertEqual(net.route(vx_inv, "/health"), (vx_inv + "/predict", {"health": True}, "POST"))
+        self.assertEqual(net.route(vx_inv, "/ready"), (vx_inv + "/ready", {"ready": True}, "POST"))
         psc = "http://123-us-central1-456.prediction.p.vertexai.goog/v1/projects/456/locations/us-central1/endpoints/123:rawPredict"
         self.assertTrue(net.is_vertex(psc))
         orig_mint, minted = net._mint, []

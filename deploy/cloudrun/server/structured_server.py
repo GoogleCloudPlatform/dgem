@@ -120,10 +120,11 @@ ARGS = None
 TOK = None
 API_KEY = os.environ.get("API_KEY", "")
 # dgem: service-to-service secret. With DGEM_SERVER_KEY set (comma-separated to rotate; every listed key is accepted),
-# every POST needs header X-DGem-Key equal to one of the keys; GET /health stays open. It is for services that call
-# this server (a gateway, batch jobs, probes), never for people: people go through an authenticated gateway, where
-# access is tracked. The Authorization header can't carry it on Vertex or Cloud Run, where it holds the Google token.
+# every POST needs header X-DGem-Key equal to one of the keys; GET /health and GET /ready stay open. It is for services
+# that call this server (a gateway, batch jobs, probes), never for people: people go through an authenticated gateway,
+# where access is tracked. The Authorization header can't carry it on Vertex or Cloud Run, where it holds the Google token.
 SERVER_KEYS = [k.strip().encode() for k in os.environ.get("DGEM_SERVER_KEY", "").split(",") if k.strip()]
+WARMUP_STATE_PATH = os.environ.get("DGEM_WARMUP_STATE_FILE", "/tmp/dgemma/warmup_state.json")
 # dgem: the largest body of a refused request that is read (and dropped) to keep a keep-alive connection in step; a
 # larger one closes the connection instead.
 REFUSED_BODY_LIMIT = 16 << 20
@@ -622,26 +623,30 @@ def upstream_chat(body, timeout=600):
 
 
 def _health_info():
-    """Readiness telemetry for /health: always HTTP 200 (the container is up), with
-    vllm_ready/phase/bytes_staged_gb/warmed from entrypoint.sh's warmup_state.json so the
-    gateway, MCP get_health_and_gpu_status and the Studio can report cold-start progress."""
+    """Readiness telemetry for /health (always HTTP 200) and /ready (503 until vllm_ready is true), with
+    phase/bytes_staged_gb/warmed from entrypoint.sh's warmup_state.json so the gateway, MCP
+    get_health_and_gpu_status and the Studio can report cold-start progress."""
     info = {"status": "ok", "server": "dgem-structured-server",
             "version": os.environ.get("DGEM_VERSION", "dev"),
             "revision": os.environ.get("DGEM_REVISION", "unknown"),
             "vllm_commit": os.environ.get("DGEM_VLLM_COMMIT", ""),
             "vllm_ready": False, "phase": "loading_vllm_siglip", "bytes_staged_gb": 0.0}
     try:
-        with open("/tmp/dgemma/warmup_state.json") as wf:
+        with open(WARMUP_STATE_PATH) as wf:
             info.update(json.load(wf))
     except Exception:
         pass
+    upstream_ok = False
     try:
         with urllib.request.urlopen(ARGS.upstream.rstrip("/") + "/health", timeout=0.4) as r:
-            if r.status == 200:
-                info["vllm_ready"] = True
-                info["phase"] = "ready"
+            upstream_ok = r.status == 200
     except Exception:
         pass
+    info["vllm_ready"] = upstream_ok
+    if upstream_ok:
+        info["phase"] = "ready"
+    elif info.get("phase") == "ready":
+        info["phase"] = "loading_vllm_siglip"
     return info
 
 
@@ -1475,12 +1480,14 @@ def message_text(m):
 
 
 def predict_kind(req, images):
-    """Which route a single-route (/predict) request means: "health", "systemone" or "chat"."""
+    """Which route a single-route (/predict) request means: "health", "ready", "systemone" or "chat"."""
     if images:
         return "systemone"  # only /v1/systemone takes multipart image uploads
     if isinstance(req, dict):
         if req.get("health") is True and len(req) == 1:
             return "health"
+        if req.get("ready") is True and len(req) == 1:
+            return "ready"
         if "messages" not in req and isinstance(req.get("questions"), dict):
             return "systemone"
     return "chat"
@@ -1524,6 +1531,9 @@ class Handler(BaseHTTPRequestHandler):
     def do_GET(self):
         if self.path in ("/health", "/invoke/health", "/"):
             return self._json(200, _health_info())
+        if self.path in ("/ready", "/invoke/ready"):
+            info = _health_info()
+            return self._json(200 if info["vllm_ready"] else 503, info)
         return self._json(404, {"error": {"message": "unknown route"}})
 
     def _read_request(self):
@@ -1593,6 +1603,15 @@ class Handler(BaseHTTPRequestHandler):
                     }
                 },
             )
+        # dgem: Vertex dedicated endpoints reject external GET requests on /invoke/* routes (404), so answer POST on
+        # /health and /ready too (with X-DGem-Key checked above and any request body drained to keep HTTP/1.1 in step).
+        if self.path in ("/health", "/invoke/health"):
+            self._discard_body()
+            return self._json(200, _health_info())
+        if self.path in ("/ready", "/invoke/ready"):
+            self._discard_body()
+            info = _health_info()
+            return self._json(200 if info["vllm_ready"] else 503, info)
         # dgem: no free-form generation through this port; decisions only.
         if self.path == "/v1/raw/chat/completions":
             # read the body so a keep-alive connection stays in step
@@ -1625,12 +1644,15 @@ class Handler(BaseHTTPRequestHandler):
             return self._chat(req)
         # dgem: one route for every request, for Vertex :rawPredict (a private/PSC endpoint forwards every call to the
         # model's single predictRoute; invoke routes are unavailable there). Dispatch on the body: {"health": true}
-        # answers /health, a systemone body (questions map, or a multipart upload) goes to /v1/systemone, anything else
-        # (chat messages) to /v1/chat/completions, as before.
+        # answers /health, {"ready": true} answers /ready (503 until vllm_ready), a systemone body (questions map, or a
+        # multipart upload) goes to /v1/systemone, anything else (chat messages) to /v1/chat/completions, as before.
         if self.path in ("/predict", "/rawPredict"):
             kind = predict_kind(req, images)
             if kind == "health":
                 return self._json(200, _health_info())
+            if kind == "ready":
+                info = _health_info()
+                return self._json(200 if info["vllm_ready"] else 503, info)
             if kind == "systemone":
                 return self._systemone(req, images)
             return self._chat(req)

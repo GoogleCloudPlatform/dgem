@@ -82,7 +82,7 @@ func TestVertexStatusStaleWhileRevalidateNonBlocking(t *testing.T) {
 
 	vertexStatusHTTPClient = &http.Client{
 		Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
-			if strings.HasSuffix(r.URL.Path, "/invoke/health") {
+			if strings.HasSuffix(r.URL.Path, "/invoke/predict") && r.Method == http.MethodPost {
 				probeCalls.Add(1)
 				probeStarted <- struct{}{}
 				<-releaseProbe

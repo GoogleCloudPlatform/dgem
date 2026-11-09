@@ -95,7 +95,7 @@ What the script configures:
 | Weights | bucket mounted at `/mnt/gcs`, copied to memory at boot (`COPY_TO_SHM=1`) | Fast sequential load instead of random reads over FUSE |
 | Network | Direct VPC egress, `default`/`default`, all traffic | Much faster weight copy (§4) |
 | Serving | `DEFAULT_SAMPLES=1`, `MAX_INFLIGHT=8`, `DISABLE_MM=0` | Fast default reads; queue bursts instead of overloading the engine; images on |
-| Startup | probe on `/health` for up to 10 minutes; self-warmup before serving | First real request doesn't pay kernel warmup |
+| Startup | `startupProbe` on `/ready` for up to 15 minutes; self-warmup before serving | Revision only marks ready once vLLM serves; first real request doesn't pay kernel warmup |
 
 The script injects the repository's `deploy/cloudrun/entrypoint.sh` at deploy time, so entrypoint changes take
 effect on redeploy without rebuilding the image.
@@ -109,15 +109,17 @@ weights streamed from the bucket). It is slower per request.
 URL=$(gcloud run services describe dgemma --project=<PROJECT> --region=<REGION> --format='value(status.url)')
 TOKEN=$(gcloud auth print-identity-token)
 
+curl -sf -H "Authorization: Bearer $TOKEN" "$URL/ready"
+# ready (HTTP 200): {"status": "ok", "vllm_ready": true, "phase": "ready", "warmed": true, "warmup_s": 14.6}
+
 curl -s -H "Authorization: Bearer $TOKEN" "$URL/health"
-# during boot: {"phase": "staging_tmpfs", "bytes_staged_gb": ..., "vllm_ready": false}
-# ready:       {"status": "ok", "vllm_ready": true, "phase": "ready", "warmed": true, "warmup_s": 14.6}
+# during boot (HTTP 200): {"phase": "staging_tmpfs", "bytes_staged_gb": ..., "vllm_ready": false}
 
 ./bin/dgem decide -u "$URL/v1" --gcp-auth -t templates/support_triage.json.tmpl \
   -v 'ticket=Database connection pool exhausted' --stats
 ```
 
-`/health` answers 200 as soon as the container is up; wait for `vllm_ready` and `warmed` before sending load.
+`/health` answers `200` as soon as the container is up (for cold-start telemetry), whereas `/ready` returns `503` until `vllm_ready` is `true`; wait for `/ready` `200` and `"warmed": true` before sending load.
 
 ## 7. Cold start: what to expect and your options
 
@@ -160,7 +162,7 @@ For a new serving image, run the full comparison first: [Promote a new serving i
 
 | Symptom | Cause | Fix |
 | :--- | :--- | :--- |
-| `429` / connection refused right after deploy or idle | Instance still loading (vLLM not ready) | Poll `/health` until `vllm_ready`; retry with backoff (`--http-retries 3`) |
+| `429` / connection refused right after deploy or idle | Instance still loading (vLLM not ready) | Poll `/ready` for `200` (or `/health` until `vllm_ready`); retry with backoff (`--http-retries 3`) |
 | Container restarts ~10 minutes into boot | Out of memory (vision tower + in-memory weights on a 32 GiB instance) | Use RTX PRO 6000 (80 GiB), or `DISABLE_MM=1` on L4 |
 | Weight copy takes 6+ minutes | Public egress | Enable Direct VPC egress with Private Google Access (§4) |
 | Weights download from Hugging Face fails | No internet with all-traffic VPC egress and no NAT | Stage weights in Cloud Storage (§2) or add Cloud NAT |

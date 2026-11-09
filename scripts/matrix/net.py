@@ -201,12 +201,22 @@ def is_rawpredict(base):
 
 def route(base, path, body=None, method=None):
     """-> (url, body, method) for a serving-image path. On a :rawPredict base, POSTs go to the base itself and
-    GET /health becomes POST {"health": true} (the single route answers it)."""
-    if not is_rawpredict(base):
-        return base.rstrip("/") + path, body, method
-    if path in ("/health", "/") and (method or ("POST" if body is not None else "GET")) == "GET":
-        return base, {"health": True}, "POST"
-    return base, body, method
+    GET /health or /ready becomes POST {"health": true} or {"ready": true}. On a Vertex /invoke base, external GET
+    requests are rejected by Vertex with 404, so GET /health becomes POST .../predict {"health": true} (supported by
+    both current and prior serving images) and GET /ready becomes POST .../ready {"ready": true}."""
+    eff_method = method or ("POST" if body is not None else "GET")
+    if is_rawpredict(base):
+        if path == "/ready" and eff_method == "GET":
+            return base, {"ready": True}, "POST"
+        if path in ("/health", "/") and eff_method == "GET":
+            return base, {"health": True}, "POST"
+        return base, body, method
+    if is_vertex(base) and eff_method == "GET":
+        if path == "/ready":
+            return base.rstrip("/") + "/ready", {"ready": True}, "POST"
+        if path in ("/health", "/"):
+            return base.rstrip("/") + "/predict", {"health": True}, "POST"
+    return base.rstrip("/") + path, body, method
 
 
 def server_key_header():

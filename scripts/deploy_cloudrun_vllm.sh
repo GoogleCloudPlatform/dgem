@@ -140,7 +140,7 @@ DEPLOY_FLAGS=(
   "--port" "8080"
   "--add-volume=name=weights,type=cloud-storage,bucket=${BUCKET},readonly=true,mount-options=enable-buffered-read=true"
   "--add-volume-mount=volume=weights,mount-path=/mnt/gcs"
-  "--startup-probe=httpGet.path=/health,httpGet.port=8080,initialDelaySeconds=10,periodSeconds=5,timeoutSeconds=4,failureThreshold=120"
+  "--startup-probe=httpGet.path=${CLOUDRUN_STARTUP_PROBE_PATH:-/ready},httpGet.port=8080,initialDelaySeconds=10,periodSeconds=5,timeoutSeconds=4,failureThreshold=180"
   "--set-env-vars=${ENV_VARS}"
 )
 # Direct VPC egress with Private Google Access: staging 17.53 GiB of weights from Cloud Storage drops from

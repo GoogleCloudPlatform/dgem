@@ -1029,12 +1029,17 @@ func probeAndCacheVertexEndpointState(epID, rawVertexURL string) vertexEndpointL
 		return st
 	}
 
-	// 1b. Fast Data-Plane Check (/invoke/health on Dedicated Endpoint DNS takes ~15ms when deployed).
+	// 1b. Fast Data-Plane Check (POST /invoke/predict {"health":true} on Dedicated Endpoint DNS takes ~15ms when
+	// deployed; Vertex dedicated endpoints reject external GET requests on /invoke/* routes).
 	if !strings.Contains(strings.ToLower(rawVertexURL), ":rawpredict") && projNum != "" {
-		healthURL := fmt.Sprintf("https://%s.%s-%s.prediction.vertexai.goog/v1/projects/%s/locations/%s/endpoints/%s/invoke/health", epID, region, projNum, proj, region, epID)
+		healthURL := fmt.Sprintf("https://%s.%s-%s.prediction.vertexai.goog/v1/projects/%s/locations/%s/endpoints/%s/invoke/predict", epID, region, projNum, proj, region, epID)
 		hCtx, hCancel := context.WithTimeout(context.Background(), 2500*time.Millisecond)
-		if hReq, err := http.NewRequestWithContext(hCtx, http.MethodGet, healthURL, nil); err == nil {
+		if hReq, err := http.NewRequestWithContext(hCtx, http.MethodPost, healthURL, strings.NewReader(`{"health":true}`)); err == nil {
+			hReq.Header.Set("Content-Type", "application/json")
 			hReq.Header.Set("Authorization", "Bearer "+tok)
+			if k := client.ServerKeyFromEnv(); k != "" {
+				hReq.Header.Set(client.ServerKeyHeader, k)
+			}
 			if hResp, err := hc.Do(hReq); err == nil {
 				hBody, _ := io.ReadAll(hResp.Body)
 				hResp.Body.Close()

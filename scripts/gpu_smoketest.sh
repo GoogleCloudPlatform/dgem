@@ -179,17 +179,21 @@ if [[ "$TARGET" == "vertex" ]]; then
   EP_ID=$(gcloud ai endpoints list --project="$PROJECT_ID" --region="$REGION" --filter="displayName=$EP_NAME" --format="value(name)" | head -1)
   PROJ_NUM=$(gcloud projects describe "$PROJECT_ID" --format="value(projectNumber)")
   DEDICATED_HOST="${EP_ID}.${REGION}-${PROJ_NUM}.prediction.vertexai.goog"
-  HEALTH_URL="https://${DEDICATED_HOST}/v1/projects/${PROJECT_ID}/locations/${REGION}/endpoints/${EP_ID}/invoke/health"
+  READY_URL="https://${DEDICATED_HOST}/v1/projects/${PROJECT_ID}/locations/${REGION}/endpoints/${EP_ID}/invoke/ready"
   SYSTEMONE_URL="https://${DEDICATED_HOST}/v1/projects/${PROJECT_ID}/locations/${REGION}/endpoints/${EP_ID}/invoke/v1/systemone"
 
   echo "==> Dedicated DNS: $DEDICATED_HOST"
   TOK=$(gcloud auth print-access-token)
+  KEY_HDR=()
+  if [[ -n "${DGEM_SERVER_KEY:-}" ]]; then
+    KEY_HDR=(-H "X-DGem-Key: ${DGEM_SERVER_KEY%%,*}")
+  fi
 
-  echo -n "==> Waiting for /invoke/health probe..."
+  echo -n "==> Waiting for POST /invoke/ready probe..."
   HEALTHY=0
   for i in {1..60}; do
-    if health_ok "$HEALTH_URL" "$TOK"; then
-      echo " healthy!"
+    if curl -sf -m 5 -X POST -H "Authorization: Bearer $TOK" -H "Content-Type: application/json" "${KEY_HDR[@]}" -d '{}' "$READY_URL" >/dev/null; then
+      echo " ready!"
       HEALTHY=1
       break
     fi
@@ -198,7 +202,7 @@ if [[ "$TARGET" == "vertex" ]]; then
   done
   if [[ "$HEALTHY" != "1" ]]; then
     echo ""
-    echo "❌ /invoke/health did not return {\"status\": \"ok\"} within ~3 minutes." >&2
+    echo "❌ POST /invoke/ready did not return HTTP 200 within ~3 minutes." >&2
     exit 3
   fi
 
