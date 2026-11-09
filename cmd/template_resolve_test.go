@@ -15,9 +15,12 @@
 package cmd
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/GoogleCloudPlatform/dgem/pkg/template"
 )
 
 func writeTemplateTree(t *testing.T) (root, outside string) {
@@ -28,6 +31,7 @@ func writeTemplateTree(t *testing.T) (root, outside string) {
 		"support_triage.json.tmpl",
 		"calibration/grounding_claim_check.json.tmpl",
 		"multimodal/bbox_localization.json.tmpl",
+		"rai/prompt_safety_guardrail.json.tmpl",
 		"custom/nested/deep_policy.json.tmpl",
 	} {
 		p := filepath.Join(root, filepath.FromSlash(rel))
@@ -57,6 +61,8 @@ func TestResolveTemplateFileValidNames(t *testing.T) {
 		"calibration/grounding_claim_check": "calibration/grounding_claim_check",
 		"factuality_grounding":              "calibration/grounding_claim_check",
 		"bbox_single":                       "multimodal/bbox_localization",
+		"prompt_safety_guardrail":           "rai/prompt_safety_guardrail",
+		"rai/prompt_safety_guardrail":       "rai/prompt_safety_guardrail",
 		"deep_policy":                       "custom/nested/deep_policy",
 		"custom/nested/deep_policy":         "custom/nested/deep_policy",
 	}
@@ -114,5 +120,52 @@ func TestIsWithinDir(t *testing.T) {
 		if isWithinDir(root, p) {
 			t.Errorf("%q should not be within %q", p, root)
 		}
+	}
+}
+
+func TestSecOpsAndRAITemplatesRenderValidJSON(t *testing.T) {
+	eng := template.NewEngine()
+	policies := []string{
+		"secops_rag_quarantine.json.tmpl",
+		"secops_iam_change_audit.json.tmpl",
+		"rai/prompt_safety_guardrail.json.tmpl",
+		"rai/response_safety_grader.json.tmpl",
+		"rai/custom_content_policy.json.tmpl",
+		"rai/unbiased_context_qa.json.tmpl",
+		"rai/provenance_claim_check.json.tmpl",
+	}
+	for _, rel := range policies {
+		t.Run(rel, func(t *testing.T) {
+			tmplPath := filepath.Join("..", "templates", filepath.FromSlash(rel))
+			rendered, err := eng.RenderFile(tmplPath, nil)
+			if err != nil {
+				t.Fatalf("RenderFile(%q, nil) unexpected error: %v", tmplPath, err)
+			}
+			schemaStr, stateStr, err := template.ParseStructuredPayload(rendered, nil)
+			if err != nil {
+				t.Fatalf("ParseStructuredPayload(%q) unexpected error: %v", tmplPath, err)
+			}
+			var schema struct {
+				SeedToken string            `json:"seed_token"`
+				Samples   int               `json:"samples"`
+				Questions []json.RawMessage `json:"questions"`
+			}
+			if err := json.Unmarshal([]byte(schemaStr), &schema); err != nil {
+				t.Fatalf("json.Unmarshal(schema of %q) error: %v", tmplPath, err)
+			}
+			if schema.SeedToken != "fixed" {
+				t.Errorf("%q seed_token = %q, want %q", rel, schema.SeedToken, "fixed")
+			}
+			if schema.Samples != 1 {
+				t.Errorf("%q samples = %d, want 1", rel, schema.Samples)
+			}
+			if len(schema.Questions) < 2 || len(schema.Questions) > 8 {
+				t.Errorf("%q len(questions) = %d, want in [2, 8]", rel, len(schema.Questions))
+			}
+			var state map[string]any
+			if err := json.Unmarshal([]byte(stateStr), &state); err != nil || len(state) == 0 {
+				t.Errorf("json.Unmarshal(state of %q) = (%v, %v), want non-empty object", tmplPath, state, err)
+			}
+		})
 	}
 }

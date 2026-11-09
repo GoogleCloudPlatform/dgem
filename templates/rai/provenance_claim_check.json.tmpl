@@ -1,0 +1,79 @@
+{
+  "schema": {
+    "seed_token": {{ default "fixed" .seed_token | toJson }},
+    "instructions": "Cross-check cryptographic C2PA Content Credentials validator output (c2pa_validator_report) against the publisher's accompanying media caption (caption_claim) to determine provenance integrity, claim consistency, and required AI-origin disclosure or editorial hold action.",
+    "questions": [
+      {
+        "id": "credential_integrity",
+        "type": "choice",
+        "instructions": "What media origin status is established by c2pa_validator_report?",
+        "options": [
+          {
+            "name": "verified_capture",
+            "description": "Valid C2PA signature chain from a hardware camera or capture device with no generative-AI creation or synthetic inpainting assertions."
+          },
+          {
+            "name": "verified_ai_generated",
+            "description": "Valid C2PA signature chain declaring generative-AI creation or synthetic composite editing (such as trainedAlgorithmicMedia or compositeWithTrainedAlgorithmicMedia)."
+          },
+          {
+            "name": "missing_or_stripped",
+            "description": "No C2PA manifest present on the asset; provenance is unverified."
+          },
+          {
+            "name": "tampered_or_invalid",
+            "description": "C2PA cryptographic signature check failed, asset hash mismatch, or broken manifest ingredient chain."
+          }
+        ]
+      },
+      {
+        "id": "caption_consistency",
+        "type": "choice",
+        "instructions": "How consistent is caption_claim with c2pa_validator_report?",
+        "options": [
+          {
+            "name": "consistent",
+            "description": "caption_claim aligns with c2pa_validator_report (or makes no origin claims that conflict with it)."
+          },
+          {
+            "name": "unverified_origin_claim",
+            "description": "caption_claim asserts authentic camera or eyewitness capture, while c2pa_validator_report reports missing/stripped credentials."
+          },
+          {
+            "name": "contradicts_provenance",
+            "description": "caption_claim asserts authentic unaltered camera capture while c2pa_validator_report shows generative-AI creation or signature tampering (or claims camera provenance on tampered credentials)."
+          }
+        ]
+      },
+      {
+        "id": "disclosure_action",
+        "type": "choice",
+        "instructions": "Which publishing and provenance-labelling action is required?",
+        "options": [
+          {
+            "name": "publish_as_verified",
+            "description": "Verified hardware capture with a consistent caption; publish with verified provenance metadata."
+          },
+          {
+            "name": "attach_ai_disclosure_label",
+            "description": "Verified generative-AI or synthetically edited media without deceptive camera claims; publish with mandatory AI-generated content disclosure."
+          },
+          {
+            "name": "attach_unverified_origin_note",
+            "description": "Credentials missing/stripped with no cryptographic tampering; publish with an unverified-origin context note."
+          },
+          {
+            "name": "hold_for_editorial_review",
+            "description": "Tampered C2PA signature or caption falsely claiming authentic camera capture on AI-generated/tampered media; block auto-publish for human review."
+          }
+        ]
+      }
+    ],
+    "samples": {{ default 1 .samples | toJson }}
+  },
+  "state": {
+    "asset_id": {{ default "media-2026-8841.webp" .asset_id | toJson }},
+    "c2pa_validator_report": {{ default "signature_status=VALID; signer=\"Google SynthID / C2PA Signer\"; digitalSourceType=\"http://cv.iptc.org/newscodes/digitalsourcetype/trainedAlgorithmicMedia\"; actions=[\"c2pa.created\"]" .c2pa_validator_report | toJson }},
+    "caption_claim": {{ default "Concept illustration showing future offshore wind substation layout." .caption_claim | toJson }}
+  }
+}
