@@ -1,0 +1,25 @@
+{
+  "multimodal": true,
+  "examples": [
+    {
+      "name": "typical",
+      "variables": {
+        "zone": "Dock-Door-12",
+        "fps": 1,
+        "samples": 1
+      }
+    },
+    {
+      "name": "edge",
+      "variables": {
+        "zone": "Aisle-04-Battery-Charging",
+        "fps": 2,
+        "samples": 1
+      }
+    },
+    {
+      "name": "minimal",
+      "variables": {}
+    }
+  ]
+}

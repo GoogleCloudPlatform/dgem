@@ -1,0 +1,26 @@
+{
+  "examples": [
+    {
+      "name": "typical",
+      "unambiguous": true,
+      "variables": {
+        "comment": "Thank you for sharing the benchmark methodology and reproduction steps; the latency breakdown table was very helpful.",
+        "samples": 1
+      },
+      "expected_answers": {
+        "toxic": "no"
+      }
+    },
+    {
+      "name": "edge",
+      "variables": {
+        "comment": "This configuration guide skipped three required flags and wasted an entire afternoon of debugging!",
+        "samples": 1
+      }
+    },
+    {
+      "name": "minimal",
+      "variables": {}
+    }
+  ]
+}

@@ -1,0 +1,34 @@
+{
+  "examples": [
+    {
+      "name": "typical",
+      "unambiguous": true,
+      "variables": {
+        "text": "My physical card is sitting right here on my desk, so nobody took it, yet there are three online charges in another country.",
+        "first_guess": "lost_or_stolen_card",
+        "options": [
+          "lost_or_stolen_card",
+          "compromised_card"
+        ]
+      },
+      "expected_answers": {
+        "intent": "compromised_card"
+      }
+    },
+    {
+      "name": "edge",
+      "variables": {
+        "text": "I see an unfamiliar charge and I also can't find my card in my coat pocket.",
+        "first_guess": "compromised_card",
+        "options": [
+          "lost_or_stolen_card",
+          "compromised_card"
+        ]
+      }
+    },
+    {
+      "name": "minimal",
+      "variables": {}
+    }
+  ]
+}

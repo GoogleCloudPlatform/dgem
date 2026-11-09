@@ -1,0 +1,26 @@
+{
+  "examples": [
+    {
+      "name": "typical",
+      "unambiguous": true,
+      "variables": {
+        "ticket": "URGENT: Our company credit card was charged twice ($4,200 x 2) on invoice #9481 this morning — please refund the duplicate billing charge!",
+        "samples": 1
+      },
+      "expected_answers": {
+        "team": "billing"
+      }
+    },
+    {
+      "name": "edge",
+      "variables": {
+        "ticket": "Hi team, where in account settings can I update our billing contact email address before next quarter's renewal?",
+        "samples": 1
+      }
+    },
+    {
+      "name": "minimal",
+      "variables": {}
+    }
+  ]
+}

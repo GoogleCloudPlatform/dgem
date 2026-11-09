@@ -1,0 +1,40 @@
+{
+  "examples": [
+    {
+      "name": "typical",
+      "unambiguous": true,
+      "variables": {
+        "repo": "example-org/cloud-sdk",
+        "item_kind": "issue",
+        "author_association": "NONE",
+        "title": "Buy cheap crypto followers & instant SEO backlinks 24/7 WhatsApp +1-555-0199!",
+        "body": "Visit https://spam-boost-seo.example now for 90% off casino bonuses and instant followers!",
+        "samples": 1
+      },
+      "expected_answers": {
+        "spam": "yes",
+        "kind": "promotional_or_scam"
+      }
+    },
+    {
+      "name": "edge",
+      "variables": {
+        "repo": "example-org/cloud-sdk",
+        "item_kind": "pull_request",
+        "author_association": "CONTRIBUTOR",
+        "title": "fix: guard nil pointer in RetryTransport.RoundTrip",
+        "body": "Fixes #142 by checking req.Body != nil before cloning.",
+        "pr_files": [
+          "pkg/transport/retry.go",
+          "pkg/transport/retry_test.go"
+        ],
+        "pr_diff": "+9 -2",
+        "samples": 1
+      }
+    },
+    {
+      "name": "minimal",
+      "variables": {}
+    }
+  ]
+}

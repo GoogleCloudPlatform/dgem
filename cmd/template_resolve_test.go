@@ -169,3 +169,51 @@ func TestSecOpsAndRAITemplatesRenderValidJSON(t *testing.T) {
 		})
 	}
 }
+
+func TestDiscoverTemplatesCatalogAndSampleVars(t *testing.T) {
+	catalog, err := discoverTemplates(filepath.Join("..", "templates"))
+	if err != nil {
+		t.Fatalf("discoverTemplates(../templates) error: %v", err)
+	}
+	if len(catalog) < 35 {
+		t.Fatalf("discoverTemplates returned %d entries, want at least 35", len(catalog))
+	}
+
+	eng := template.NewEngine()
+	byID := make(map[string]TemplateCatalogEntry, len(catalog))
+	for _, entry := range catalog {
+		byID[entry.ID] = entry
+		if len(entry.Examples) < 3 {
+			t.Errorf("template %q has %d examples in catalog, want >= 3", entry.ID, len(entry.Examples))
+		}
+		vars := make(map[string]any, len(entry.SampleVars))
+		for k, v := range entry.SampleVars {
+			vars[k] = v
+		}
+		vars = template.CoerceJSONVariableStrings(vars)
+		rendered, err := eng.RenderFile(entry.Path, vars)
+		if err != nil {
+			t.Errorf("RenderFile(%q, SampleVars) error: %v", entry.ID, err)
+			continue
+		}
+		if err := template.ValidateRenderedPayload(rendered, vars, false, nil); err != nil {
+			t.Errorf("ValidateRenderedPayload(%q, SampleVars) error: %v", entry.ID, err)
+		}
+	}
+
+	if iam, ok := byID["secops_iam_change_audit"]; !ok {
+		t.Error("missing secops_iam_change_audit in catalog")
+	} else {
+		for _, v := range iam.Variables {
+			if v == "com" || v == "iam" || v == "gserviceaccount" {
+				t.Errorf("secops_iam_change_audit extracted bogus variable %q from string literal: %v", v, iam.Variables)
+			}
+		}
+	}
+
+	if audio, ok := byID["multimodal/call_quality_audio"]; !ok {
+		t.Error("missing multimodal/call_quality_audio in catalog")
+	} else if audio.Multimodal {
+		t.Error("multimodal/call_quality_audio should have Multimodal=false (text-only transcript template)")
+	}
+}

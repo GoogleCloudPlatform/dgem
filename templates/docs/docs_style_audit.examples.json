@@ -1,0 +1,26 @@
+{
+  "examples": [
+    {
+      "name": "typical",
+      "unambiguous": true,
+      "variables": {
+        "text": "`dgem serve` verifies the `X-DGem-Api-Key` header before forwarding requests to the serving backend. Pass `--api-keys` or set `DGEM_GATEWAY_KEYS` before binding a non-loopback address.",
+        "samples": 1
+      },
+      "expected_answers": {
+        "tone": "measured_claims"
+      }
+    },
+    {
+      "name": "edge",
+      "variables": {
+        "text": "Don't worry! It is important to note that this blazing-fast, revolutionary engine isn't about prompts, it's about magic. That's it.",
+        "samples": 1
+      }
+    },
+    {
+      "name": "minimal",
+      "variables": {}
+    }
+  ]
+}

@@ -1,0 +1,25 @@
+{
+  "multimodal": true,
+  "examples": [
+    {
+      "name": "typical",
+      "variables": {
+        "viewport": "desktop-1440px",
+        "component": "CheckoutSummaryCard",
+        "samples": 1
+      }
+    },
+    {
+      "name": "edge",
+      "variables": {
+        "viewport": "mobile-375px",
+        "component": "CompactCookieBanner",
+        "samples": 1
+      }
+    },
+    {
+      "name": "minimal",
+      "variables": {}
+    }
+  ]
+}

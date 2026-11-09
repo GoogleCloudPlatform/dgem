@@ -1,0 +1,30 @@
+{
+  "multimodal": false,
+  "examples": [
+    {
+      "name": "typical",
+      "unambiguous": true,
+      "variables": {
+        "duration": 210,
+        "transcript": "Representative: Thank you for calling enterprise support; please note this call is recorded for quality assurance. I have refunded the duplicate charge and unlocked your account. Customer: Wonderful, everything works now — thank you so much!",
+        "samples": 1
+      },
+      "expected_answers": {
+        "mandatory_disclosure_read": "yes",
+        "resolution_outcome": "resolved_first_contact"
+      }
+    },
+    {
+      "name": "edge",
+      "variables": {
+        "duration": 45,
+        "transcript": "Representative: Hello, how can I help? Customer: Still broken after three calls! [line disconnected]",
+        "samples": 1
+      }
+    },
+    {
+      "name": "minimal",
+      "variables": {}
+    }
+  ]
+}

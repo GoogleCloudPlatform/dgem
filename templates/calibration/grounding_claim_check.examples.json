@@ -1,0 +1,28 @@
+{
+  "examples": [
+    {
+      "name": "typical",
+      "unambiguous": true,
+      "variables": {
+        "document": "Section 9.2: Either party may terminate this Agreement upon sixty (60) days prior written notice, subject to an early termination fee of 20%.",
+        "claim": "The agreement allows termination with 15 days notice and zero early termination fee.",
+        "samples": 1
+      },
+      "expected_answers": {
+        "supported": "no"
+      }
+    },
+    {
+      "name": "edge",
+      "variables": {
+        "document": "Backups run nightly at 01:00 UTC and snapshots are retained for 30 calendar days.",
+        "claim": "Snapshots are kept for roughly one month, including holiday weekends.",
+        "samples": 1
+      }
+    },
+    {
+      "name": "minimal",
+      "variables": {}
+    }
+  ]
+}

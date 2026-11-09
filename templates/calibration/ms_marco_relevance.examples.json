@@ -1,0 +1,28 @@
+{
+  "examples": [
+    {
+      "name": "typical",
+      "unambiguous": true,
+      "variables": {
+        "query": "default port for PostgreSQL server",
+        "passage": "PostgreSQL listens on TCP port 5432 by default unless overridden via the port setting in postgresql.conf.",
+        "samples": 1
+      },
+      "expected_answers": {
+        "relevant": "yes"
+      }
+    },
+    {
+      "name": "edge",
+      "variables": {
+        "query": "how to configure TLS client certificates in PostgreSQL",
+        "passage": "PostgreSQL 16 improved parallel query planner estimates for partitioned tables.",
+        "samples": 1
+      }
+    },
+    {
+      "name": "minimal",
+      "variables": {}
+    }
+  ]
+}

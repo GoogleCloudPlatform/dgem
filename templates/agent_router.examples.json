@@ -1,0 +1,28 @@
+{
+  "examples": [
+    {
+      "name": "typical",
+      "unambiguous": true,
+      "variables": {
+        "prompt": "Run the Go unit tests in ./pkg/template/... and report any failures.",
+        "last_action": "edit_code",
+        "samples": 1
+      },
+      "expected_answers": {
+        "tool": "run_tests"
+      }
+    },
+    {
+      "name": "edge",
+      "variables": {
+        "prompt": "Check the failing assertion in \"parser_test.go\"\nand decide whether we should clarify requirements first.",
+        "last_action": "run_tests",
+        "samples": 1
+      }
+    },
+    {
+      "name": "minimal",
+      "variables": {}
+    }
+  ]
+}

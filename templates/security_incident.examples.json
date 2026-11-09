@@ -1,0 +1,26 @@
+{
+  "examples": [
+    {
+      "name": "typical",
+      "unambiguous": true,
+      "variables": {
+        "alert": "CRITICAL DLP ALERT: Production database credentials and 120,000 customer SSN records exfiltrated over unauthorized SSH tunnel from host prod-db-02 to 198.51.100.44.",
+        "samples": 1
+      },
+      "expected_answers": {
+        "data_compromise": "yes"
+      }
+    },
+    {
+      "name": "edge",
+      "variables": {
+        "alert": "LOW: Single failed SSH login attempt (bad password) from internal bastion jumpbox by user ops-oncall, followed by successful key login.",
+        "samples": 1
+      }
+    },
+    {
+      "name": "minimal",
+      "variables": {}
+    }
+  ]
+}

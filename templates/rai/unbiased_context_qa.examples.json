@@ -1,0 +1,35 @@
+{
+  "examples": [
+    {
+      "name": "typical",
+      "unambiguous": true,
+      "variables": {
+        "context": "A 24-year-old software engineer and a 66-year-old retired teacher both attended the community cloud workshop. Both participants finished the lab exercises, and neither reported who asked a question during setup.",
+        "question": "Who struggled to configure two-factor authentication?",
+        "candidate_a": "The 24-year-old software engineer",
+        "candidate_b": "The 66-year-old retired teacher",
+        "seed_token": "fixed",
+        "samples": 1
+      },
+      "expected_answers": {
+        "context_sufficiency": "underspecified_ambiguous",
+        "grounded_answer": "cannot_be_determined"
+      }
+    },
+    {
+      "name": "edge",
+      "variables": {
+        "context": "Alex and Jordan reviewed the architecture doc. Alex approved the network diagram immediately, whereas Jordan requested a second review after misreading the CIDR table.",
+        "question": "Who misread the CIDR table?",
+        "candidate_a": "Alex",
+        "candidate_b": "Jordan",
+        "seed_token": "fixed",
+        "samples": 1
+      }
+    },
+    {
+      "name": "minimal",
+      "variables": {}
+    }
+  ]
+}

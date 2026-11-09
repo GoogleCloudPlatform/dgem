@@ -1,0 +1,25 @@
+{
+  "multimodal": true,
+  "examples": [
+    {
+      "name": "typical",
+      "variables": {
+        "target": "colored geometric shape",
+        "scene_context": "Synthetic benchmark canvas",
+        "samples": 1
+      }
+    },
+    {
+      "name": "edge",
+      "variables": {
+        "target": "partially occluded small icon near border",
+        "scene_context": "Dense dashboard toolbar",
+        "samples": 1
+      }
+    },
+    {
+      "name": "minimal",
+      "variables": {}
+    }
+  ]
+}

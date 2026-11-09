@@ -1,0 +1,25 @@
+{
+  "examples": [
+    {
+      "name": "typical",
+      "unambiguous": true,
+      "variables": {
+        "clause": "Term and Liability: This Agreement shall automatically renew for successive twelve (12) month renewal periods unless either party gives written notice 60 days prior to expiration. Vendor's liability under this Agreement shall be unlimited and uncapped for all direct and indirect damages."
+      },
+      "expected_answers": {
+        "auto_renews": "yes",
+        "liability_cap": "uncapped"
+      }
+    },
+    {
+      "name": "edge",
+      "variables": {
+        "clause": "Renewal requires mutual signed addendum; aggregate liability shall not exceed twelve (12) months of fees paid, except for gross negligence."
+      }
+    },
+    {
+      "name": "minimal",
+      "variables": {}
+    }
+  ]
+}

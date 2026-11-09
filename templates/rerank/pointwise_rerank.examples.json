@@ -1,0 +1,28 @@
+{
+  "examples": [
+    {
+      "name": "typical",
+      "unambiguous": true,
+      "variables": {
+        "query": "How do I verify an annotated release tag signature in git?",
+        "policy": "Prioritize direct command-level answers.",
+        "passage": "Run `git tag -v v0.4.2` to verify the cryptographic signature on the annotated tag."
+      },
+      "expected_answers": {
+        "relevant": "yes"
+      }
+    },
+    {
+      "name": "edge",
+      "variables": {
+        "query": "How do I verify an annotated release tag signature in git?",
+        "policy": "Prioritize direct command-level answers.",
+        "passage": "Git branches are lightweight movable pointers to commits in the object graph."
+      }
+    },
+    {
+      "name": "minimal",
+      "variables": {}
+    }
+  ]
+}

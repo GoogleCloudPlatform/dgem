@@ -7,15 +7,21 @@
         "type": "choice",
         "instructions": "Select the exact fine-grained Banking77 intent for this customer query.",
         "options": [
+          {{- if .options }}
           {{ range $i, $opt := .options }}
           {{ if $i }},{{ end }}{"name": {{ $opt | toJson }}}
           {{ end }}
+          {{- else }}
+          {"name": "card_arrival"},
+          {"name": "lost_or_stolen_card"},
+          {"name": "transfer_not_received_by_recipient"}
+          {{- end }}
         ]
       }
     ],
     "samples": {{ default 1 .samples | toJson }}
   },
   "state": {
-    "customer_utterance": {{ .text | toJson }}
+    "customer_utterance": {{ default "Where can I track my replacement debit card delivery?" .text | toJson }}
   }
 }

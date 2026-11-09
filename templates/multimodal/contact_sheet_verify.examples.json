@@ -1,0 +1,35 @@
+{
+  "multimodal": true,
+  "examples": [
+    {
+      "name": "typical",
+      "variables": {
+        "query_context": "Match Panel 0 query crop against candidate Panels A-E for exact variant and pack count",
+        "shortlist_source": "stage1_embedding_top5",
+        "cand_a": "Sparkling Mineral Water 6x330ml Cans",
+        "cand_b": "Sparkling Mineral Water 330ml Single Can",
+        "cand_c": "Still Spring Water 6x330ml Cans",
+        "cand_d": "Lemon Sparkling Water 6x330ml Cans",
+        "cand_e": "Sparkling Mineral Water 12x500ml Bottles",
+        "samples": 1
+      }
+    },
+    {
+      "name": "edge",
+      "variables": {
+        "query_context": "Low-light shelf crop with partial glare over net-weight label",
+        "shortlist_source": "barcode_fallback",
+        "cand_a": "Organic Oat Milk Unsweetened 1L",
+        "cand_b": "Organic Oat Milk Original 1L",
+        "cand_c": "Organic Oat Milk Barista Edition 1L",
+        "cand_d": "Organic Almond Milk Unsweetened 1L",
+        "cand_e": "Organic Oat Milk Unsweetened 2x1L Twin Pack",
+        "samples": 1
+      }
+    },
+    {
+      "name": "minimal",
+      "variables": {}
+    }
+  ]
+}
