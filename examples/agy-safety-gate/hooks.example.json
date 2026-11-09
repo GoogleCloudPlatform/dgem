@@ -7,7 +7,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 examples/agy-safety-gate/dgem_gate.py hook",
+            "command": "python3 examples/agy-safety-gate/dgem_gate.py hook --cascade gemini",
             "timeout": 15
           }
         ]

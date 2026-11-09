@@ -179,7 +179,7 @@ def compute_entropy_and_hesitation(
     return round(h_nats, 6), round(hesitation, 6)
 
 
-# Stage-0 deterministic static rules (optional <1ms fast-path).
+# Stage-0 deterministic static rules (enabled by default; opt out via --no-static-stage or DGEM_GATE_STATIC=0).
 _STATIC_DENY_PATTERNS = (
     (re.compile(r"(?:^|[;&|]\s*)sudo\b"), "Privilege escalation via sudo is blocked by static policy."),
     (
@@ -344,7 +344,8 @@ class GateConfig:
         default_factory=lambda: float(os.environ.get("DGEM_GATE_HESITATION", str(DEFAULT_HESITATION_THRESHOLD)))
     )
     static_stage: bool = field(
-        default_factory=lambda: os.environ.get("DGEM_GATE_STATIC", "0").lower() in ("1", "true", "on", "yes")
+        default_factory=lambda: os.environ.get("DGEM_GATE_STATIC", "1").strip().lower()
+        not in ("0", "false", "off", "no")
     )
     cascade_mode: str = field(default_factory=lambda: os.environ.get("DGEM_GATE_CASCADE", "off"))
     stage2_model: str = field(
@@ -1172,7 +1173,20 @@ def main(argv: Optional[List[str]] = None) -> int:
         default=None,
         help="Normalized entropy (H / ln K) threshold for Clear band (default: 0.16)",
     )
-    parser.add_argument("--static-stage", action="store_true", help="Enable <1ms Stage-0 static pre-filter")
+    static_grp = parser.add_mutually_exclusive_group()
+    static_grp.add_argument(
+        "--static-stage",
+        dest="static_stage_override",
+        action="store_true",
+        default=None,
+        help="Enable <1ms Stage-0 static pre-filter (default: enabled)",
+    )
+    static_grp.add_argument(
+        "--no-static-stage",
+        dest="static_stage_override",
+        action="store_false",
+        help="Disable <1ms Stage-0 static pre-filter (or set DGEM_GATE_STATIC=0)",
+    )
     parser.add_argument(
         "--cascade",
         choices=("off", "gemini", "gemini_on_unsure"),
@@ -1203,8 +1217,8 @@ def main(argv: Optional[List[str]] = None) -> int:
         cfg.template_path = Path(args.template)
     if args.hesitation_threshold is not None:
         cfg.hesitation_threshold = args.hesitation_threshold
-    if args.static_stage:
-        cfg.static_stage = True
+    if args.static_stage_override is not None:
+        cfg.static_stage = args.static_stage_override
     if args.cascade:
         cfg.cascade_mode = args.cascade
     if args.stage2_model:
