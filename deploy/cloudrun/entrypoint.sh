@@ -377,9 +377,17 @@ if [ "${SELF_WARMUP:-1}" = "1" ]; then
       sleep 2
     done
     WARM_T0="$(date +%s.%N)"
-    PORT="$PORT" DISABLE_MM="${DISABLE_MM:-0}" python3 - <<'PYWARM' || true
-import base64, json, os, struct, time, urllib.request, zlib
-port = os.environ["PORT"]
+    WARM_OK=0
+    if SS_PORT="$SS_PORT" PORT="$PORT" DISABLE_MM="${DISABLE_MM:-0}" python3 - <<'PYWARM'; then
+import base64, json, os, struct, sys, time, urllib.request, zlib
+port = os.environ.get("SS_PORT") or os.environ["PORT"]
+headers = {"content-type": "application/json"}
+keys = [k.strip() for k in os.environ.get("DGEM_SERVER_KEY", "").split(",") if k.strip()]
+if keys:
+    headers["X-DGem-Key"] = keys[0]
+api_key = os.environ.get("API_KEY", "").strip()
+if api_key:
+    headers["Authorization"] = f"Bearer {api_key}"
 def png(w=64, h=64):
     raw = b"".join(b"\x00" + bytes([200, 60, 60]) * w for _ in range(h))
     def chunk(t, d): return struct.pack(">I", len(d)) + t + d + struct.pack(">I", zlib.crc32(t + d) & 0xffffffff)
@@ -387,6 +395,7 @@ def png(w=64, h=64):
 q = [{"id": "urgent", "type": "boolean", "instructions": "Is this urgent?"},
      {"id": "team", "type": "choice", "instructions": "Which team?", "options": [{"name": "billing", "description": "charges"}, {"name": "technical", "description": "outages"}, {"name": "account", "description": "profile"}]}]
 jobs = [(1, "Production API is down for all customers."), (4, "I was charged twice for my plan.")]
+failures = 0
 for n, text in jobs:
     body = {"model": "dgemma", "messages": [{"role": "system", "content": json.dumps({"instructions": "Triage.", "samples": n, "think": 0, "questions": q})}, {"role": "user", "content": json.dumps({"ticket": text})}]}
     if n == 1 and os.environ.get("DISABLE_MM", "0") == "0":
@@ -398,21 +407,29 @@ for n, text in jobs:
     for b in [body] + jobs_img:
         t = time.time()
         try:
-            urllib.request.urlopen(urllib.request.Request(f"http://127.0.0.1:{port}/v1/chat/completions", json.dumps(b).encode(), {"content-type": "application/json"}), timeout=300).read()
+            urllib.request.urlopen(urllib.request.Request(f"http://127.0.0.1:{port}/v1/chat/completions", json.dumps(b).encode(), dict(headers)), timeout=300).read()
             print(f"[warmup] ok samples={n} image={isinstance(b['messages'][1]['content'], list)} {time.time()-t:.1f}s", flush=True)
         except Exception as e:
+            failures += 1
             print(f"[warmup] failed samples={n}: {e!r}", flush=True)
+sys.exit(1 if failures else 0)
 PYWARM
-    python3 - "$WARM_T0" <<'PYSTATE' || true
-import json, sys, time
-p = "/tmp/dgemma/warmup_state.json"
+      WARM_OK=1
+    fi
+    python3 - "$WARM_T0" "$WARM_OK" <<'PYSTATE' || true
+import json, os, sys, time
+p = os.environ.get("DGEM_WARMUP_STATE_FILE", "/tmp/dgemma/warmup_state.json")
 try: st = json.load(open(p))
 except Exception: st = {}
-st.update({"warmed": True, "warmup_s": round(time.time() - float(sys.argv[1]), 1)})
+st.update({"warmed": sys.argv[2] == "1", "warmup_s": round(time.time() - float(sys.argv[1]), 1)})
 json.dump(st, open(p + ".tmp", "w"))
-import os; os.replace(p + ".tmp", p)
+os.replace(p + ".tmp", p)
 PYSTATE
-    echo "[init] Self-warmup complete."
+    if [ "$WARM_OK" = "1" ]; then
+      echo "[init] Self-warmup complete."
+    else
+      echo "[init] Self-warmup finished with errors (warmed=false)."
+    fi
   ) &
 fi
 
