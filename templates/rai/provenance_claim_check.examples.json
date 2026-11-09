@@ -1,0 +1,33 @@
+{
+  "examples": [
+    {
+      "name": "typical",
+      "unambiguous": true,
+      "variables": {
+        "asset_id": "media-2026-8841.webp",
+        "c2pa_validator_report": "signature_status=VALID; signer=\"Google SynthID / C2PA Signer\"; digitalSourceType=\"http://cv.iptc.org/newscodes/digitalsourcetype/trainedAlgorithmicMedia\"; actions=[\"c2pa.created\"]",
+        "caption_claim": "Unedited 35mm camera photograph captured live on location in 1998 with zero synthetic generation.",
+        "seed_token": "fixed",
+        "samples": 1
+      },
+      "expected_answers": {
+        "credential_integrity": "verified_ai_generated",
+        "caption_consistency": "contradicts_provenance"
+      }
+    },
+    {
+      "name": "edge",
+      "variables": {
+        "asset_id": "press-photo-019.jpg",
+        "c2pa_validator_report": "signature_status=MISSING; manifest_store=NONE",
+        "caption_claim": "Press conference podium photo submitted via wire agency.",
+        "seed_token": "fixed",
+        "samples": 1
+      }
+    },
+    {
+      "name": "minimal",
+      "variables": {}
+    }
+  ]
+}

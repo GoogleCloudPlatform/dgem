@@ -1,0 +1,26 @@
+{
+  "examples": [
+    {
+      "name": "typical",
+      "unambiguous": true,
+      "variables": {
+        "text": "| Flag | Type | Default | Description |\n| :--- | :--- | :--- | :--- |\n| `--port` | `int` | `8080` | TCP port to bind |\n| `--host` | `string` | `127.0.0.1` | Listen address |\n| `--timeout` | `duration` | `90s` | Per-request timeout |",
+        "samples": 1
+      },
+      "expected_answers": {
+        "doc_type": "reference"
+      }
+    },
+    {
+      "name": "edge",
+      "variables": {
+        "text": "In this tutorial you will create your first policy file, understand the math behind Shannon entropy, and browse the complete CLI flag reference.",
+        "samples": 1
+      }
+    },
+    {
+      "name": "minimal",
+      "variables": {}
+    }
+  ]
+}

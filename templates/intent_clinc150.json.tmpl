@@ -7,9 +7,15 @@
         "type": "choice",
         "instructions": "High-level service domain, or \"oos\" if out-of-scope.",
         "options": [
+          {{- if .domains }}
           {{ range $i, $dom := .domains }}
           {{ if $i }},{{ end }}{"name": {{ $dom | toJson }}}
           {{ end }}
+          {{- else }}
+          {"name": "banking"},
+          {"name": "travel"},
+          {"name": "oos"}
+          {{- end }}
         ]
       },
       {
@@ -17,15 +23,22 @@
         "type": "choice",
         "instructions": "Specific user intent within the domain, or \"oos\" if out-of-scope.",
         "options": [
+          {{- if .options }}
           {{ range $i, $opt := .options }}
           {{ if $i }},{{ end }}{"name": {{ $opt | toJson }}}
           {{ end }}
+          {{- else }}
+          {"name": "balance"},
+          {"name": "transfer"},
+          {"name": "book_flight"},
+          {"name": "oos"}
+          {{- end }}
         ]
       }
     ],
     "samples": {{ default 1 .samples | toJson }}
   },
   "state": {
-    "user_utterance": {{ .text | toJson }}
+    "user_utterance": {{ default "What is the current balance on my checking account?" .text | toJson }}
   }
 }

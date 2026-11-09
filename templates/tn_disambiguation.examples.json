@@ -1,0 +1,36 @@
+{
+  "examples": [
+    {
+      "name": "typical",
+      "unambiguous": true,
+      "variables": {
+        "input": "We visited St. Patrick's Cathedral in midtown.",
+        "target_token": "St.",
+        "options": [
+          "Saint",
+          "Street"
+        ],
+        "samples": 1
+      },
+      "expected_answers": {
+        "expansion": "Saint"
+      }
+    },
+    {
+      "name": "edge",
+      "variables": {
+        "input": "Turn left onto Main St. right past St. Jude Hospital.",
+        "target_token": "St.",
+        "options": [
+          "Saint",
+          "Street"
+        ],
+        "samples": 1
+      }
+    },
+    {
+      "name": "minimal",
+      "variables": {}
+    }
+  ]
+}

@@ -7,17 +7,22 @@
         "type": "choice",
         "instructions": "Select the exact best-matching finalist intent.",
         "options": [
+          {{- if .options }}
           {{ range $i, $opt := .options }}
           {{ if $i }},{{ end }}{"name": {{ $opt | toJson }}}
           {{ end }}
+          {{- else }}
+          {"name": "lost_or_stolen_card"},
+          {"name": "compromised_card"}
+          {{- end }}
         ]
       }
     ],
     "samples": 1
   },
   "state": {
-    "utterance": {{ .text | toJson }},
-    "first_pass_guess": {{ .first_guess | toJson }},
-    "candidate_finalists": {{ .options | toJson }}
+    "utterance": {{ default "Someone used my card number online even though my card is still in my wallet." .text | toJson }},
+    "first_pass_guess": {{ default "lost_or_stolen_card" .first_guess | toJson }},
+    "candidate_finalists": {{ if .options }}{{ .options | toJson }}{{ else }}["lost_or_stolen_card", "compromised_card"]{{ end }}
   }
 }

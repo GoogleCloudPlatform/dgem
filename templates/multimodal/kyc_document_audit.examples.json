@@ -1,0 +1,25 @@
+{
+  "multimodal": true,
+  "examples": [
+    {
+      "name": "typical",
+      "variables": {
+        "country": "US",
+        "sub_id": "sub-synth-1042",
+        "samples": 1
+      }
+    },
+    {
+      "name": "edge",
+      "variables": {
+        "country": "GB",
+        "sub_id": "sub-synth-edge-99",
+        "samples": 1
+      }
+    },
+    {
+      "name": "minimal",
+      "variables": {}
+    }
+  ]
+}

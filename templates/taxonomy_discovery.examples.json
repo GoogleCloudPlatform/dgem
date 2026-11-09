@@ -1,0 +1,29 @@
+{
+  "examples": [
+    {
+      "name": "typical",
+      "unambiguous": true,
+      "variables": {
+        "domain": "enterprise_saas_operations",
+        "input": "Please send a PDF copy of our March subscription invoice #8812 and update the VAT number on file.",
+        "samples": 1
+      },
+      "expected_answers": {
+        "in_taxonomy": "yes",
+        "primary_category": "billing_and_invoicing"
+      }
+    },
+    {
+      "name": "edge",
+      "variables": {
+        "domain": "enterprise_saas_operations",
+        "input": "We require a custom maritime satellite air-gapped escrow hardware appliance deployment for polar research vessels.",
+        "samples": 1
+      }
+    },
+    {
+      "name": "minimal",
+      "variables": {}
+    }
+  ]
+}

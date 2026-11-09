@@ -1,7 +1,7 @@
 {
-  "instructions": {{ printf "%q" .Instructions }},
-  "samples": {{ .Samples }},
-  "think": {{ .ThinkTokens }},
+  "instructions": {{ printf "%q" (or .Instructions "Evaluate the input state against the decision rubric.") }},
+  "samples": {{ or .Samples 1 }},
+  "think": {{ or .ThinkTokens 0 }},
   "questions": [
     {{- if .IncludeEvidenceSlot }}
     {
@@ -18,8 +18,8 @@
     {{- end }}
     {
       "id": {{ printf "%q" (or .SlotID "decision") }},
-      "type": {{ printf "%q" .QuestionType }},
-      "instructions": {{ printf "%q" .QuestionPrompt }}
+      "type": {{ printf "%q" (or .QuestionType "boolean") }},
+      "instructions": {{ printf "%q" (or .QuestionPrompt "Does the state satisfy the primary rubric condition?") }}
       {{- if .Levels }},
       "levels": [
         {{- range $i, $lvl := .Levels }}{{- if $i }}, {{ end }}{{ printf "%q" $lvl }}{{- end }}

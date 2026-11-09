@@ -1,0 +1,23 @@
+{
+  "multimodal": true,
+  "examples": [
+    {
+      "name": "typical",
+      "variables": {
+        "scene_description": "Dialog modal containing primary action and cancel buttons",
+        "samples": 1
+      }
+    },
+    {
+      "name": "edge",
+      "variables": {
+        "scene_description": "Empty canvas with no interactive controls visible",
+        "samples": 1
+      }
+    },
+    {
+      "name": "minimal",
+      "variables": {}
+    }
+  ]
+}

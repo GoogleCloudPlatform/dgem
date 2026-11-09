@@ -1,0 +1,25 @@
+{
+  "multimodal": true,
+  "examples": [
+    {
+      "name": "typical",
+      "variables": {
+        "camera_id": "SMD-Line-B-Camera-04",
+        "notes": "Post-reflow automated optical inspection on rev-C board",
+        "samples": 1
+      }
+    },
+    {
+      "name": "edge",
+      "variables": {
+        "camera_id": "SMD-Line-A-Camera-01",
+        "notes": "High-density QFN pad region under angled ring light",
+        "samples": 1
+      }
+    },
+    {
+      "name": "minimal",
+      "variables": {}
+    }
+  ]
+}

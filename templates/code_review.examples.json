@@ -1,0 +1,26 @@
+{
+  "examples": [
+    {
+      "name": "typical",
+      "unambiguous": true,
+      "variables": {
+        "diff": "func lookupUser(db *sql.DB, userInput string) (*sql.Rows, error) {\n\tq := fmt.Sprintf(\"SELECT * FROM accounts WHERE username = '%s'\", userInput)\n\treturn db.Query(q)\n}",
+        "samples": 1
+      },
+      "expected_answers": {
+        "approved": "no"
+      }
+    },
+    {
+      "name": "edge",
+      "variables": {
+        "diff": "// Rename internal helper for clarity\n-func calc(x int) int { return x * 2 }\n+func doubleCount(x int) int { return x * 2 }",
+        "samples": 1
+      }
+    },
+    {
+      "name": "minimal",
+      "variables": {}
+    }
+  ]
+}

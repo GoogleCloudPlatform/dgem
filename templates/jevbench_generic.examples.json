@@ -1,0 +1,46 @@
+{
+  "examples": [
+    {
+      "name": "typical",
+      "variables": {
+        "Instructions": "Evaluate whether the deployment change request satisfies all production freeze gates.",
+        "Samples": 1,
+        "ThinkTokens": 0,
+        "SlotID": "decision",
+        "QuestionType": "choice",
+        "QuestionPrompt": "Should the change request be approved during the release freeze?",
+        "Options": [
+          {
+            "Name": "approve",
+            "Description": "Emergency P0 hotfix with two SRE approvals."
+          },
+          {
+            "Name": "defer",
+            "Description": "Routine feature or missing required approvals."
+          }
+        ]
+      }
+    },
+    {
+      "name": "edge",
+      "variables": {
+        "Instructions": "Score evidence strength with an auxiliary focus slot.",
+        "Samples": 1,
+        "ThinkTokens": 0,
+        "IncludeEvidenceSlot": true,
+        "SlotID": "rubric_score",
+        "QuestionType": "score",
+        "QuestionPrompt": "Rate compliance completeness across \"Section 4\" controls.",
+        "Levels": [
+          "insufficient",
+          "partial",
+          "complete"
+        ]
+      }
+    },
+    {
+      "name": "minimal",
+      "variables": {}
+    }
+  ]
+}

@@ -66,6 +66,44 @@ var templateListCmd = &cobra.Command{
 	},
 }
 
+func loadTemplateRenderVars(dataFile string, kvPairs []string) (map[string]any, error) {
+	vars := make(map[string]any)
+	if strings.TrimSpace(dataFile) != "" {
+		dataBytes, err := os.ReadFile(dataFile)
+		if err != nil {
+			return nil, fmt.Errorf("failed to read data file %s: %w", dataFile, err)
+		}
+		if err := json.Unmarshal(dataBytes, &vars); err != nil {
+			return nil, fmt.Errorf("failed to parse JSON from %s: %w", dataFile, err)
+		}
+	}
+
+	for _, kv := range kvPairs {
+		parts := strings.SplitN(kv, "=", 2)
+		if len(parts) != 2 {
+			return nil, fmt.Errorf("invalid variable format %q (expected key=value)", kv)
+		}
+		key := strings.TrimSpace(parts[0])
+		val := strings.TrimSpace(parts[1])
+		switch {
+		case val == "true":
+			vars[key] = true
+		case val == "false":
+			vars[key] = false
+		case (strings.HasPrefix(val, "[") && strings.HasSuffix(val, "]")) || (strings.HasPrefix(val, "{") && strings.HasSuffix(val, "}")):
+			var parsedJSON any
+			if err := json.Unmarshal([]byte(val), &parsedJSON); err == nil {
+				vars[key] = parsedJSON
+			} else {
+				vars[key] = val
+			}
+		default:
+			vars[key] = val
+		}
+	}
+	return vars, nil
+}
+
 var templateRenderCmd = &cobra.Command{
 	Use:   "render",
 	Short: "Render a template definition with provided variables to inspect output",
@@ -74,23 +112,9 @@ var templateRenderCmd = &cobra.Command{
 			return fmt.Errorf("must specify --template (-t)")
 		}
 
-		vars := make(map[string]interface{})
-		for _, kv := range renderVars {
-			parts := strings.SplitN(kv, "=", 2)
-			if len(parts) == 2 {
-				key := strings.TrimSpace(parts[0])
-				val := strings.TrimSpace(parts[1])
-				if (strings.HasPrefix(val, "[") && strings.HasSuffix(val, "]")) || (strings.HasPrefix(val, "{") && strings.HasSuffix(val, "}")) {
-					var parsedJSON interface{}
-					if err := json.Unmarshal([]byte(val), &parsedJSON); err == nil {
-						vars[key] = parsedJSON
-					} else {
-						vars[key] = val
-					}
-				} else {
-					vars[key] = val
-				}
-			}
+		vars, err := loadTemplateRenderVars(renderDataFile, renderVars)
+		if err != nil {
+			return err
 		}
 
 		engine := template.NewEngine()
@@ -99,9 +123,9 @@ var templateRenderCmd = &cobra.Command{
 			return fmt.Errorf("render failed: %w", err)
 		}
 
-		fmt.Println("───────────────────────── RENDERED TEMPLATE ─────────────────────────")
-		fmt.Println(rendered)
-		fmt.Println("───────────────────────────────────────────────────────────────────────")
+		fmt.Fprintln(cmd.OutOrStdout(), "───────────────────────── RENDERED TEMPLATE ─────────────────────────")
+		fmt.Fprintln(cmd.OutOrStdout(), rendered)
+		fmt.Fprintln(cmd.OutOrStdout(), "───────────────────────────────────────────────────────────────────────")
 		return nil
 	},
 }

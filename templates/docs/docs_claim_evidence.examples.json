@@ -1,0 +1,26 @@
+{
+  "examples": [
+    {
+      "name": "typical",
+      "unambiguous": true,
+      "variables": {
+        "text": "To start the local HTTP server on port 8080, run `dgem serve --port 8080` and open `http://127.0.0.1:8080` in your browser.",
+        "samples": 1
+      },
+      "expected_answers": {
+        "evidence": "no_measured_results"
+      }
+    },
+    {
+      "name": "edge",
+      "variables": {
+        "text": "Suppose for illustration that Stage 1 handles 80% of simulated requests in 50 ms (illustrative example values only).",
+        "samples": 1
+      }
+    },
+    {
+      "name": "minimal",
+      "variables": {}
+    }
+  ]
+}

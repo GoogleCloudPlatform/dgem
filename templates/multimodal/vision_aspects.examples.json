@@ -1,0 +1,25 @@
+{
+  "multimodal": true,
+  "examples": [
+    {
+      "name": "typical",
+      "variables": {
+        "target": "primary colored shape",
+        "reference": "secondary shape",
+        "samples": 1
+      }
+    },
+    {
+      "name": "edge",
+      "variables": {
+        "target": "small corner indicator",
+        "reference": "header bar",
+        "samples": 1
+      }
+    },
+    {
+      "name": "minimal",
+      "variables": {}
+    }
+  ]
+}

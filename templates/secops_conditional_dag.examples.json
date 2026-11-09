@@ -1,0 +1,26 @@
+{
+  "examples": [
+    {
+      "name": "typical",
+      "unambiguous": true,
+      "variables": {
+        "alert_payload": "CRITICAL: Stolen service-account key `prod-payments-sa` used from unapproved external ASN 203.0.113.88 to export 48 GB of customer ledger snapshots to an external bucket.",
+        "samples": 1
+      },
+      "expected_answers": {
+        "active_breach": "yes"
+      }
+    },
+    {
+      "name": "edge",
+      "variables": {
+        "alert_payload": "INFO: Nightly read-only schema backup job completed from internal runner 10.12.0.4 in 14.2s (exit 0).",
+        "samples": 1
+      }
+    },
+    {
+      "name": "minimal",
+      "variables": {}
+    }
+  ]
+}

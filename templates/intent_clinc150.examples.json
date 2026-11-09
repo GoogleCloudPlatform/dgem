@@ -1,0 +1,51 @@
+{
+  "examples": [
+    {
+      "name": "typical",
+      "unambiguous": true,
+      "variables": {
+        "text": "Book a round-trip economy flight from Seattle to Tokyo departing next Tuesday.",
+        "domains": [
+          "banking",
+          "travel",
+          "utility",
+          "oos"
+        ],
+        "options": [
+          "balance",
+          "transfer",
+          "book_flight",
+          "oos"
+        ],
+        "samples": 1
+      },
+      "expected_answers": {
+        "domain": "travel",
+        "intent": "book_flight"
+      }
+    },
+    {
+      "name": "edge",
+      "variables": {
+        "text": "Write a sonnet in iambic pentameter about autumn leaves.",
+        "domains": [
+          "banking",
+          "travel",
+          "utility",
+          "oos"
+        ],
+        "options": [
+          "balance",
+          "transfer",
+          "book_flight",
+          "oos"
+        ],
+        "samples": 1
+      }
+    },
+    {
+      "name": "minimal",
+      "variables": {}
+    }
+  ]
+}

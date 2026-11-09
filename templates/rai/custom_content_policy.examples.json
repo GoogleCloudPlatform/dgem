@@ -1,0 +1,34 @@
+{
+  "examples": [
+    {
+      "name": "typical",
+      "unambiguous": true,
+      "variables": {
+        "policy_name": "Enterprise Community & Marketplace Policy v2",
+        "policy_rules": "R1: No unlicensed medical dosage or prescription claims.\nR2: No guaranteed financial return promises or unregistered investment solicitation.\nR3: No disclosure of personal contact details, account numbers, or private addresses.\nR4: No impersonation of platform staff or verified support channels.\nR5: No off-platform payment redirection to evade buyer protection.",
+        "content_text": "Guaranteed 300% profit in 7 days — skip marketplace checkout and wire funds directly to our external account!",
+        "seed_token": "fixed",
+        "temperature": 1.0,
+        "samples": 1
+      },
+      "expected_answers": {
+        "violates_policy": "yes"
+      }
+    },
+    {
+      "name": "edge",
+      "variables": {
+        "policy_name": "Enterprise Community & Marketplace Policy v2",
+        "policy_rules": "R1: No unlicensed medical dosage claims.\nR2: No guaranteed financial return promises.",
+        "content_text": "Reminder: Marketplace rules prohibit sellers from promising \"guaranteed 2x returns\" in listing descriptions.",
+        "seed_token": "fixed",
+        "temperature": 1.0,
+        "samples": 1
+      }
+    },
+    {
+      "name": "minimal",
+      "variables": {}
+    }
+  ]
+}

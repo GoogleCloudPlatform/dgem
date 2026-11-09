@@ -1,0 +1,37 @@
+{
+  "examples": [
+    {
+      "name": "typical",
+      "unambiguous": true,
+      "variables": {
+        "text": "Someone stole my wallet at the train station — freeze my debit card right away!",
+        "options": [
+          "card_arrival",
+          "lost_or_stolen_card",
+          "transfer_not_received_by_recipient",
+          "exchange_rate"
+        ],
+        "samples": 1
+      },
+      "expected_answers": {
+        "intent": "lost_or_stolen_card"
+      }
+    },
+    {
+      "name": "edge",
+      "variables": {
+        "text": "My new card still hasn't arrived in the mail after two weeks; could it have been lost in transit?",
+        "options": [
+          "card_arrival",
+          "lost_or_stolen_card",
+          "card_delivery_estimate"
+        ],
+        "samples": 1
+      }
+    },
+    {
+      "name": "minimal",
+      "variables": {}
+    }
+  ]
+}

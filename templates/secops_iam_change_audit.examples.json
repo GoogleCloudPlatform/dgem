@@ -1,0 +1,35 @@
+{
+  "examples": [
+    {
+      "name": "typical",
+      "unambiguous": true,
+      "variables": {
+        "change_ticket": "OPS-901: Temporary storage troubleshooting in production.",
+        "environment": "production",
+        "actor": "temp-contractor@corp.example",
+        "iac_diff": "+ resource \"google_project_iam_member\" \"wide_admin\" {\n+   role   = \"roles/owner\"\n+   member = \"allUsers\"\n+ }",
+        "seed_token": "fixed",
+        "samples": 1
+      },
+      "expected_answers": {
+        "overprivileged_grant": "yes",
+        "approval_decision": "block_change"
+      }
+    },
+    {
+      "name": "edge",
+      "variables": {
+        "change_ticket": "SEC-1402: Grant read-only metrics viewer role to telemetry collector service account in staging.",
+        "environment": "staging",
+        "actor": "ci-terraform-bot@corp.example",
+        "iac_diff": "+ resource \"google_project_iam_member\" \"metrics_reader\" {\n+   role   = \"roles/monitoring.viewer\"\n+   member = \"serviceAccount:otel-collector@staging-obs.iam.gserviceaccount.com\"\n+ }",
+        "seed_token": "fixed",
+        "samples": 1
+      }
+    },
+    {
+      "name": "minimal",
+      "variables": {}
+    }
+  ]
+}

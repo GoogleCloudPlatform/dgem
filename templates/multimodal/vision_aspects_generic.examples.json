@@ -1,0 +1,25 @@
+{
+  "multimodal": true,
+  "examples": [
+    {
+      "name": "typical",
+      "variables": {
+        "target": "foreground object",
+        "reference": "background frame",
+        "samples": 1
+      }
+    },
+    {
+      "name": "edge",
+      "variables": {
+        "target": "partially clipped icon",
+        "reference": "center panel",
+        "samples": 1
+      }
+    },
+    {
+      "name": "minimal",
+      "variables": {}
+    }
+  ]
+}

@@ -1,0 +1,23 @@
+{
+  "multimodal": true,
+  "examples": [
+    {
+      "name": "typical",
+      "variables": {
+        "target": "colored geometric shapes",
+        "samples": 1
+      }
+    },
+    {
+      "name": "edge",
+      "variables": {
+        "target": "warning badge icons",
+        "samples": 1
+      }
+    },
+    {
+      "name": "minimal",
+      "variables": {}
+    }
+  ]
+}

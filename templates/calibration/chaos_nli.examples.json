@@ -1,0 +1,28 @@
+{
+  "examples": [
+    {
+      "name": "typical",
+      "unambiguous": true,
+      "variables": {
+        "premise": "All three database replicas in europe-west1 were shut down at 02:00 UTC for scheduled maintenance.",
+        "hypothesis": "At least one database replica in europe-west1 remained online serving live traffic at 02:00 UTC.",
+        "samples": 1
+      },
+      "expected_answers": {
+        "entailment": "contradiction"
+      }
+    },
+    {
+      "name": "edge",
+      "variables": {
+        "premise": "The release notes state that the CLI added \"--format json\" support in version 1.4.",
+        "hypothesis": "Most users upgraded to version 1.4 within the first week.",
+        "samples": 1
+      }
+    },
+    {
+      "name": "minimal",
+      "variables": {}
+    }
+  ]
+}
