@@ -1495,7 +1495,7 @@ type DecideCustomToolInput struct {
 }
 
 type ListTemplatesToolInput struct {
-	Category string `json:"category,omitempty" jsonschema:"Optional category filter: 'core', 'calibration', 'multimodal', or 'rerank'."`
+	Category string `json:"category,omitempty" jsonschema:"Optional category filter: 'core', 'calibration', 'multimodal', 'rerank', 'rai', or 'docs'."`
 }
 
 type ListTemplatesToolOutput struct {
@@ -1954,7 +1954,7 @@ func buildMCPServer() *mcp.Server {
 	// Tool 6: list_policy_templates
 	mcp.AddTool(srv, &mcp.Tool{
 		Name:        "list_policy_templates",
-		Description: "Lists the executable .json.tmpl decision policies available on the server, including required variables and sample values. Filter with category: 'core', 'calibration', 'multimodal', or 'rerank'.",
+		Description: "Lists the executable .json.tmpl decision policies available on the server, including required variables and sample values. Filter with category: 'core', 'calibration', 'multimodal', 'rerank', 'rai', or 'docs'.",
 		InputSchema: geminiSafeInputSchema[ListTemplatesToolInput](),
 	}, func(ctx context.Context, req *mcp.CallToolRequest, input ListTemplatesToolInput) (*mcp.CallToolResult, ListTemplatesToolOutput, error) {
 		catalog, err := discoverTemplates(serveTemplatesDir)

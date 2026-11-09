@@ -1,0 +1,55 @@
+{
+  "schema": {
+    "seed_token": {{ default "fixed" .seed_token | toJson }},
+    "instructions": "Audit a proposed cloud IAM, Kubernetes RBAC, or Terraform control-plane diff before execution. Verify least-privilege scoping against change_ticket, check for wildcard/admin role grants or public anonymous exposure, and check for hardcoded credentials or unencrypted sensitive data exposure.",
+    "questions": [
+      {
+        "id": "overprivileged_grant",
+        "type": "boolean",
+        "instructions": "Does iac_diff grant wildcard permissions (*, roles/owner, roles/editor, cluster-admin, iam:PassRole on *), public anonymous access (allUsers, allAuthenticatedUsers, 0.0.0.0/0 admin ports), or broad privileges exceeding change_ticket?"
+      },
+      {
+        "id": "secret_or_pii_exposure",
+        "type": "boolean",
+        "instructions": "Does iac_diff embed plaintext secrets, API keys, private keys, bearer tokens, database passwords, or expose unencrypted PII or confidential storage buckets?"
+      },
+      {
+        "id": "risk_tier",
+        "type": "score",
+        "instructions": "Rate the operational and security blast-radius risk of applying iac_diff in environment.",
+        "levels": [
+          "low_routine",
+          "moderate_scoped",
+          "high_privileged",
+          "critical_blocker"
+        ]
+      },
+      {
+        "id": "approval_decision",
+        "type": "choice",
+        "instructions": "What control-plane gate decision should govern applying iac_diff?",
+        "options": [
+          {
+            "name": "auto_approve",
+            "description": "Least-privilege, resource-scoped change matching change_ticket with no wildcard roles, public exposure, or embedded secrets."
+          },
+          {
+            "name": "require_secops_review",
+            "description": "Sensitive production IAM binding, cross-project trust update, or ambiguous scope that contains no leaked secrets or public wildcards but requires human SecOps sign-off."
+          },
+          {
+            "name": "block_change",
+            "description": "Wildcard admin grant, public anonymous bucket/endpoint exposure, plaintext credential leak, or unauthorized privilege escalation; reject immediately."
+          }
+        ]
+      }
+    ],
+    "samples": {{ default 1 .samples | toJson }}
+  },
+  "state": {
+    "change_ticket": {{ default "SEC-1402: Grant read-only metrics viewer role to telemetry collector service account in staging." .change_ticket | toJson }},
+    "environment": {{ default "staging" .environment | toJson }},
+    "actor": {{ default "ci-terraform-bot@corp.example" .actor | toJson }},
+    "iac_diff": {{ default "+ resource \"google_project_iam_member\" \"metrics_reader\" {\n+   role   = \"roles/monitoring.viewer\"\n+   member = \"serviceAccount:otel-collector@staging-obs.iam.gserviceaccount.com\"\n+ }" .iac_diff | toJson }}
+  }
+}

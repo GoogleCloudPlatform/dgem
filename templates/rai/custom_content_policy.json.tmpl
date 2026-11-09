@@ -1,0 +1,67 @@
+{
+  "schema": {
+    "seed_token": {{ default "fixed" .seed_token | toJson }},
+    "temperature": {{ default 1.0 .temperature | toJson }},
+    "instructions": "Evaluate content_text against the organization's custom moderation rules R1 through R5 supplied in policy_rules. Judge strictly against the stated R1-R5 definitions rather than unstated preferences, and flag nuanced satire, counter-speech, or ambiguous boundary cases for human review.",
+    "questions": [
+      {
+        "id": "violates_policy",
+        "type": "boolean",
+        "instructions": "Does content_text violate one or more of rules R1 through R5 defined in policy_rules?"
+      },
+      {
+        "id": "primary_rule",
+        "type": "choice",
+        "instructions": "Which rule in policy_rules is the primary match (select none when content_text is compliant)?",
+        "options": [
+          {
+            "name": "none",
+            "description": "Complies with all rules R1 through R5."
+          },
+          {
+            "name": "R1",
+            "description": "Violates Rule R1 as defined in policy_rules."
+          },
+          {
+            "name": "R2",
+            "description": "Violates Rule R2 as defined in policy_rules."
+          },
+          {
+            "name": "R3",
+            "description": "Violates Rule R3 as defined in policy_rules."
+          },
+          {
+            "name": "R4",
+            "description": "Violates Rule R4 as defined in policy_rules."
+          },
+          {
+            "name": "R5",
+            "description": "Violates Rule R5 as defined in policy_rules."
+          }
+        ]
+      },
+      {
+        "id": "severity",
+        "type": "score",
+        "instructions": "Rate the moderation severity of content_text under policy_rules.",
+        "levels": [
+          "compliant",
+          "minor_borderline",
+          "moderate_violation",
+          "severe_violation"
+        ]
+      },
+      {
+        "id": "needs_human_review",
+        "type": "boolean",
+        "instructions": "Does content_text involve ambiguous context, quoted reporting, satire, or borderline rule overlap that warrants human moderator review before automated enforcement?"
+      }
+    ],
+    "samples": {{ default 1 .samples | toJson }}
+  },
+  "state": {
+    "policy_name": {{ default "Enterprise Community & Marketplace Policy v2" .policy_name | toJson }},
+    "policy_rules": {{ default "R1: No unlicensed medical dosage or prescription claims.\nR2: No guaranteed financial return promises or unregistered investment solicitation.\nR3: No disclosure of personal contact details, account numbers, or private addresses.\nR4: No impersonation of platform staff or verified support channels.\nR5: No off-platform payment redirection to evade buyer protection." .policy_rules | toJson }},
+    "content_text": {{ default "Double your retirement savings in 14 days guaranteed — wire funds directly to our private desk to skip platform fees!" .content_text | toJson }}
+  }
+}
