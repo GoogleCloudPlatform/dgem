@@ -1,0 +1,53 @@
+{
+  "schema": {
+    "seed_token": {{ default "fixed" .seed_token | toJson }},
+    "layout": "document_first",
+    "isolate": "auto",
+    "instructions": "Audit the product SKU listing for title-vs-specification contradictions, visual attribute mismatches, missing mandatory disclosures, and search readiness.",
+    "questions": [
+      {
+        "id": "auto_publish_approved",
+        "type": "boolean",
+        "instructions": "Can this SKU bypass manual merchandiser review and publish directly to the storefront without defects or policy violations?"
+      },
+      {
+        "id": "title_spec_conflict",
+        "type": "boolean",
+        "instructions": "Does the product title contradict the technical specifications, dimensions, material, or visual description?"
+      },
+      {
+        "id": "primary_defect_action",
+        "type": "choice",
+        "instructions": "What is the primary catalog remediation action required for this SKU?",
+        "options": [
+          {
+            "name": "no_remediation_needed",
+            "description": "Title, specifications, disclosures, and visual attributes are consistent and policy-compliant."
+          },
+          {
+            "name": "fix_title_or_specs",
+            "description": "Resolve contradictions between the product title, bullet points, dimensions, or material specifications."
+          },
+          {
+            "name": "add_missing_disclosures",
+            "description": "Supply missing required sizing, electrical ratings, ingredient lists, or mandatory safety warnings."
+          },
+          {
+            "name": "quarantine_policy_violation",
+            "description": "Block publication due to unsubstantiated medical or eco claims, counterfeit brand keyword stuffing, or restricted goods."
+          }
+        ]
+      },
+      {
+        "id": "seo_readiness_score",
+        "type": "score",
+        "instructions": "Rate search and discovery metadata quality from 1 (incomplete or keyword-stuffed) to 5 (complete brand, model, and structured attributes).",
+        "levels": ["1", "2", "3", "4", "5"]
+      }
+    ],
+    "samples": {{ default 1 .samples | toJson }}
+  },
+  "state": {
+    "product": {{ default "SKU-4401: TrailPro 20L Daypack. Specs: 20L capacity, ripstop recycled nylon, YKK zippers, hydration-sleeve compatible, weight 540g." .product | toJson }}
+  }
+}

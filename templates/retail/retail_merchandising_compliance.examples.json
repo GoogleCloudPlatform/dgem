@@ -1,0 +1,30 @@
+{
+  "examples": [
+    {
+      "name": "typical",
+      "unambiguous": true,
+      "variables": {
+        "product": "SKU-6104: Insulated Merino Wool Holiday Gift Scarf & Beanie Bundle ($89). 100% Australian merino wool, scarf dimensions 180cm x 30cm, one-size ribbed cuff beanie, gift-boxed for winter holiday promotions.",
+        "seed_token": "fixed",
+        "samples": 1
+      },
+      "expected_answers": {
+        "brand_safety_compliant": "yes",
+        "primary_department": "apparel_footwear",
+        "target_season": "winter_holiday_gifting"
+      }
+    },
+    {
+      "name": "edge",
+      "variables": {
+        "product": "SKU-8820: Miracle Copper Magnetic Bracelet: Guaranteed to Cure Arthritis & Eliminate Joint Pain in 48 Hours! No sizing or alloy composition listed.",
+        "seed_token": "fixed",
+        "samples": 1
+      }
+    },
+    {
+      "name": "minimal",
+      "variables": {}
+    }
+  ]
+}
