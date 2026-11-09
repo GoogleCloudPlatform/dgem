@@ -6,6 +6,12 @@ image for a release in your own project with `make cloudrun-build`.
 
 ## Unreleased
 
+- **Serving image self-warmup `X-DGem-Key` authentication (`deploy/cloudrun/entrypoint.sh`).**
+  Startup self-warmup requests (`samples=1`, `samples=4`, and vision warmup) now attach the first entry of
+  `DGEM_SERVER_KEY` as `X-DGem-Key` (and `API_KEY` as `Bearer`, targeting `SS_PORT`), preventing silent HTTP `401`
+  warmup failures when service-key authentication is enabled and recording `warmed: false` in `warmup_state.json` if
+  any warmup request fails.
+
 ## v0.4.2 (2026-11-09)
 
 Gateway, CLI, policy-template, and agent-integration release (`deploy/cloudrun/` serving container image is unchanged from `v0.4.0`).

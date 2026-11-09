@@ -20,8 +20,12 @@ import http.client
 import importlib.util
 import json
 import os
+import re
+import subprocess
 import sys
+import tempfile
 import threading
+import time
 import types
 import unittest
 
@@ -115,6 +119,103 @@ class ServerKeyTest(unittest.TestCase):
         self.assertEqual(r.status, 401)
         self.assertEqual(r.getheader("connection"), "close")
         r.read()
+
+
+class EntrypointSelfWarmupKeyTest(unittest.TestCase):
+    """Self-warmup in deploy/cloudrun/entrypoint.sh sends the first DGEM_SERVER_KEY entry as X-DGem-Key."""
+
+    def _extract_heredoc(self, tag):
+        ep_path = os.path.join(HERE, "..", "entrypoint.sh")
+        with open(ep_path) as f:
+            src = f.read()
+        m = re.search(rf"<<'{tag}'.*?\n(.*?)\n{tag}\n", src, re.DOTALL)
+        self.assertIsNotNone(m, f"missing heredoc {tag} in entrypoint.sh")
+        return m.group(1)
+
+    def _serve_stub_chat(self, server_keys, api_key=""):
+        mod = load_server(server_keys)
+        mod.API_KEY = api_key
+        seen = []
+
+        def stub_chat(handler_self, req):
+            seen.append({
+                "x_dgem_key": handler_self.headers.get("x-dgem-key"),
+                "authorization": handler_self.headers.get("authorization"),
+                "messages": req.get("messages", []),
+            })
+            return handler_self._json(200, {"choices": [{"message": {"content": "{}"}}]})
+
+        mod.Handler._chat = stub_chat
+        srv = mod._Server(("127.0.0.1", 0), mod.Handler)
+        threading.Thread(target=srv.serve_forever, daemon=True).start()
+        self.addCleanup(srv.server_close)
+        self.addCleanup(srv.shutdown)
+        return srv.server_address[1], seen
+
+    def test_self_warmup_sends_first_server_key_and_records_warmed(self):
+        port, seen = self._serve_stub_chat(" primary-key , backup-key ", api_key="local-bearer")
+        pywarm = self._extract_heredoc("PYWARM")
+        pystate = self._extract_heredoc("PYSTATE")
+
+        with tempfile.TemporaryDirectory() as tmp:
+            state_file = os.path.join(tmp, "warmup_state.json")
+            with open(state_file, "w") as wf:
+                json.dump({"phase": "ready", "vllm_ready": True}, wf)
+
+            env = os.environ.copy()
+            env.update({
+                "PORT": "9999",  # wrong port on purpose: SS_PORT must win (e.g. ROLE=decision-index)
+                "SS_PORT": str(port),
+                "DISABLE_MM": "0",
+                "DGEM_SERVER_KEY": " primary-key , backup-key ",
+                "API_KEY": "local-bearer",
+                "DGEM_WARMUP_STATE_FILE": state_file,
+            })
+            res = subprocess.run([sys.executable, "-c", pywarm], env=env, capture_output=True, text=True, timeout=30)
+            self.assertEqual(res.returncode, 0, res.stdout + res.stderr)
+            # samples=1 text + samples=1 image + samples=4 text = 3 requests
+            self.assertEqual(len(seen), 3)
+            for req in seen:
+                self.assertEqual(req["x_dgem_key"], "primary-key")
+                self.assertEqual(req["authorization"], "Bearer local-bearer")
+
+            st_res = subprocess.run(
+                [sys.executable, "-c", pystate, str(time.time() - 1.2), "1"],
+                env=env, capture_output=True, text=True, timeout=10,
+            )
+            self.assertEqual(st_res.returncode, 0, st_res.stderr)
+            with open(state_file) as wf:
+                st = json.load(wf)
+            self.assertIs(st["warmed"], True)
+            self.assertIs(st["vllm_ready"], True)
+
+    def test_self_warmup_401_exits_nonzero_and_records_unwarmed(self):
+        port, seen = self._serve_stub_chat("expected-key")
+        pywarm = self._extract_heredoc("PYWARM")
+        pystate = self._extract_heredoc("PYSTATE")
+
+        with tempfile.TemporaryDirectory() as tmp:
+            state_file = os.path.join(tmp, "warmup_state.json")
+            env = os.environ.copy()
+            env.update({
+                "PORT": str(port),
+                "SS_PORT": str(port),
+                "DISABLE_MM": "1",
+                "DGEM_SERVER_KEY": "wrong-key",
+                "DGEM_WARMUP_STATE_FILE": state_file,
+            })
+            res = subprocess.run([sys.executable, "-c", pywarm], env=env, capture_output=True, text=True, timeout=30)
+            self.assertNotEqual(res.returncode, 0)
+            self.assertEqual(len(seen), 0)
+            self.assertIn("401", res.stdout)
+
+            subprocess.run(
+                [sys.executable, "-c", pystate, str(time.time()), "0"],
+                env=env, capture_output=True, text=True, timeout=10, check=True,
+            )
+            with open(state_file) as wf:
+                st = json.load(wf)
+            self.assertIs(st["warmed"], False)
 
 
 if __name__ == "__main__":
