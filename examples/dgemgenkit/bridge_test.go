@@ -16,6 +16,7 @@ package dgemgenkit
 
 import (
 	"encoding/json"
+	"fmt"
 	"math"
 	"net/http"
 	"net/http/httptest"
@@ -523,5 +524,31 @@ func TestTemplateDecision_TemperatureAndThresholds(t *testing.T) {
 	}
 	if pSevere := dec.CalibratedProb("severity", "severe_violation", 2.0); pSevere <= 0 || pSevere >= 0.85 {
 		t.Errorf("CalibratedProb(\"severity\", \"severe_violation\", 2.0) = %.4f, want in (0, 0.85)", pSevere)
+	}
+}
+
+func TestMergeDependsOnDeduplicatesAndPreservesOrder(t *testing.T) {
+	deps := make([]string, 0, 100)
+	for i := 0; i < 80; i++ {
+		deps = append(deps, fmt.Sprintf("dep_%02d", i))
+	}
+	deps = append(deps, "dep_00", "shared_gate")
+
+	askIf := make(map[string][]string, 80)
+	for i := 0; i < 80; i++ {
+		askIf[fmt.Sprintf("ask_%02d", 79-i)] = []string{"yes"}
+	}
+	askIf["shared_gate"] = []string{"yes"}
+
+	got := mergeDependsOn(deps, askIf)
+	const wantLen = 80 + 1 + 80
+	if len(got) != wantLen {
+		t.Fatalf("len(mergeDependsOn) = %d, want %d", len(got), wantLen)
+	}
+	if got[0] != "dep_00" || got[80] != "shared_gate" {
+		t.Errorf("explicit deps prefix = (%q, %q), want (\"dep_00\", \"shared_gate\")", got[0], got[80])
+	}
+	if got[81] != "ask_00" || got[len(got)-1] != "ask_79" {
+		t.Errorf("sorted askIf suffix = (%q .. %q), want (\"ask_00\" .. \"ask_79\")", got[81], got[len(got)-1])
 	}
 }

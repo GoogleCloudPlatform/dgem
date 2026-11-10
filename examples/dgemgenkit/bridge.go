@@ -860,7 +860,7 @@ func DecideWithTemplate(
 
 func mergeDependsOn(deps []string, askIf map[string][]string) []string {
 	var merged []string
-	seen := make(map[string]bool, len(deps)+len(askIf))
+	seen := make(map[string]bool)
 	for _, d := range deps {
 		if !seen[d] {
 			seen[d] = true
@@ -868,7 +868,7 @@ func mergeDependsOn(deps []string, askIf map[string][]string) []string {
 		}
 	}
 	if len(askIf) > 0 {
-		keys := make([]string, 0, len(askIf))
+		var keys []string
 		for k := range askIf {
 			keys = append(keys, k)
 		}

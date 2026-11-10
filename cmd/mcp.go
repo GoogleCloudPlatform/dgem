@@ -1701,7 +1701,7 @@ func buildMCPServer() *mcp.Server {
 	// Tool 4: locate_bounding_boxes
 	mcp.AddTool(srv, &mcp.Tool{
 		Name:        "locate_bounding_boxes",
-		Description: "Approximate single-pass box from dgem: softmax-expectation and argmax [ymin, xmin, ymax, xmax] in [0, 1000]. Coarse: box centre lands inside the target ~75% of the time on photos and ~12% on app/web screenshots, and boxes move under flips or padding. Use it for rough location only; for precise boxes use Grounding DINO or Gemini (see docs/policies/images.md). For presence, 3x3 location or relations, decide_custom_questions with an image is faster and better calibrated.",
+		Description: visionToolDescription("Approximate single-pass box from dgem: softmax-expectation and argmax [ymin, xmin, ymax, xmax] in [0, 1000]. Coarse: box centre lands inside the target ~75% of the time on photos and ~12% on app/web screenshots, and boxes move under flips or padding. Use it for rough location only; for precise boxes use Grounding DINO or Gemini (see docs/policies/images.md). For presence, 3x3 location or relations, decide_custom_questions with an image is faster and better calibrated."),
 		InputSchema: visionBackendChoicesSchema[LocateBBoxToolInput](),
 	}, func(ctx context.Context, req *mcp.CallToolRequest, input LocateBBoxToolInput) (*mcp.CallToolResult, LocateBBoxToolOutput, error) {
 		if strings.TrimSpace(input.Image) == "" {
@@ -1792,11 +1792,11 @@ func buildMCPServer() *mcp.Server {
 	// Tool 4b: locate_object (guided locate)
 	mcp.AddTool(srv, &mcp.Tool{
 		Name: "locate_object",
-		Description: "Locates an object or UI element in an image: dgem first answers presence and 3x3 location (~0.2 s); if it " +
+		Description: visionToolDescription("Locates an object or UI element in an image: dgem first answers presence and 3x3 location (~0.2 s); if it " +
 			"is confident the target is absent, returns absent without a Gemini call; otherwise Gemini 3.x (LOW thinking) " +
 			"returns the box with dgem's cell as a hint, and optionally a SAM mask (when DGEM_SAM_URL is configured). " +
 			"Returns box_1000 [ymin, xmin, ymax, xmax] in [0, 1000], the path taken and per-stage latency. Prefer this over " +
-			"locate_bounding_boxes for precise boxes.",
+			"locate_bounding_boxes for precise boxes."),
 		InputSchema: visionBackendChoicesSchema[LocateRequest](),
 	}, func(ctx context.Context, req *mcp.CallToolRequest, input LocateRequest) (*mcp.CallToolResult, LocateResult, error) {
 		if prepared, err := prepareRequestImages(ctx, []string{input.Image}); err != nil {

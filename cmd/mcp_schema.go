@@ -125,15 +125,39 @@ func backendChoicesSchema[T any]() *jsonschema.Schema {
 	return s
 }
 
-// visionBackendChoicesSchema is backendChoicesSchema without 'local' (diffgemma has no vision tower). When
-// only 'local' is configured the tool keeps an unrestricted backend field and fails with a clear error.
-func visionBackendChoicesSchema[T any]() *jsonschema.Schema {
-	s := geminiSafeInputSchema[T]()
+func configuredVisionBackends() []string {
 	var avail []string
 	for _, b := range configuredBackends() {
 		if b != "local" {
 			avail = append(avail, b)
 		}
+	}
+	return avail
+}
+
+// visionToolDescription prepends an availability note when no vision-capable backend is configured on this
+// server so MCP clients can skip vision-only tools without calling them.
+func visionToolDescription(base string) string {
+	if len(configuredVisionBackends()) == 0 {
+		return "Unavailable on this server ('local' has no vision tower). " + base
+	}
+	return base
+}
+
+// visionBackendChoicesSchema is backendChoicesSchema without 'local' (diffgemma has no vision tower). When no
+// vision-capable backend is configured, the backend property keeps no enum (an empty enum is invalid for
+// Gemini) and its description states that the tool is unavailable on this server.
+func visionBackendChoicesSchema[T any]() *jsonschema.Schema {
+	s := geminiSafeInputSchema[T]()
+	avail := configuredVisionBackends()
+	if len(avail) == 0 {
+		if s != nil && s.Properties != nil {
+			if prop, ok := s.Properties["backend"]; ok && prop != nil {
+				prop.Description = "No vision-capable backend on this server ('local' has no vision tower); this tool returns an error."
+				prop.Enum = nil
+			}
+		}
+		return s
 	}
 	applyBackendChoices(s, avail, currentDefaultBackend())
 	return s
