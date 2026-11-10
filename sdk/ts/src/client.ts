@@ -83,6 +83,14 @@ export function parseUrlOrigin(rawUrl: string): string {
   return `${parsed.protocol}//${parsed.hostname.toLowerCase()}:${effectivePort}`;
 }
 
+function stripTrailingSlashes(input: string): string {
+  let end = input.length;
+  while (end > 0 && input.charCodeAt(end - 1) === 47) {
+    end -= 1;
+  }
+  return input.slice(0, end);
+}
+
 function validateHeaderValue(name: string, value: string): string {
   if (value.includes("\r") || value.includes("\n")) {
     throw new DGemValidationError(
@@ -151,7 +159,7 @@ export class DGemClient {
     ).trim();
 
     this.baseOrigin = parseUrlOrigin(resolvedUrl);
-    this.baseUrl = resolvedUrl.replace(/\/+$/, "");
+    this.baseUrl = stripTrailingSlashes(resolvedUrl);
 
     const timeoutMs = options.timeoutMs ?? 60_000;
     if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) {
