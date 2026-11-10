@@ -6,6 +6,10 @@ image for a release in your own project with `make cloudrun-build`.
 
 ## Unreleased
 
+## v0.4.3 (2026-11-10)
+
+Serving-image (`deploy/cloudrun/`), gateway, CLI, MCP, and policy-template release.
+
 - **Serving image `/ready` readiness probe and `POST` invoke probes (`deploy/cloudrun/server/structured_server.py`, `scripts/deploy_vertex_endpoint.sh`, `deploy/cloudrun/service.yaml`, `scripts/deploy_cloudrun_vllm.sh`, `scripts/matrix/net.py`, `cmd/serve.go`).**
   Adds `GET` and `POST` `/ready` (`/invoke/ready`) plus `/predict` `{"ready": true}` returning `503` (with the
   `_health_info()` JSON payload) until the live upstream `vLLM` `/health` route answers `200`, and `503` again if the
@@ -13,11 +17,29 @@ image for a release in your own project with `make cloudrun-build`.
   `/health` (`/invoke/health`) stay `200` unconditionally for cold-start telemetry (`phase`, `bytes_staged_gb`,
   `vllm_ready`, `warmed`), while Vertex `healthRoute` and Cloud Run `startupProbe` point at `/ready` so crash-looping
   deployments do not report healthy, and Vertex `/invoke` clients probe via `POST`.
-- **Serving image self-warmup `X-DGem-Key` authentication (`deploy/cloudrun/entrypoint.sh`).**
+- **Serving image self-warmup `X-DGem-Key` authentication (`deploy/cloudrun/entrypoint.sh`, `deploy/cloudrun/server/test_server_key.py`).**
   Startup self-warmup requests (`samples=1`, `samples=4`, and vision warmup) now attach the first entry of
   `DGEM_SERVER_KEY` as `X-DGem-Key` (and `API_KEY` as `Bearer`, targeting `SS_PORT`), preventing silent HTTP `401`
   warmup failures when service-key authentication is enabled and recording `warmed: false` in `warmup_state.json` if
   any warmup request fails.
+- **Template example sidecars, render-all validation, and `dgem template render -d` (`pkg/template/`, `templates/`, `cmd/template.go`, `cmd/serve.go`).**
+  Adds companion `<template>.examples.json` files (`typical`, `edge`, and `minimal` inputs plus unambiguous
+  `expected_answers`) across all shipped `.json.tmpl` policies, `ValidateRenderedPayload` and
+  `TestAllShippedTemplatesRenderAndValidate` schema/DAG/option-limit verification, `-d` / `--data` JSON variable file
+  loading on `dgem template render`, and `.examples.json`-backed `examples` and `sample_vars` on `GET /api/templates`.
+- **8-slot trajectory context pruning policy and Genkit knapsack example (`templates/agent_context_pruning.json.tmpl`, `examples/genkit-context-pruning/`, `cmd/serve.go`).**
+  Adds a starter 8-slot context retention policy (`b0`..`b7` across `full`, `stub`, and `drop` with
+  `layout: "document_first"` and `isolate: "auto"`) and a runnable Genkit Go `v1.14.0` example solving the
+  Pareto-filtered Multiple-Choice Knapsack (`SelectContextPruningActions`) under `TokenBudget` and `Pinned` block
+  constraints.
+- **MCP local-only vision schema hints and `dgemgenkit` map allocation cleanup (`cmd/mcp_schema.go`, `cmd/mcp.go`, `examples/dgemgenkit/bridge.go`).**
+  Clears unavailable `'vertex_first'` / `'vertex'` / `'cloudrun'` backend descriptions on `locate_bounding_boxes` and
+  `locate_object` when running on a local-only server (`dgem mcp --local` / `dgem serve --local`), prepends an
+  unavailability notice to vision tool descriptions while keeping `enum` omitted, and simplifies `mergeDependsOn` map
+  initialization.
+- **`agy-safety-gate` Stage-0 static pre-filter enabled by default (`examples/agy-safety-gate/`).**
+  Enables deterministic Stage-0 regex fast-allow/deny rules (`--static-stage` / `DGEM_GATE_STATIC_STAGE=1`) by default
+  with `--no-static-stage` (`DGEM_GATE_STATIC_STAGE=0`) opt-out for Stage-1-only measurement.
 
 ## v0.4.2 (2026-11-09)
 
