@@ -1,0 +1,24 @@
+# Copy to terraform.tfvars (gitignored via *.tfvars if configured locally; never commit real project IDs).
+
+project_id   = "<PROJECT>"
+region       = "us-central1"
+allow_member = "group:ai-platform-team@example.com"
+
+# GPU tier: "nvidia-rtx-pro-6000" (80 GiB host RAM, SigLIP vision enabled) or "nvidia-l4" (32 GiB RAM, text-only)
+enable_cloudrun_gpu        = true
+cloudrun_gpu_type          = "nvidia-rtx-pro-6000"
+cloudrun_gpu_min_instances = 0
+# Optional pinned release image URIs (defaults to :latest in your Artifact Registry):
+# cloudrun_gpu_image = "us-central1-docker.pkg.dev/<PROJECT>/dgem/dgemma:v0.4.3"
+# gateway_image      = "us-central1-docker.pkg.dev/<PROJECT>/dgem/dgemma-gateway:v0.4.3"
+
+# Optional Secret Manager secret IDs (create secrets prior to `terraform apply`)
+hf_token_secret_id   = ""
+server_key_secret_id = ""
+
+# Gateway & optional Vertex AI Dedicated Endpoint shell
+enable_gateway         = true
+default_backend        = "vertex_first"
+verify_iap             = true
+enable_vertex_endpoint = false
+enable_monitoring      = true
