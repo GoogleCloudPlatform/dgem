@@ -23,9 +23,9 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
-// listToolSchemas starts an in-memory MCP server with the current backend configuration and returns each
-// tool's "backend" property (nil when absent).
-func listBackendProps(t *testing.T) map[string]map[string]any {
+// listBackendProps starts an in-memory MCP server with the current backend configuration and returns each
+// tool's "backend" property (nil when absent) along with each tool's top-level description.
+func listBackendPropsAndDescs(t *testing.T) (map[string]map[string]any, map[string]string) {
 	t.Helper()
 	ctx := context.Background()
 	serverT, clientT := mcp.NewInMemoryTransports()
@@ -42,6 +42,7 @@ func listBackendProps(t *testing.T) map[string]map[string]any {
 		t.Fatalf("tools/list: %v", err)
 	}
 	out := map[string]map[string]any{}
+	descs := map[string]string{}
 	for _, tool := range res.Tools {
 		raw, _ := json.Marshal(tool.InputSchema)
 		var s struct {
@@ -49,8 +50,15 @@ func listBackendProps(t *testing.T) map[string]map[string]any {
 		}
 		_ = json.Unmarshal(raw, &s)
 		out[tool.Name] = s.Properties["backend"]
+		descs[tool.Name] = tool.Description
 	}
-	return out
+	return out, descs
+}
+
+func listBackendProps(t *testing.T) map[string]map[string]any {
+	t.Helper()
+	props, _ := listBackendPropsAndDescs(t)
+	return props
 }
 
 func enumOf(p map[string]any) []string {
@@ -70,7 +78,7 @@ func TestMCPBackendSchemaListsOnlyConfiguredBackends(t *testing.T) {
 
 	// Local only (dgem mcp --local / dgem serve --local)
 	withBackendConfig(t, "", "http://127.0.0.1:8080/v1", "http://127.0.0.1:8080/v1", true, "local", nil, nil)
-	props := listBackendProps(t)
+	props, toolDescs := listBackendPropsAndDescs(t)
 	for _, name := range []string{"decide_policy", "decide_custom_questions", "get_health_and_gpu_status"} {
 		p := props[name]
 		if p == nil {
@@ -84,20 +92,42 @@ func TestMCPBackendSchemaListsOnlyConfiguredBackends(t *testing.T) {
 			t.Errorf("%s: description should mention only local: %q", name, desc)
 		}
 	}
-	// Vision tool: local has no vision tower, so the field stays unrestricted (tool errors clearly).
-	if e := enumOf(props["locate_bounding_boxes"]); len(e) != 0 {
-		t.Errorf("locate_bounding_boxes on local-only: enum = %v, want none", e)
+	// Issue #33: vision tools on local-only servers must keep no enum (empty enum is invalid for Gemini)
+	// and must not advertise unavailable 'vertex_first', 'vertex', or 'cloudrun' backends.
+	for _, visionTool := range []string{"locate_bounding_boxes", "locate_object"} {
+		vp := props[visionTool]
+		if vp == nil {
+			t.Fatalf("%s: no backend property", visionTool)
+		}
+		if _, hasEnum := vp["enum"]; hasEnum {
+			t.Errorf("%s on local-only: expected no enum key, got %v", visionTool, vp["enum"])
+		}
+		vDesc, _ := vp["description"].(string)
+		for _, unavailable := range []string{"vertex_first", "vertex", "cloudrun"} {
+			if strings.Contains(vDesc, unavailable) {
+				t.Errorf("%s on local-only: backend description %q mentions unavailable backend %q", visionTool, vDesc, unavailable)
+			}
+		}
+		if !strings.Contains(vDesc, "No vision-capable backend") {
+			t.Errorf("%s on local-only: backend description %q should state no vision-capable backend is available", visionTool, vDesc)
+		}
+		if !strings.HasPrefix(toolDescs[visionTool], "Unavailable on this server") {
+			t.Errorf("%s on local-only: tool description %q should start with unavailability notice", visionTool, toolDescs[visionTool])
+		}
 	}
 
 	// Vertex from the environment + Cloud Run (stdio dgem mcp with DGEM_VERTEX_URL)
 	withBackendConfig(t, "", testCR, "", false, "vertex_first", nil, nil)
 	t.Setenv("DGEM_VERTEX_URL", testVX)
-	props = listBackendProps(t)
+	props, toolDescs = listBackendPropsAndDescs(t)
 	if got := strings.Join(enumOf(props["decide_policy"]), ","); got != "vertex_first,vertex,cloudrun" {
 		t.Errorf("decide_policy enum = %q", got)
 	}
 	if got := strings.Join(enumOf(props["locate_bounding_boxes"]), ","); got != "vertex_first,vertex,cloudrun" {
 		t.Errorf("locate_bounding_boxes enum = %q", got)
+	}
+	if strings.HasPrefix(toolDescs["locate_bounding_boxes"], "Unavailable on this server") {
+		t.Errorf("locate_bounding_boxes with vision backends should not carry unavailability prefix: %q", toolDescs["locate_bounding_boxes"])
 	}
 	if desc, _ := props["decide_policy"]["description"].(string); !strings.Contains(desc, "default, 'vertex_first'") {
 		t.Errorf("default not named: %q", desc)
