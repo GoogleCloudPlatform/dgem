@@ -1,0 +1,27 @@
+{
+  "multimodal": true,
+  "examples": [
+    {
+      "name": "typical",
+      "variables": {
+        "goal": "Click the primary checkout CTA button [M5] to submit the order",
+        "step_index": "2",
+        "viewport": "mobile-390x844",
+        "samples": 1
+      }
+    },
+    {
+      "name": "edge",
+      "variables": {
+        "goal": "Dismiss the blocking cookie consent banner [M7] before tapping checkout",
+        "step_index": "1",
+        "viewport": "mobile-390x844",
+        "samples": 1
+      }
+    },
+    {
+      "name": "minimal",
+      "variables": {}
+    }
+  ]
+}

@@ -1792,10 +1792,11 @@ func buildMCPServer() *mcp.Server {
 	// Tool 4b: locate_object (guided locate)
 	mcp.AddTool(srv, &mcp.Tool{
 		Name: "locate_object",
-		Description: visionToolDescription("Locates an object or UI element in an image: dgem first answers presence and 3x3 location (~0.2 s); if it " +
-			"is confident the target is absent, returns absent without a Gemini call; otherwise Gemini 3.x (LOW thinking) " +
-			"returns the box with dgem's cell as a hint, and optionally a SAM mask (when DGEM_SAM_URL is configured). " +
-			"Returns box_1000 [ymin, xmin, ymax, xmax] in [0, 1000], the path taken and per-stage latency. Prefer this over " +
+		Description: visionToolDescription("Locates an object or UI element in an image: dgem first answers presence and 3x3 location (~0.2 s); when optional " +
+			"Set-of-Marks UI candidates ('marks') are supplied and dgem selects a mark below som_max_h, returns that mark's box " +
+			"immediately without calling Gemini; if confident the target is absent, returns absent without Gemini; otherwise Gemini 3.x " +
+			"(LOW thinking) returns the box with dgem's cell/mark hints, and optionally a SAM mask (when DGEM_SAM_URL is configured). " +
+			"Returns box_1000 [ymin, xmin, ymax, xmax] in [0, 1000], som summary, path taken, and per-stage latency. Prefer this over " +
 			"locate_bounding_boxes for precise boxes."),
 		InputSchema: visionBackendChoicesSchema[LocateRequest](),
 	}, func(ctx context.Context, req *mcp.CallToolRequest, input LocateRequest) (*mcp.CallToolResult, LocateResult, error) {

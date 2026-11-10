@@ -575,6 +575,10 @@ func defaultSampleVars(id string, vars []string) map[string]string {
 			m[v] = "CheckoutForm"
 		case "viewport":
 			m[v] = "desktop-1440px"
+		case "goal":
+			m[v] = "Click the primary action button to continue"
+		case "step_index":
+			m[v] = "1"
 		case "reference":
 			m[v] = "secondary cancel button"
 		case "fps":

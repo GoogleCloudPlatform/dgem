@@ -18,6 +18,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
+	"strings"
 
 	"github.com/GoogleCloudPlatform/dgem/pkg/client"
 	"github.com/spf13/cobra"
@@ -26,6 +28,8 @@ import (
 var (
 	locateImage    string
 	locateTarget   string
+	locateMarks    string
+	locateSomMaxH  float64
 	locateMask     bool
 	locateModel    string
 	locateThinking string
@@ -33,6 +37,28 @@ var (
 	locateHint     bool
 	locateFormat   string
 )
+
+func loadLocateMarksArg(raw string) ([]LocateMarkInput, error) {
+	s := strings.TrimSpace(raw)
+	if s == "" {
+		return nil, nil
+	}
+	var payload []byte
+	if strings.HasPrefix(s, "[") {
+		payload = []byte(s)
+	} else {
+		b, err := os.ReadFile(s)
+		if err != nil {
+			return nil, fmt.Errorf("read --marks %q: %w", s, err)
+		}
+		payload = b
+	}
+	var marks []LocateMarkInput
+	if err := json.Unmarshal(payload, &marks); err != nil {
+		return nil, fmt.Errorf("parse --marks JSON: %w", err)
+	}
+	return marks, nil
+}
 
 var locateCmd = &cobra.Command{
 	Use:     "locate",
@@ -48,13 +74,26 @@ Gemini needs Application Default Credentials and GOOGLE_CLOUD_PROJECT (or GCP_PR
 	Example: `  dgem locate --vertex-url <ENDPOINT_ID> -I screenshot.png --target "the checkout button"
   dgem locate -u "<CLOUD_RUN_URL>/v1" --gcp-auth -I photo.jpg --target "the dog on the left" -f json`,
 	RunE: func(cmd *cobra.Command, args []string) error {
+		marks, err := loadLocateMarksArg(locateMarks)
+		if err != nil {
+			return err
+		}
 		c := GetClient()
 		decide := func(ctx context.Context, schema, state string, images []string) (*client.StructuredDecisionResponse, error) {
 			resp, _, err := c.Decide(ctx, schema, state, images...)
 			return resp, err
 		}
-		res, err := runGuidedLocate(context.Background(), LocateRequest{Image: locateImage, Target: locateTarget,
-			Mask: locateMask, GeminiModel: locateModel, Thinking: locateThinking, SkipH: locateSkipH, Hint: locateHint}, decide)
+		res, err := runGuidedLocate(context.Background(), LocateRequest{
+			Image:       locateImage,
+			Target:      locateTarget,
+			Marks:       marks,
+			SomMaxH:     locateSomMaxH,
+			Mask:        locateMask,
+			GeminiModel: locateModel,
+			Thinking:    locateThinking,
+			SkipH:       locateSkipH,
+			Hint:        locateHint,
+		}, decide)
 		if err != nil {
 			return err
 		}
@@ -66,9 +105,18 @@ Gemini needs Application Default Credentials and GOOGLE_CLOUD_PROJECT (or GCP_PR
 		fmt.Printf("target:   %s\n", res.Target)
 		fmt.Printf("dgem:     present=%s (H~ %.2f), cell=%s (H~ %.2f), %.0f ms\n", res.Dgem.Present, res.Dgem.PresentH,
 			res.Dgem.GridCell, res.Dgem.GridCellH, res.Dgem.Ms)
+		if res.SoM != nil {
+			fmt.Printf("som:      selected=%s (H~ %.2f), state=%s, matched=%s (%d/%d candidates)\n",
+				res.SoM.SelectedMark, res.SoM.MarkH, res.SoM.ElementState, res.SoM.MatchedMark,
+				res.SoM.FilteredCount, res.SoM.CandidateCount)
+		}
 		switch res.Path {
 		case "skipped_absent":
 			fmt.Println("result:   absent (dgem confident; Gemini skipped)")
+		case "som_mark":
+			b := res.BoxPct
+			fmt.Printf("box:      [ymin %.1f, xmin %.1f, ymax %.1f, xmax %.1f] %% (dgem Set-of-Marks %s; Gemini skipped)\n",
+				b[0], b[1], b[2], b[3], res.SoM.SelectedMark)
 		case "gemini_absent":
 			fmt.Printf("result:   absent (Gemini %s found nothing, %.0f ms)\n", res.Gemini.Model, res.Gemini.Ms)
 		default:
@@ -90,6 +138,8 @@ func init() {
 	f := locateCmd.Flags()
 	f.StringVarP(&locateImage, "image", "I", "", "Image path, URL or data URI")
 	f.StringVar(&locateTarget, "target", "", "What to locate")
+	f.StringVar(&locateMarks, "marks", "", "Optional Set-of-Marks candidates JSON file path or inline JSON array")
+	f.Float64Var(&locateSomMaxH, "som-max-h", 0, "Max normalized entropy on Set-of-Marks selection to skip Gemini (0 uses default 0.16; negative always calls Gemini)")
 	f.BoolVar(&locateMask, "mask", false, "Also request a SAM mask (needs DGEM_SAM_URL)")
 	f.StringVar(&locateModel, "gemini-model", DefaultCascadeGeminiModel, "Gemini 3.x model (gemini-3.8-flash, gemini-3.5-flash-lite)")
 	f.StringVar(&locateThinking, "thinking", defaultLocateThinking, "Gemini thinking level: low, medium, high, default")
