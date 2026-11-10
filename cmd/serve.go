@@ -584,6 +584,14 @@ func defaultSampleVars(id string, vars []string) map[string]string {
 			m[v] = "enterprise_saas_operations"
 		case "target_token":
 			m[v] = "St."
+		case "task_goal":
+			m[v] = "Fix data race in worker_pool.go Shutdown() reported by TestWorkerPoolDrain."
+		case "turn_index":
+			m[v] = "6"
+		case "token_budget":
+			m[v] = "1600"
+		case "blocks":
+			m[v] = `[{"id":"b0","kind":"file_excerpt","full_tokens":520,"stub_tokens":90,"summary":"worker_pool.go Shutdown() implementation"},{"id":"b1","kind":"test_trace","full_tokens":410,"stub_tokens":80,"summary":"TestWorkerPoolDrain race stack trace"}]`
 		default:
 			m[v] = ""
 		}
