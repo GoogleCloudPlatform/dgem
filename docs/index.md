@@ -37,6 +37,7 @@ For people who write policies and use the answers.
 2. [Authoring and Stage 2 cascades](policies/authoring.md) · [Run a dataset](policies/datasets.md)
 3. [Template catalog](policies/templates.md) · [Real-world applications](policies/applications.md) ·
    [Taxonomy discovery](policies/taxonomy-discovery.md)
+4. [Build and fine-tune decision models](policies/fine-tuning.md): causal Gemma 4 single-token readout, label-token LoRA, and masked-canvas tuning
 
 ## Reference
 
