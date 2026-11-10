@@ -1,0 +1,8 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Documentation
+    url: https://googlecloudplatform.github.io/dgem/
+    about: Read deployment, calibration, and policy-authoring guides before opening an issue.
+  - name: Security Vulnerability Report
+    url: https://g.co/vulnz
+    about: Report security vulnerabilities privately through Google's vulnerability intake (see SECURITY.md).

@@ -18,7 +18,7 @@ is at the end.
 
 | Your situation | Use | Why |
 | :--- | :--- | :--- |
-| A dgem endpoint is already running and has spare capacity | **Send it the rows** ([fan-out](#fan-out-to-an-endpoint)) | No startup, no new infrastructure. If you already pay for the endpoint, the extra cost is close to zero |
+| A dgem endpoint is already running and has spare capacity | **Send it the rows** ([fan-out](../../deploy/batch/README.md#4-fan-out-to-a-running-endpoint)) | No startup, no new infrastructure. If you already pay for the endpoint, the extra cost is close to zero |
 | Fewer than about 10,000 rows, no endpoint running | **A scale-to-zero Cloud Run service**, then delete it or let it scale down | First decision in about 2 minutes. A job spends about 5 minutes starting, longer than the work |
 | 10,000 rows to tens of millions | **Cloud Run Jobs** | Lowest cost per decision we measured ($0.011 per 1,000 short decisions), no cluster to run, scales out by tasks |
 | The batch is one step of a data pipeline (BigQuery in, joins, BigQuery out) | **Dataflow** | Reads and writes your data where it lives; costs about 1.5× Cloud Run per GPU-hour, and GPU capacity can be hard to get |

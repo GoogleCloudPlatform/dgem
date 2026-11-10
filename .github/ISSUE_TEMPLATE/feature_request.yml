@@ -1,0 +1,30 @@
+name: Feature or policy request
+description: Propose a capability, SDK integration, benchmark harness, or decision policy template
+labels: ["enhancement"]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem or use case
+      description: What decision workflow, deployment target, or integration gap are you solving?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed design
+      description: Describe the CLI flag, HTTP/MCP schema, `.json.tmpl` policy, or SDK surface you have in mind.
+    validations:
+      required: true
+  - type: checkboxes
+    id: surfaces
+    attributes:
+      label: Affected surfaces
+      options:
+        - label: CLI (`dgem decide`, `dgem locate`, `dgem bench-*`)
+        - label: HTTP Gateway (`/api/decide`, `/v1/systemone`)
+        - label: MCP Server (`dgem mcp`, `/mcp`)
+        - label: Decision Studio (`studio/`)
+        - label: Serving Container (`deploy/cloudrun/`)
+        - label: Policy Templates (`templates/`) or Examples (`examples/`)
+        - label: Documentation (`docs/` and `docs-site/`)

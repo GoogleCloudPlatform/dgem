@@ -12,6 +12,7 @@
 | **Hesitation-gated decisions** | A probability for every option and a hesitation score from one pass; hesitant answers are handed off; calibration fitted per domain. | [Confidence beyond Shannon](docs/confidence/overview.md) · [Confidence and calibration](docs/confidence/index.md) |
 | **Hesitation-gated cascade** | Answers low-hesitation decisions directly and hands the rest to Vertex AI `gemini-3.8-flash` with `dgem`'s probabilities attached. | [Authoring and cascades](docs/policies/authoring.md) |
 | **Four surfaces** | CLI, HTTP gateway (`/api/decide`, `/v1/systemone`), MCP server (`dgem mcp`, `/mcp`), and the embedded Decision Studio web app (`dgem serve`). | [Studio, MCP & API](docs/reference/studio-mcp-api.md) · [CLI reference](docs/reference/cli.md) |
+| **Framework & agent examples** | Runnable Genkit Go `v1.14.0` flows (`dgemgenkit`, tool-approval interrupts, SecOps DAGs, calibrated RAI guardrails, bulk synthesis) and the Antigravity `PreToolUse` safety hook (`agy-safety-gate`). | [Examples guide](examples/README.md) |
 | **Evaluation tools** | `dgem bench-*` harnesses and a regression matrix (`scripts/bench_matrix.py`) to measure your own deployment and compare a candidate with a baseline. | [Evaluate a deployment](docs/deploy/evaluate.md) · [Regression matrix](docs/operate/regression-matrix.md) |
 | **Serving** | Vertex AI Dedicated Endpoint on RTX PRO 6000, Cloud Run GPU (scale to zero), GCE VMs, and local Apple Silicon (Metal). | [From laptop to production](docs/deploy/index.md) |
 
@@ -78,7 +79,7 @@ See **[Decision Studio, MCP and HTTP API](docs/reference/studio-mcp-api.md)** an
 | **1. Decision Studio Web App** | `./bin/dgem serve --port 8090` | Embedded Lit web app with the `.json.tmpl` decision policies (`core`, `calibration`, `multimodal`, `rerank`), a backend target selector (`vertex_first` \| `vertex` \| `cloudrun`), Stage 2 Gemini cascades, approximate image box overlays (coarse, see [what dgem can do with images](docs/policies/images.md)), a plain-English **Concepts** tab, and OpenTelemetry trace waterfalls. |
 | **2. Model Context Protocol (MCP)** | `./bin/dgem mcp` (`stdio`)<br>`POST /mcp` (Streamable HTTP) | MCP server with tools for policy and custom decisions, template listing, health and warm-up, and image localization, with `backend` selection and Stage 2 cascade options (`cascade_mode`, `cascade_threshold`, `cascade_model`). |
 | **3. HTTP Gateway REST API** | `POST /api/decide/{template}`<br>`POST /v1/systemone`, `GET /api/templates` | Run any `.json.tmpl` policy or a `/v1/systemone` decision request with `X-DGem-Backend: vertex_first \| vertex \| cloudrun` (`X-DGem-Backend-Used` is returned on every response) and an optional Stage 2 `gemini-3.8-flash` cascade. |
-| **4. CLI & evaluation harnesses** | `./bin/dgem decide --vertex-url ...`<br>`./bin/dgem bench-*` | Single-pass decisions (`--stats`, `--layout`, cascade flags) and evaluation harnesses (`bench`, `bench-intents`, `bench-calibration`, `bench-bbox`, `bench-bbox-judge`, `bench-guided`, `bench-vision`, `bench-jev`, `bench-decision-index`, `bench-permutation`). |
+| **4. CLI & evaluation harnesses** | `./bin/dgem decide --vertex-url ...`<br>`./bin/dgem locate`, `./bin/dgem bench-*` | Single-pass decisions (`--stats`, `--layout`, cascade flags), guided visual localization (`locate`), and evaluation harnesses (`bench`, `bench-intents`, `bench-calibration`, `bench-bbox`, `bench-bbox-judge`, `bench-guided`, `bench-vision`, `bench-jev`, `bench-decision-index`, `bench-permutation`). |
 
 ### Why a "Decision Model"?
 
@@ -118,7 +119,7 @@ Download a prebuilt static archive (`linux/{amd64,arm64}`, `darwin/{amd64,arm64}
 ```bash
 OS="$(uname -s | tr '[:upper:]' '[:lower:]')"
 ARCH="$(uname -m | sed 's/x86_64/amd64/;s/aarch64/arm64/')"
-TAG="v0.4.1"
+TAG="v0.4.2"
 curl -fsSLO "https://github.com/GoogleCloudPlatform/dgem/releases/download/${TAG}/dgem_${TAG}_${OS}_${ARCH}.tar.gz"
 curl -fsSLO "https://github.com/GoogleCloudPlatform/dgem/releases/download/${TAG}/SHA256SUMS"
 tar -xzf "dgem_${TAG}_${OS}_${ARCH}.tar.gz"
@@ -181,6 +182,15 @@ Attach local image paths (automatically base64 encoded) or remote URLs:
   -I fixtures/ui_component.png \
   -v 'component=CheckoutCard' \
   --stats
+```
+
+### 5. Guided Visual Localization (`dgem locate`)
+Check presence and coarse `3x3` region with `dgem` first (`~0.2 s`), skipping Stage 2 Gemini box extraction when the target is confidently absent (`--skip-h 0.16`):
+```bash
+./bin/dgem locate --vertex-url <ENDPOINT_ID> \
+  -I fixtures/ui_component.png \
+  --target "the primary checkout button" \
+  --skip-h 0.16
 ```
 
 ---
