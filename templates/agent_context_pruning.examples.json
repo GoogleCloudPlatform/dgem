@@ -1,0 +1,67 @@
+{
+  "multimodal": false,
+  "examples": [
+    {
+      "name": "typical",
+      "unambiguous": true,
+      "variables": {
+        "task_goal": "Fix data race in worker_pool.go Shutdown() reported by TestWorkerPoolDrain.",
+        "turn_index": 6,
+        "token_budget": 1600,
+        "samples": 1,
+        "blocks": [
+          {"id": "b0", "kind": "file_excerpt", "full_tokens": 520, "stub_tokens": 90, "summary": "Current worker_pool.go Shutdown() implementation containing the unsynchronized close(ch) race."},
+          {"id": "b1", "kind": "test_trace", "full_tokens": 410, "stub_tokens": 80, "summary": "Failing race detector stack trace from TestWorkerPoolDrain pointing to worker_pool.go:88 and :114."},
+          {"id": "b2", "kind": "file_excerpt", "full_tokens": 640, "stub_tokens": 110, "summary": "TaskDispatcher interface definition in dispatcher.go; only method signatures are referenced by worker_pool.go."},
+          {"id": "b3", "kind": "turn_summary", "full_tokens": 480, "stub_tokens": 75, "summary": "Prior attempt summary noting mutex lock order constraints in package pool."},
+          {"id": "b4", "kind": "tool_output", "full_tokens": 590, "stub_tokens": 60, "summary": "Stale directory listing of docs/marketing/ from turn 1."},
+          {"id": "b5", "kind": "tool_output", "full_tokens": 510, "stub_tokens": 55, "summary": "Completed CSS lint output from an unrelated frontend check in turn 2."},
+          {"id": "b6", "kind": "file_excerpt", "full_tokens": 700, "stub_tokens": 95, "summary": "Unrelated README badge table inspected during repository onboarding."},
+          {"id": "b7", "kind": "tool_output", "full_tokens": 430, "stub_tokens": 50, "summary": "Superseded git status output before checking out the current branch."}
+        ]
+      },
+      "expected_answers": {
+        "b0": "full",
+        "b1": "full",
+        "b2": "stub",
+        "b3": "stub",
+        "b4": "drop",
+        "b5": "drop",
+        "b6": "drop",
+        "b7": "drop"
+      }
+    },
+    {
+      "name": "edge",
+      "variables": {
+        "task_goal": "Verify foreign-key cascade order between invoices and credit_notes migrations.",
+        "turn_index": 9,
+        "token_budget": 900,
+        "samples": 1,
+        "blocks": [
+          {"id": "b0", "kind": "file_excerpt", "full_tokens": 380, "stub_tokens": 90, "summary": "004_invoices.sql CREATE TABLE statement."},
+          {"id": "b1", "kind": "file_excerpt", "full_tokens": 390, "stub_tokens": 95, "summary": "005_credit_notes.sql foreign key definition."},
+          {"id": "b2", "kind": "file_excerpt", "full_tokens": 340, "stub_tokens": 85, "summary": "006_ledger_triggers.sql trigger body."},
+          {"id": "b3", "kind": "test_trace", "full_tokens": 310, "stub_tokens": 70, "summary": "Integration test log showing FK constraint warning."},
+          {"id": "b4", "kind": "turn_summary", "full_tokens": 260, "stub_tokens": 65, "summary": "Schema naming conventions note."},
+          {"id": "b5", "kind": "file_excerpt", "full_tokens": 290, "stub_tokens": 75, "summary": "Rollback script 005_down.sql."},
+          {"id": "b6", "kind": "tool_output", "full_tokens": 220, "stub_tokens": 50, "summary": "psql version banner."},
+          {"id": "b7", "kind": "tool_output", "full_tokens": 240, "stub_tokens": 55, "summary": "Earlier connection retry log."}
+        ]
+      }
+    },
+    {
+      "name": "minimal",
+      "variables": {
+        "task_goal": "Add unit test for ParseDuration.",
+        "turn_index": 1,
+        "token_budget": 4096,
+        "samples": 1,
+        "blocks": [
+          {"id": "b0", "kind": "file_excerpt", "full_tokens": 180, "stub_tokens": 40, "summary": "duration.go ParseDuration implementation."},
+          {"id": "b1", "kind": "file_excerpt", "full_tokens": 140, "stub_tokens": 35, "summary": "duration_test.go existing test cases."}
+        ]
+      }
+    }
+  ]
+}
