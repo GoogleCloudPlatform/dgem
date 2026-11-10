@@ -20,10 +20,11 @@
 # Reference:
 #   https://docs.cloud.google.com/gemini-enterprise-agent-platform/machine-learning/predictions/use-arbitrary-custom-routes
 #
-# Exposed Custom Routes on the Dedicated Endpoint:
+# Exposed Custom Routes on the Dedicated Endpoint (Vertex routes POST externally on /invoke/*; internal healthRoute uses GET /ready):
 #   POST .../invoke/v1/chat/completions      -> structured_server.py (/v1/chat/completions)
 #   POST .../invoke/v1/systemone             -> native SystemOne/JevBench route (/v1/systemone)
-#   GET  .../invoke/health                   -> container & vLLM readiness telemetry (/health)
+#   POST .../invoke/ready                    -> readiness probe: 200 when vLLM serves, 503 otherwise (/ready)
+#   POST .../invoke/health                   -> container & cold-start telemetry, always 200 (/health)
 # ==============================================================================
 set -euo pipefail
 
@@ -107,7 +108,7 @@ fi
 
 # Routes: "invoke" (default) = arbitrary custom routes (invokeRoutePrefix "/*", dedicated public endpoints, callers
 # use /invoke/...). "predict" = one predictRoute for private (PSC) endpoints, which have no invoke routes: callers use
-# .../endpoints/<ID>:rawPredict and the serving image dispatches on the body (chat, systemone, {"health": true}).
+# .../endpoints/<ID>:rawPredict and the serving image dispatches on the body (chat, systemone, {"ready": true}, {"health": true}).
 ROUTE_MODE="${ROUTE_MODE:-invoke}"
 case "${ROUTE_MODE}" in
   invoke) ROUTE_SPEC='"invokeRoutePrefix": "/*"' ;;
@@ -122,7 +123,7 @@ UPLOAD_PAYLOAD=$(cat <<EOF
     "containerSpec": {
       "imageUri": "${IMAGE_URI}",
       ${ROUTE_SPEC},
-      "healthRoute": "/health",
+      "healthRoute": "/ready",
       "ports": [
         { "containerPort": 8080 }
       ],
@@ -284,7 +285,8 @@ cat <<EOF
   Mapped Custom Routes:
   • Structured Decision:  ${INVOKE_BASE_URL}/v1/chat/completions
   • SystemOne / JevBench: ${INVOKE_BASE_URL}/v1/systemone
-  • Live Health Probe:    ${INVOKE_BASE_URL}/health
+  • Readiness Probe:      POST ${INVOKE_BASE_URL}/ready
+  • Cold-Start Telemetry: POST ${INVOKE_BASE_URL}/health
 
   Use with dgem CLI:
     ./bin/dgem decide -u "${INVOKE_BASE_URL}/v1" --gcp-auth -t templates/support_triage.json.tmpl -v ticket="Double billed"

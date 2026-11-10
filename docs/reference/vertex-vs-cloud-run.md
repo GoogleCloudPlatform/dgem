@@ -15,11 +15,12 @@ and capacity on your own deployments, see [Latency and capacity](../operate/late
 
 ## 1. Why We Use Vertex AI Arbitrary Custom Routes (`invokeRoutePrefix: "/*"`)
 
-Standard Vertex AI Online Prediction (`:predict` and `:rawPredict`) binds a container deployment to a **single fixed HTTP path** (`AIP_PREDICT_ROUTE`). However, the `dgemma` container (`structured_server.py` on port `8080` fronting `vLLM EngineCore` on port `8000`) exposes **three HTTP routes**, all for decisions or readiness:
+Standard Vertex AI Online Prediction (`:predict` and `:rawPredict`) binds a container deployment to a **single fixed HTTP path** (`AIP_PREDICT_ROUTE`). However, the `dgemma` container (`structured_server.py` on port `8080` fronting `vLLM EngineCore` on port `8000`) exposes **four HTTP routes**, all for decisions or readiness:
 
 - `POST /v1/chat/completions` — Structured 128-token diffusion decision envelope (`answers` + `diagnostics`).
 - `POST /v1/systemone` — The `/v1/systemone` decision protocol (JSON or multipart image + JSON).
-- `GET /health` — Live container warmup phase, staged GiB telemetry, and `vllm_ready` flag.
+- `GET` / `POST /ready` — Readiness probe (`503` until `vLLM` serves, `200` when `vllm_ready` is `true`; Vertex `healthRoute` and Cloud Run `startupProbe` poll `GET /ready`, while external `/invoke/ready` callers use `POST`).
+- `GET` / `POST /health` — Live container warmup phase, staged GiB telemetry, and `vllm_ready` flag (always `200` once the proxy starts; external `/invoke/health` callers use `POST`).
 
 Free-form generation (`/v1/raw/chat/completions` in vLLM's upstream example) is not served: the serving image answers it with `410 Gone`.
 
@@ -38,13 +39,15 @@ flowchart LR
   subgraph Container["dgemma Container (port 8080 -> vLLM 8000)"]
     R1["POST /v1/chat/completions\n(Structured Decision Envelope)"]
     R3["POST /v1/systemone\n(decision protocol)"]
-    R4["GET /health\n(Warmup & vLLM Readiness)"]
+    R4["POST / GET /health\n(Cold-Start Telemetry, 200)"]
+    R5["POST / GET /ready\n(Readiness Probe, 200/503)"]
   end
 
   GW -->|"Bearer <OAuth2 cloud-platform>"| INV
   INV -->|"/invoke/v1/chat/completions"| R1
   INV -->|"/invoke/v1/systemone"| R3
   INV -->|"/invoke/health"| R4
+  INV -->|"/invoke/ready"| R5
 ```
 
 ---
@@ -60,7 +63,7 @@ flowchart LR
 | **Routing Protocol** | Direct HTTPS to `https://dgemma-*.a.run.app/v1/chat/completions` | Arbitrary Custom Routes (`invokeRoutePrefix: "/*"`) via `https://<id>.<region>-<proj_num>.prediction.vertexai.goog/v1/projects/.../endpoints/<id>/invoke/v1/chat/completions` |
 | **Authentication Token** | **OIDC Identity Token** (`gcloud auth print-identity-token`, audience = Cloud Run URL) | **OAuth2 Access Token** (`gcloud auth print-access-token`, scope = `cloud-platform`) |
 | **Payload Size Limit** | Cloud Run request size limits (HTTP/1.1 requests are capped; HTTP/2 streaming is not) | Dedicated endpoint (`*.prediction.vertexai.goog`) limits, which are higher than the shared `:predict` endpoint's; check the current Vertex AI documentation before sending large images |
-| **Health Probe Behavior** | Polls `GET /health` (`200 OK` immediately so gateway can read live staging telemetry during scale-from-zero). | Startup probe on `GET /health` (long timeout); readiness fields as on Cloud Run. |
+| **Health Probe Behavior** | Startup probe on `GET /ready` (`503` until `vLLM` serves; up to 15 min); `GET /health` returns `200` for cold-start telemetry. | `healthRoute` on `GET /ready` (`503` until `vLLM` serves, so crash-looping engines fail deploy); external callers probe `POST /invoke/ready` (`200`/`503`) or `POST /invoke/health` (`200` telemetry). |
 | **Enterprise MLOps Features** | Revision traffic splitting, Direct Cloud Run IAP, Cloud Logging & Monitoring. | Model Registry versioning, Private Service Connect (PSC) endpoints, traffic-split canary rollouts (`deployedModels/{id}/invoke/*`), DCGM GPU AutoMetrics. |
 
 ---
@@ -70,8 +73,8 @@ flowchart LR
 1. **Why `g2-standard-16` (`64 GB` RAM) is Required for `1× NVIDIA L4` on Vertex AI (`VERTEX_PROFILE=l4`)**:
    - `g2-standard-8` (`1× NVIDIA L4`) provides only **`32 GB` of host RAM**. Staging the `17.53 GiB` `dgemma` safetensors into `/tmp/dgemma` (`tmpfs` in RAM) while `vLLM`/PyTorch allocates a `17.53 GiB` CPU load buffer requires **`~35.1 GiB` of RAM**, causing a container OOM kill on `g2-standard-8`.
    - **`g2-standard-16`** attaches the **exact same single `1× NVIDIA L4` GPU** (`24 GB` VRAM) with **`64 GB` of host RAM** and `16 vCPUs`, eliminating the `32 GB` RAM bottleneck for negligible incremental CPU cost.
-2. **2-Second `/health` Startup for Vertex AI Health Probes**:
-   - Vertex AI Dedicated Endpoints fail `deploy-model` if port `:8080/health` does not respond during container initialization. [`deploy/cloudrun/entrypoint.sh`](https://github.com/GoogleCloudPlatform/dgem/blob/main/deploy/cloudrun/entrypoint.sh) stages only the `<20 MB` tokenizer + `4 MB` safetensors headers synchronously (`<2 seconds`), launches `structured_server.py` on `:8080` immediately so `/health` returns `200 OK`, and streams the `17.53 GiB` tensor bodies in the background across 64 HTTPS Range streams while `_wait_for_upstream()` holds early inference requests until `vLLM` on `:8000` is ready.
+2. **`/ready` Platform Readiness vs. `/health` Cold-Start Telemetry**:
+   - [`deploy/cloudrun/entrypoint.sh`](https://github.com/GoogleCloudPlatform/dgem/blob/main/deploy/cloudrun/entrypoint.sh) stages only the `<20 MB` tokenizer + `4 MB` safetensors headers synchronously (`<2 seconds`), launches `structured_server.py` on `:8080` immediately, and streams the `17.53 GiB` tensor bodies in the background across 64 HTTPS Range streams overlapped with `vLLM` initialization. `GET /ready` (`healthRoute` on Vertex, `startupProbe` on Cloud Run) returns `503` until `vLLM` on `:8000/health` answers `200` (so crash-looping engines fail deployment rather than taking traffic), while `GET /health` returns `200 OK` throughout boot with live `phase` and `bytes_staged_gb` telemetry.
 
 ---
 

@@ -6,6 +6,13 @@ image for a release in your own project with `make cloudrun-build`.
 
 ## Unreleased
 
+- **Serving image `/ready` readiness probe and `POST` invoke probes (`deploy/cloudrun/server/structured_server.py`, `scripts/deploy_vertex_endpoint.sh`, `deploy/cloudrun/service.yaml`, `scripts/deploy_cloudrun_vllm.sh`, `scripts/matrix/net.py`, `cmd/serve.go`).**
+  Adds `GET` and `POST` `/ready` (`/invoke/ready`) plus `/predict` `{"ready": true}` returning `503` (with the
+  `_health_info()` JSON payload) until the live upstream `vLLM` `/health` route answers `200`, and `503` again if the
+  upstream engine stops answering (even after `warmup_state.json` recorded an earlier ready state). `GET` and `POST`
+  `/health` (`/invoke/health`) stay `200` unconditionally for cold-start telemetry (`phase`, `bytes_staged_gb`,
+  `vllm_ready`, `warmed`), while Vertex `healthRoute` and Cloud Run `startupProbe` point at `/ready` so crash-looping
+  deployments do not report healthy, and Vertex `/invoke` clients probe via `POST`.
 - **Serving image self-warmup `X-DGem-Key` authentication (`deploy/cloudrun/entrypoint.sh`).**
   Startup self-warmup requests (`samples=1`, `samples=4`, and vision warmup) now attach the first entry of
   `DGEM_SERVER_KEY` as `X-DGem-Key` (and `API_KEY` as `Bearer`, targeting `SS_PORT`), preventing silent HTTP `401`

@@ -36,7 +36,7 @@ own services can make decisions on it, and give people access through the [gatew
   into your project (`GCP_PROJECT=<PROJECT> make cloudrun-build`) and pin the commit tag or digest it prints.
 - A **service key** for the serving image, stored in Secret Manager as `dgem-server-key`. When the secret exists, the
   deploy script sets it as `DGEM_SERVER_KEY` on the model and the serving image refuses every `POST` without a
-  matching `X-DGem-Key` header (`GET /health` stays open). Without the secret the script prints a warning and the
+  matching `X-DGem-Key` header (`GET /health` and `GET /ready` stay open). Without the secret the script prints a warning and the
   serving image accepts any `POST` that reaches it. Give the key to the services that call the endpoint (your
   [gateway](/dgem/deploy/gateway/), batch jobs, probes), not to people:
 
@@ -63,32 +63,35 @@ The default profile (`VERTEX_PROFILE=g4-rtxpro6000`) configures:
 | Replicas | min 1 (`VERTEX_MIN_REPLICAS`), max 2 (`VERTEX_MAX_REPLICAS`), autoscale at 70% GPU duty cycle |
 | Engine | `KV_CACHE_GB=12`, `MAX_SEQS=32`, `MAX_INFLIGHT=8`, `DEFAULT_SAMPLES=1`, vision on |
 | Endpoint | dedicated DNS, display name `dgemma-dedicated-g4` (`VERTEX_ENDPOINT_NAME`; reused if it exists) |
-| Startup | long startup probe (weights load + self-warmup before the replica takes traffic) |
+| Startup | `healthRoute: "/ready"` (`503` until vLLM serves, so crash-looping engines fail deploy instead of taking traffic) |
 
 The script prints the endpoint ID and the invoke URLs:
 
 ```text
 https://<ENDPOINT_ID>.<REGION>-<PROJECT_NUMBER>.prediction.vertexai.goog/v1/projects/<PROJECT>/locations/<REGION>/endpoints/<ENDPOINT_ID>/invoke/...
-  /v1/chat/completions      structured decisions (what dgem uses)
-  /v1/systemone             /v1/systemone decision protocol
-  /health                   readiness
+  POST /v1/chat/completions structured decisions (what dgem uses)
+  POST /v1/systemone        /v1/systemone decision protocol
+  POST /ready               readiness (200 when vllm_ready, 503 otherwise; Vertex healthRoute polls GET /ready internally)
+  POST /health              cold-start telemetry (always 200)
 ```
 
 ## 3. Verify
 
 ```bash
 INVOKE=https://<ENDPOINT_ID>.<REGION>-<PROJECT_NUMBER>.prediction.vertexai.goog/v1/projects/<PROJECT>/locations/<REGION>/endpoints/<ENDPOINT_ID>/invoke
-curl -s -H "Authorization: Bearer $(gcloud auth print-access-token)" $INVOKE/health
-#   -> {"status": "ok", "vllm_ready": true, "phase": "ready", "warmed": true, ...}
 
-# Without the service key, decision requests are refused
+# Without the service key, POST requests (decisions and external /invoke/* probes) are refused
 curl -s -o /dev/null -w '%{http_code}\n' -X POST -H "Authorization: Bearer $(gcloud auth print-access-token)" \
   -H "Content-Type: application/json" -d '{}' $INVOKE/v1/chat/completions
 #   -> 401
 
-# As an operator, with the key from Secret Manager (callers send DGEM_SERVER_KEY as X-DGem-Key)
+# As an operator, with the key from Secret Manager (Vertex dedicated endpoints accept POST on /invoke/*)
 export GCP_PROJECT=<PROJECT> GCP_PROJECT_NUMBER=<PROJECT_NUMBER>
 export DGEM_SERVER_KEY="$(gcloud secrets versions access latest --secret=dgem-server-key --project=<PROJECT>)"
+curl -sf -X POST -H "Authorization: Bearer $(gcloud auth print-access-token)" \
+  -H "X-DGem-Key: ${DGEM_SERVER_KEY%%,*}" -H "Content-Type: application/json" -d '{}' $INVOKE/ready
+#   -> HTTP 200: {"status": "ok", "vllm_ready": true, "phase": "ready", "warmed": true, ...}
+#      (POST $INVOKE/health always returns 200 once the container starts; check /ready or "vllm_ready": true)
 ./bin/dgem decide --vertex-url <ENDPOINT_ID> --gcp-auth -t templates/support_triage.json.tmpl \
   -v ticket="Charged twice" --stats
 ./bin/dgem decide --vertex-url <ENDPOINT_ID> --gcp-auth -t templates/multimodal/bbox_localization.json.tmpl \
@@ -100,7 +103,7 @@ export DGEM_SERVER_KEY="$(gcloud secrets versions access latest --secret=dgem-se
 - Measure one replica's throughput for your policies with a concurrency sweep; past the point where requests
   start to queue (`MAX_INFLIGHT`), latency rises while throughput plateaus. Set `VERTEX_MAX_REPLICAS` for your peak;
   the endpoint adds replicas on GPU duty cycle. Details: [Latency and capacity](/dgem/operate/latency-capacity/).
-- Keep minimum replicas ≥ 1 and a periodic `/invoke/health` probe (the [gateway](/dgem/deploy/gateway/) runs one every 4
+- Keep minimum replicas ≥ 1 and a periodic `POST /invoke/predict` `{"health": true}` probe (the [gateway](/dgem/deploy/gateway/) runs one every 4
   minutes). If an endpoint reports 0 available replicas it returns `429` until it scales back up.
 
 ## 5. Swap images with zero downtime
@@ -131,7 +134,7 @@ A dedicated **private** (PSC) endpoint has no invoke routes, so `/invoke/*` is u
 a single route instead and call it with `:rawPredict`:
 
 ```bash
-ROUTE_MODE=predict ./scripts/deploy_vertex_endpoint.sh   # predictRoute /predict, healthRoute /health
+ROUTE_MODE=predict ./scripts/deploy_vertex_endpoint.sh   # predictRoute /predict, healthRoute /ready
 ```
 
 - Callers inside the VPC use the private host:
@@ -143,7 +146,8 @@ ROUTE_MODE=predict ./scripts/deploy_vertex_endpoint.sh   # predictRoute /predict
   `/v1/chat/completions` and `/v1/systemone` traffic to it. http is accepted only for `*.prediction.p.vertexai.goog`
   hosts with a `:rawPredict` path; every other Vertex URL must be https.
 - The serving image's single route dispatches on the body: chat `messages` → decisions, a `questions` map or a
-  multipart upload → `/v1/systemone`, `{"health": true}` → the health report (send `X-DGem-Key` if the server uses one).
+  multipart upload → `/v1/systemone`, `{"ready": true}` → readiness (`200` when `vllm_ready`, `503` otherwise),
+  `{"health": true}` → the cold-start health report (send `X-DGem-Key` if the server uses one).
 - The gateway reads the endpoint's state from the Vertex control plane (no data-plane health route through PSC).
 - Creating the PSC endpoint itself (allowlisted projects, forwarding rule, private DNS, Direct VPC egress for the
   gateway) follows the
