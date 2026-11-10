@@ -259,7 +259,50 @@ When combined with discrete diffusion slot readout, multimodal queries bypass th
 
 ---
 
-## 7. Architecture Decision Matrix
+## 7. Wide-Option Routing (`az_aa`, Brackets & Shortlists) & Hesitation-Gated Stage 2 Cascades
+
+### The Problem
+Enterprise taxonomies frequently exceed the default 26-option `[A-Z]` single-letter slot limit (`K = 30` to `150+` banking intents, retail product categories, or support routing queues). At the same time, ambiguous edge-case inputs should escalate to a deeper reasoning model (`gemini-3.8-flash` or `gemini-3.5-flash-lite`) without paying autoregressive latency on the routine cases where `DiffusionGemma` is confident.
+
+### The Architecture
+Combine wide-option routing on `dgem systemone serve` (`POST /v1/systemone`) with hesitation-gated Stage 2 escalation on `dgem serve` (`POST /api/decide`), MCP (`decide_policy` and `decide_custom_questions`), Decision Studio, or the `dgem bench-*` harnesses:
+
+```mermaid
+flowchart TD
+  classDef step fill:#e8f0fe,stroke:#1a73e8,color:#174ea6,stroke-width:1.5px;
+  classDef engine fill:#fce8e6,stroke:#d93025,color:#a50e0e,stroke-width:1.5px;
+  classDef out fill:#e6f4ea,stroke:#1e8e3e,color:#0d652d,stroke-width:1.5px;
+
+  A["Caller Input: Policy Schema + Document/Image State"]:::step --> B{"Option Count K"}:::step
+  B -->|"K <= 26 (or <= 52 with labels: az_aa)"| C["Single-Pass Diffusion Slot Readout"]:::engine
+  B -->|"K > Limit (up to 255+ options)"| D["dgem systemone serve: 2-Stage Bracket Tournament or --shortlist-topk"]:::engine
+  C --> E["Per-Policy Calibrated Probabilities + Normalized Entropy H_norm"]:::step
+  D --> E
+  E --> F{"H_norm >= Cascade Threshold (e.g. 0.16)?"}:::step
+  F -->|"No (Clear: < 16% hesitation)"| G["Immediate Stage 1 Decision (~135 to 265 ms warm GPU)"]:::out
+  F -->|"Yes (Ambiguous Edge Case)"| H["Stage 2 Cascade: gemini-3.8-flash / 3.5-flash-lite with Soft Prior"]:::out
+```
+
+1. **52-Label Readout, Shortlists, & Balanced Brackets (`dgem systemone serve`)**: On a serving image with extended label-set support, `--labels az_aa` (or `--labels az_lower`, or `"labels": "az_aa"` in `"schema"` on direct `/v1/structured` calls) reads up to 52 options in a single forward pass. For wider taxonomies (`K > 52`, up to `255+` options), `dgem systemone serve` partitions options into balanced Round-1 brackets (`--bracket-size 20`) while holding `"none of the listed"` catch-all options for the final (`--catch-all final`), or prunes to top-$M$ candidates in 1 pass when caller `prior_logits` are supplied (`--shortlist-topk M`).
+2. **Per-Policy Held-Out Temperature Calibration (`scripts/policy_calibration.py`)**: Fit a post-hoc temperature (`--temperature` or a `"temperature"` block inside a policy template) on held-out labeled examples for that specific policy rather than sharing per-slot-type temperatures across unrelated domains (which can worsen ECE). See [Calibrate your policy](../confidence/calibrate-your-policy.md) for the held-out fitting workflow.
+3. **Selective Stage 2 Escalation (`dgem serve`, MCP, Studio, `dgem bench-*`)**: Configure `cascade_mode`, `cascade_model` (`gemini-3.8-flash` or `gemini-3.5-flash-lite`), and `stage2_prior` (`soft` or `none`) on `POST /api/decide` (`dgem serve`), MCP (`decide_policy` / `decide_custom_questions`), Decision Studio, or `dgem bench-*`. Only slots whose normalized Shannon entropy (`raw_normalized_entropy` when `prior_logits` fusion is active) meets or exceeds the threshold escalate to Stage 2, keeping Stage-1 warm latency around `135 to 185 ms` on a dedicated Vertex AI G4 endpoint (`185 to 265 ms` on Cloud Run GPU).
+
+---
+
+## 8. Multi-Slot Retail Catalog Enrichment & Prompt-Injection Guardrails
+
+### The Problem
+E-commerce marketplaces and enterprise RAG pipelines validate thousands of product listings or retrieved document chunks per minute for title-versus-specification contradictions, deep category taxonomy fit, and indirect prompt injections (*"Ignore previous instructions..."*) without running multiple sequential LLM calls per item.
+
+### The Architecture
+Co-denoise quality, taxonomy, and security slots in parallel using declarative `.json.tmpl` policies:
+
+* **Multi-Slot Retail Catalog Enrichment**: Evaluates catalog QA slots such as `auto_publish_approved` (`boolean`), `title_spec_conflict` (`boolean`), `primary_defect_action` (`choice`), and `seo_readiness_score` (`1` to `5` `score`) in one `~135 to 265 ms` warm GPU forward pass. For medium-wide taxonomies such as a 32-option `google_product_category` slot, set `"labels": "az_aa"` inside `"schema"` to resolve all 32 categories in a single pass on a label-set-aware serving image, or route through `dgem systemone serve` to resolve them in 2 passes under the default 26-letter `"az"` label set.
+* **Single-Pass RAG Reranking & Indirect Prompt-Injection Quarantine**: Combine listwise passage relevance scoring (`templates/rerank/listwise_decision_rerank.json.tmpl`) with indirect prompt-injection screening (`templates/secops_rag_quarantine.json.tmpl` for `use`-versus-`mention` separation on quoted security discussions, and `templates/calibration/prompt_injection.json.tmpl`) using `"isolate": "auto"` inside `"schema"` before untrusted chunks reach a downstream generative agent.
+
+---
+
+## 9. Architecture Decision Matrix
 
 Use this matrix to determine whether **Discrete Diffusion Slot Readout** or **Generative Autoregression** is the right tool:
 
