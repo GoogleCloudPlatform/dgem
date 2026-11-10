@@ -858,12 +858,9 @@ func DecideWithTemplate(
 	return dec, nil
 }
 
-const maxMergeDependsCapHint = 64
-
 func mergeDependsOn(deps []string, askIf map[string][]string) []string {
 	var merged []string
-	capHint := min(len(deps), maxMergeDependsCapHint) + min(len(askIf), maxMergeDependsCapHint)
-	seen := make(map[string]bool, capHint)
+	seen := make(map[string]bool)
 	for _, d := range deps {
 		if !seen[d] {
 			seen[d] = true
@@ -871,7 +868,7 @@ func mergeDependsOn(deps []string, askIf map[string][]string) []string {
 		}
 	}
 	if len(askIf) > 0 {
-		keys := make([]string, 0, len(askIf))
+		var keys []string
 		for k := range askIf {
 			keys = append(keys, k)
 		}

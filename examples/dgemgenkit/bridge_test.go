@@ -527,7 +527,7 @@ func TestTemplateDecision_TemperatureAndThresholds(t *testing.T) {
 	}
 }
 
-func TestMergeDependsOnClampsCapacityAndPreservesOrder(t *testing.T) {
+func TestMergeDependsOnDeduplicatesAndPreservesOrder(t *testing.T) {
 	deps := make([]string, 0, 100)
 	for i := 0; i < 80; i++ {
 		deps = append(deps, fmt.Sprintf("dep_%02d", i))
