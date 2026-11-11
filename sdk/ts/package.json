@@ -1,6 +1,6 @@
 {
   "name": "@dgem/client",
-  "version": "0.4.2",
+  "version": "0.4.3",
   "private": true,
   "description": "Zero-dependency TypeScript client SDK, calibration primitives, and Genkit JS adapters for DiffusionGemma (dgem).",
   "license": "Apache-2.0",

@@ -32,18 +32,7 @@ DEFAULT_CONFORMAL_SEED_KEY = "dgem-conformal-v1"
 CONFORMAL_SCORE_TOLERANCE = 1e-12
 MAX_TEMPERATURE = 20.0
 
-DEFAULT_ABSTAIN_LABELS: tuple[str, ...] = (
-    "0",
-    "abstain",
-    "insufficient_evidence",
-    "none",
-    "none_of_the_above",
-    "none_visible",
-    "oos",
-    "out_of_scope",
-    "uncertain",
-    "unknown",
-)
+DEFAULT_ABSTAIN_LABELS: tuple[str, ...] = ()
 
 
 def _normalize_probabilities(

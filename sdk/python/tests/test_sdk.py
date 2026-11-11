@@ -115,10 +115,22 @@ class DGemPythonSDKTest(unittest.TestCase):
     self.assertFalse(confident_set.should_escalate)
     self.assertEqual(confident_set.prediction_set, ("approve",))
 
+    default_oos_set = conformal_prediction_set(
+        {"oos": 0.96, "approve": 0.04},
+        0.50,
+        ConformalConfig(method="lac"),
+    )
+    self.assertTrue(default_oos_set.singleton)
+    self.assertFalse(default_oos_set.contains_abstain)
+    self.assertFalse(default_oos_set.should_escalate)
+
     abstain_set = conformal_prediction_set(
         {"insufficient_evidence": 0.96, "approve": 0.04},
         0.50,
-        ConformalConfig(method="lac"),
+        ConformalConfig(
+            method="lac",
+            abstain_labels=("insufficient_evidence",),
+        ),
     )
     self.assertTrue(abstain_set.singleton)
     self.assertTrue(abstain_set.contains_abstain)

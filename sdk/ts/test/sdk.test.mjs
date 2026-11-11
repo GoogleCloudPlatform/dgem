@@ -107,10 +107,19 @@ test("byte-for-byte HMAC-SHA256 parity with Go/Python and LAC/APS/RAPS sets", ()
   assert.equal(confidentSet.shouldEscalate, false);
   assert.deepEqual(confidentSet.predictionSet, ["approve"]);
 
+  const defaultOosSet = conformalPredictionSet(
+    { oos: 0.96, approve: 0.04 },
+    0.50,
+    { method: "lac" },
+  );
+  assert.equal(defaultOosSet.singleton, true);
+  assert.equal(defaultOosSet.containsAbstain, false);
+  assert.equal(defaultOosSet.shouldEscalate, false);
+
   const abstainSet = conformalPredictionSet(
     { insufficient_evidence: 0.96, approve: 0.04 },
     0.50,
-    { method: "lac" },
+    { method: "lac", abstainLabels: ["insufficient_evidence"] },
   );
   assert.equal(abstainSet.singleton, true);
   assert.equal(abstainSet.containsAbstain, true);
