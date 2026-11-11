@@ -143,7 +143,7 @@ The techniques below were tested to correct order bias inside the pass and are k
 * **In Plain English**: A foundation model pre-trained on millions of synthetic spreadsheets that predicts a missing target column by attending across labeled example rows (`in-context learning` for tables).
 * **Under the Hood**: `TabPFN` approximates Bayesian posterior inference $P(y_{\text{test}} \mid X_{\text{test}}, X_{\text{train}}, y_{\text{train}})$ in a single forward pass. However, it requires **labeled support rows ($N_{\text{support}} > 0$)** in its context window and operates on pre-extracted tabular columns—meaning pairing `GTR + TabPFN` still suffers from `GTR`'s pooling bottleneck and cannot compile zero-shot (`N=0`) natural-language `.json.tmpl` policies.
 
-### Fixed-Depth Circuits ($\mathsf{TC}^0$) vs. Test-Time Compute
+### Fixed-Depth Circuits (TC0) vs. Test-Time Compute
 * **In Plain English**: Why a single forward pass (`think=0`) can verify direct relational facts, whereas multi-step mental arithmetic (`2015 + 4 = 2019 > 2018`) requires generating scratchpad tokens (`think > 0`).
 * **Under the Hood**: A transformer with fixed layer depth $L$ and no scratchpad generation (`think=0`) is bounded by the circuit complexity class $\mathsf{TC}^0$. When a contradiction depends on an intermediate state not present in the input text (`anli-02`'s latent year `2019`), test-time compute (`--cascade-self-think 256` or Tier-2 reasoning) allocates working-memory tokens to materialize the intermediate state.
 

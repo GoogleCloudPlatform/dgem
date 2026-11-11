@@ -1,0 +1,37 @@
+name: Bug report
+description: Report a reproducible bug in the CLI, gateway, MCP server, Studio, templates, or serving image
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thank you for reporting an issue. Do not include real GCP project IDs, endpoint IDs, API keys, or private payloads.
+  - type: input
+    id: version
+    attributes:
+      label: dgem version and platform
+      description: Output of `dgem --version`, OS/architecture, and backend (`local`, `cloudrun`, or `vertex`).
+      placeholder: "dgem v0.4.2 (linux/amd64), Cloud Run RTX PRO 6000"
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Steps to reproduce
+      description: Minimal command, request payload, or `.json.tmpl` snippet that triggers the issue.
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior
+      description: What happened instead (including HTTP status codes, logs, or error messages)?
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+      description: What did you expect to happen?
+    validations:
+      required: true

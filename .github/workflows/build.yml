@@ -54,12 +54,12 @@ jobs:
         run: go vet ./...
 
       - name: Run unit tests
-        run: go test ./...
+        run: go test -race ./...
 
       - name: Vet & test Go examples
         run: |
           go -C examples vet ./...
-          go -C examples test ./...
+          go -C examples test -race ./...
 
       - name: Build dgem binary
         run: make build
@@ -95,6 +95,33 @@ jobs:
           cp deploy/cloudrun/server/structured_server.upstream.py /tmp/ss.py
           patch -s /tmp/ss.py deploy/cloudrun/server/dgem.patch
           cmp /tmp/ss.py deploy/cloudrun/server/structured_server.py
+
+      - name: Run label-set, link-checker and safety-gate unit tests
+        run: |
+          python -m unittest -v deploy/cloudrun/server/test_label_sets.py
+          python -m unittest -v scripts/test_docs_link_check.py
+          python -m unittest -v examples/agy-safety-gate/test_dgem_gate.py
+
+  build-studio:
+    name: Build Decision Studio (Lit + TypeScript)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 22
+          cache: 'npm'
+          cache-dependency-path: 'studio/package-lock.json'
+
+      - name: Type-check and build Decision Studio bundle
+        run: |
+          npm --prefix studio ci --no-audit --no-fund
+          npm --prefix studio run build
 
   build-docs:
     name: Build Starlight Docs Site
