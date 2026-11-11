@@ -43,6 +43,7 @@ python3 -m unittest -v deploy/cloudrun/server/test_server_key.py \
   deploy/cloudrun/server/test_media_fields.py \
   deploy/cloudrun/server/test_upstream_errors.py \
   deploy/cloudrun/server/test_predict_route.py \
+  deploy/cloudrun/server/test_ready_route.py \
   deploy/cloudrun/server/test_label_sets.py
 python3 -m unittest -v scripts/test_docs_link_check.py
 python3 -m unittest -v examples/agy-safety-gate/test_dgem_gate.py
