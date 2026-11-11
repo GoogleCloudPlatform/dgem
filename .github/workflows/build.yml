@@ -96,10 +96,11 @@ jobs:
           patch -s /tmp/ss.py deploy/cloudrun/server/dgem.patch
           cmp /tmp/ss.py deploy/cloudrun/server/structured_server.py
 
-      - name: Run label-set, link-checker and safety-gate unit tests
+      - name: Run label-set, link-checker, Terraform and safety-gate unit tests
         run: |
           python -m unittest -v deploy/cloudrun/server/test_label_sets.py
           python -m unittest -v scripts/test_docs_link_check.py
+          python -m unittest -v deploy/terraform/test_terraform_config.py
           python -m unittest -v examples/agy-safety-gate/test_dgem_gate.py
 
   build-studio:
