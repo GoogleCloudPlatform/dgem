@@ -1,0 +1,31 @@
+{
+  "examples": [
+    {
+      "name": "typical",
+      "unambiguous": true,
+      "variables": {
+        "product": "SKU-7720: Heritage 5.5-Quart Round Enameled Cast-Iron Dutch Oven ($249). Heavy-gauge cast iron core with chip-resistant porcelain enamel interior, oven-safe to 500F, ships in presentation gift box.",
+        "seed_token": "fixed",
+        "samples": 1
+      },
+      "expected_answers": {
+        "google_product_category": "cookware_dutch_ovens_cutlery",
+        "primary_material": "metal_alloy",
+        "price_tier": "premium_150_to_499",
+        "gift_eligible": "yes"
+      }
+    },
+    {
+      "name": "edge",
+      "variables": {
+        "product": "SKU-5519: Smart Heated Ceramic Travel Mug ($149). Built-in battery maintains 135F drinking temperature for 90 minutes, Bluetooth app preset support, charging coaster included.",
+        "seed_token": "fixed",
+        "samples": 1
+      }
+    },
+    {
+      "name": "minimal",
+      "variables": {}
+    }
+  ]
+}

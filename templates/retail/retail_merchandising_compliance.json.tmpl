@@ -1,0 +1,79 @@
+{
+  "schema": {
+    "seed_token": {{ default "fixed" .seed_token | toJson }},
+    "layout": "document_first",
+    "isolate": "auto",
+    "instructions": "Evaluate the retail product SKU listing across marketplace brand safety compliance, primary merchandising department, seasonal campaign targeting, and catalog completeness.",
+    "questions": [
+      {
+        "id": "brand_safety_compliant",
+        "type": "boolean",
+        "instructions": "Does this product listing comply with marketplace safety and policy rules (free of counterfeit claims, prohibited hazardous materials, unverified medical cures, and restricted weapons)?"
+      },
+      {
+        "id": "primary_department",
+        "type": "choice",
+        "instructions": "Which top-level retail merchandising department owns this product SKU?",
+        "options": [
+          {
+            "name": "apparel_footwear",
+            "description": "Clothing, shoes, fashion accessories, and athletic wear."
+          },
+          {
+            "name": "consumer_electronics",
+            "description": "Computers, audio gear, smart home devices, mobile phones, and gaming."
+          },
+          {
+            "name": "home_kitchen_garden",
+            "description": "Furniture, cookware, small appliances, patio gear, and home decor."
+          },
+          {
+            "name": "beauty_personal_care",
+            "description": "Skincare, cosmetics, haircare, fine fragrance, and personal grooming."
+          },
+          {
+            "name": "sports_outdoors",
+            "description": "Camping equipment, fitness weights, cycling, and outdoor recreation."
+          },
+          {
+            "name": "grocery_gourmet_pet",
+            "description": "Pantry staples, specialty beverages, artisanal foods, and pet supplies."
+          }
+        ]
+      },
+      {
+        "id": "target_season",
+        "type": "choice",
+        "instructions": "What is the primary seasonal merchandising campaign for this product SKU?",
+        "options": [
+          {
+            "name": "evergreen_year_round",
+            "description": "Core catalog staple sold consistently throughout the calendar year."
+          },
+          {
+            "name": "spring_summer",
+            "description": "Warm-weather apparel, sun care, patio dining, and summer travel gear."
+          },
+          {
+            "name": "fall_back_to_school",
+            "description": "Autumn layering apparel, dorm essentials, backpacks, and study supplies."
+          },
+          {
+            "name": "winter_holiday_gifting",
+            "description": "Cold-weather outerwear, festive decor, and Q4 holiday gift bundles."
+          }
+        ]
+      },
+      {
+        "id": "catalog_completeness_score",
+        "type": "score",
+        "instructions": "Rate catalog listing completeness from 1 (severely incomplete or missing dimensions and specs) to 5 (complete specification ready for featured placement).",
+        "levels": ["1", "2", "3", "4", "5"]
+      }
+    ],
+    "samples": {{ default 1 .samples | toJson }}
+  },
+  "state": {
+    "product": {{ default "SKU-6104: Insulated Merino Wool Holiday Gift Scarf Set ($89). 100% 19.5-micron Australian merino wool, 180cm x 30cm, dry clean or hand wash cold, ships in ribboned gift box." .product | toJson }}
+  }
+}

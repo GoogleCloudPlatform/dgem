@@ -1,0 +1,209 @@
+{
+  "schema": {
+    "seed_token": {{ default "fixed" .seed_token | toJson }},
+    "labels": "az_aa",
+    "layout": "document_first",
+    "isolate": "auto",
+    "instructions": "Classify the product SKU into the most specific retail taxonomy leaf category and extract primary material, price tier, and gift eligibility.",
+    "questions": [
+      {
+        "id": "google_product_category",
+        "type": "choice",
+        "instructions": "Select the single most accurate retail taxonomy leaf category for this SKU.",
+        "options": [
+          {
+            "name": "outerwear_coats_jackets",
+            "description": "Apparel & Accessories > Clothing > Outerwear: insulated parkas, rain shells, down jackets, tailored blazers."
+          },
+          {
+            "name": "activewear_athletic_apparel",
+            "description": "Apparel & Accessories > Clothing > Activewear: compression leggings, running shorts, moisture-wicking tops."
+          },
+          {
+            "name": "everyday_tops_dresses_knitwear",
+            "description": "Apparel & Accessories > Clothing > Tops & Dresses: merino sweaters, button-down shirts, casual dresses."
+          },
+          {
+            "name": "athletic_trail_running_footwear",
+            "description": "Apparel & Accessories > Shoes > Athletic Footwear: marathon road shoes, trail runners, cross-training sneakers."
+          },
+          {
+            "name": "boots_dress_casual_footwear",
+            "description": "Apparel & Accessories > Shoes > Dress & Casual Boots: Goodyear-welt leather boots, loafers, waterproof chelsea boots."
+          },
+          {
+            "name": "handbags_wallets_watches_eyewear",
+            "description": "Apparel & Accessories > Personal Accessories: polarized sunglasses, leather totes, RFID wallets, field watches."
+          },
+          {
+            "name": "laptops_ultrabooks_workstations",
+            "description": "Electronics > Computers > Laptops: notebook computers, 2-in-1 convertibles, mobile creator workstations."
+          },
+          {
+            "name": "monitors_keyboards_docks",
+            "description": "Electronics > Computers > Peripherals: 4K displays, ergonomic mechanical keyboards, Thunderbolt docks."
+          },
+          {
+            "name": "headphones_earbuds_speakers",
+            "description": "Electronics > Audio: active noise-canceling headphones, wireless earbuds, bookshelf speakers, soundbars."
+          },
+          {
+            "name": "smartphones_cases_chargers",
+            "description": "Electronics > Communications: unlocked 5G handsets, GaN USB-C chargers, rugged phone cases."
+          },
+          {
+            "name": "smart_home_security_lighting",
+            "description": "Electronics > Smart Home: Matter smart bulbs, PoE video doorbells, smart thermostats, leak sensors."
+          },
+          {
+            "name": "gaming_consoles_vr_controllers",
+            "description": "Electronics > Gaming: handheld gaming PCs, VR headsets, Hall-effect gamepads, racing wheels."
+          },
+          {
+            "name": "cameras_gimbals_action_video",
+            "description": "Electronics > Cameras & Optics: mirrorless camera bodies, 3-axis gimbals, waterproof action cameras."
+          },
+          {
+            "name": "espresso_countertop_appliances",
+            "description": "Home & Garden > Kitchen > Small Appliances: dual-boiler espresso machines, air fryers, high-speed blenders."
+          },
+          {
+            "name": "cookware_dutch_ovens_cutlery",
+            "description": "Home & Garden > Kitchen > Cookware & Knives: tri-ply stainless skillets, enameled cast-iron Dutch ovens, forged chef knives."
+          },
+          {
+            "name": "tableware_drinkware_barware",
+            "description": "Home & Garden > Kitchen > Tableware: stoneware dinner sets, vacuum-insulated tumblers, crystal glassware."
+          },
+          {
+            "name": "office_living_bedroom_furniture",
+            "description": "Home & Garden > Furniture: ergonomic mesh task chairs, standing desks, solid oak bed frames."
+          },
+          {
+            "name": "mattresses_duvets_bedding",
+            "description": "Home & Garden > Linens & Bedding: percale sheet sets, down comforters, cooling memory-foam pillows."
+          },
+          {
+            "name": "hepa_purifiers_vacuums_climate",
+            "description": "Home & Garden > Household Appliances: LiDAR robot vacuums, true-HEPA air purifiers, dehumidifiers."
+          },
+          {
+            "name": "lawn_patio_grills_outdoor",
+            "description": "Home & Garden > Patio & Outdoor Living: pellet smokers, modular patio sofas, cordless string trimmers."
+          },
+          {
+            "name": "facial_skincare_serums_spf",
+            "description": "Health & Beauty > Skincare: vitamin C serums, retinol treatments, mineral sunscreens, barrier moisturizers."
+          },
+          {
+            "name": "cosmetics_lip_mineral_makeup",
+            "description": "Health & Beauty > Cosmetics: liquid foundations, eyeshadow palettes, tinted lip oils."
+          },
+          {
+            "name": "haircare_dryers_styling_tools",
+            "description": "Health & Beauty > Hair Care: brushless ionic hair dryers, ceramic flat irons, bond-repair masks."
+          },
+          {
+            "name": "fragrance_bath_body_grooming",
+            "description": "Health & Beauty > Bath & Fragrance: eau de parfum, botanical body washes, double-edge safety razors."
+          },
+          {
+            "name": "massagers_recovery_devices",
+            "description": "Health & Beauty > Health Care & Recovery: percussion massage guns, red-light panels, TENS recovery units."
+          },
+          {
+            "name": "camping_tents_sleeping_packs",
+            "description": "Sporting Goods > Outdoor Recreation: ultralight 3-season tents, down sleeping bags, hydration packs."
+          },
+          {
+            "name": "fitness_dumbbells_rowing_yoga",
+            "description": "Sporting Goods > Exercise & Fitness: adjustable dumbbells, cast-iron kettlebells, folding rowers, natural rubber yoga mats."
+          },
+          {
+            "name": "cycling_paddle_winter_sports",
+            "description": "Sporting Goods > Cycling, Water & Snow: MIPS road helmets, inflatable SUP boards, alpine ski goggles."
+          },
+          {
+            "name": "specialty_coffee_matcha_tea",
+            "description": "Food & Beverages > Beverages: single-origin whole-bean espresso, ceremonial matcha, loose-leaf herbal teas."
+          },
+          {
+            "name": "artisanal_olive_oil_pantry",
+            "description": "Food & Beverages > Pantry Staples: cold-pressed extra virgin olive oil, raw manuka honey, single-estate dark chocolate."
+          },
+          {
+            "name": "pet_nutrition_food_supplements",
+            "description": "Animals & Pet Supplies > Pet Nutrition: freeze-dried raw kibble, salmon oil toppers, canine joint chews."
+          },
+          {
+            "name": "pet_beds_harnesses_feeders",
+            "description": "Animals & Pet Supplies > Pet Gear: orthopedic memory-foam dog beds, reflective no-pull harnesses, smart feeders."
+          }
+        ]
+      },
+      {
+        "id": "primary_material",
+        "type": "choice",
+        "instructions": "What is the primary physical material or formulation group of this product?",
+        "options": [
+          {
+            "name": "natural_textile",
+            "description": "Organic cotton, merino wool, linen, silk, full-grain leather, or goose down."
+          },
+          {
+            "name": "synthetic_polymer",
+            "description": "Recycled nylon, polyester, elastane, polycarbonate, food-grade silicone, or ABS."
+          },
+          {
+            "name": "metal_alloy",
+            "description": "Tri-ply stainless steel, anodized aluminum, enameled cast iron, titanium, or solid brass."
+          },
+          {
+            "name": "wood_bamboo_natural",
+            "description": "Kiln-dried hardwood, bamboo, rattan, cork, or natural tree rubber."
+          },
+          {
+            "name": "glass_ceramic_stone",
+            "description": "Borosilicate glass, vitrified porcelain, stoneware, marble, or sintered quartz."
+          },
+          {
+            "name": "composite_or_consumable",
+            "description": "Multi-material electronics assembly, topical cosmetic formulation, or food and pet consumable."
+          }
+        ]
+      },
+      {
+        "id": "price_tier",
+        "type": "choice",
+        "instructions": "Which retail merchandising price tier applies to this SKU?",
+        "options": [
+          {
+            "name": "value_under_35",
+            "description": "Entry-level everyday value priced below $35."
+          },
+          {
+            "name": "mid_market_35_to_149",
+            "description": "Mainstream core retail tier priced from $35 to $149."
+          },
+          {
+            "name": "premium_150_to_499",
+            "description": "High-performance enthusiast or specialty tier priced from $150 to $499."
+          },
+          {
+            "name": "luxury_500_plus",
+            "description": "Flagship luxury, designer, or commercial-grade tier priced at $500 and above."
+          }
+        ]
+      },
+      {
+        "id": "gift_eligible",
+        "type": "boolean",
+        "instructions": "Is this product suitable for gift-wrapping and inclusion in curated seasonal gift guides?"
+      }
+    ],
+    "samples": {{ default 1 .samples | toJson }}
+  },
+  "state": {
+    "product": {{ default "SKU-7720: Heritage 5.5-Quart Round Enameled Cast-Iron Dutch Oven ($249). Oven-safe to 500F, tight-fitting self-basting lid, induction compatible, gift-boxed." .product | toJson }}
+  }
+}

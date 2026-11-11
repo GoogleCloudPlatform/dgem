@@ -32,6 +32,7 @@ func writeTemplateTree(t *testing.T) (root, outside string) {
 		"calibration/grounding_claim_check.json.tmpl",
 		"multimodal/bbox_localization.json.tmpl",
 		"rai/prompt_safety_guardrail.json.tmpl",
+		"retail/retail_catalog_qa.json.tmpl",
 		"custom/nested/deep_policy.json.tmpl",
 	} {
 		p := filepath.Join(root, filepath.FromSlash(rel))
@@ -63,6 +64,8 @@ func TestResolveTemplateFileValidNames(t *testing.T) {
 		"bbox_single":                       "multimodal/bbox_localization",
 		"prompt_safety_guardrail":           "rai/prompt_safety_guardrail",
 		"rai/prompt_safety_guardrail":       "rai/prompt_safety_guardrail",
+		"retail_catalog_qa":                 "retail/retail_catalog_qa",
+		"retail/retail_catalog_qa":          "retail/retail_catalog_qa",
 		"deep_policy":                       "custom/nested/deep_policy",
 		"custom/nested/deep_policy":         "custom/nested/deep_policy",
 	}

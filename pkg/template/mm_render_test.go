@@ -32,3 +32,20 @@ func TestMultimodalTemplatesRender(t *testing.T) {
 		}
 	}
 }
+
+// TestRetailTemplatesRender verifies that shipped retail policies render and pass schema validation.
+func TestRetailTemplatesRender(t *testing.T) {
+	eng := NewEngine()
+	for _, name := range []string{"retail_catalog_qa", "retail_deep_taxonomy", "retail_merchandising_compliance"} {
+		t.Run(name, func(t *testing.T) {
+			tmplPath := "../../templates/retail/" + name + ".json.tmpl"
+			rendered, err := eng.RenderFile(tmplPath, map[string]any{})
+			if err != nil {
+				t.Fatalf("RenderFile(%q) unexpected error: %v", tmplPath, err)
+			}
+			if err := ValidateRenderedPayload(rendered, nil, false, nil); err != nil {
+				t.Fatalf("ValidateRenderedPayload(%q) unexpected error: %v", tmplPath, err)
+			}
+		})
+	}
+}

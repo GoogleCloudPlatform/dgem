@@ -1,0 +1,30 @@
+{
+  "examples": [
+    {
+      "name": "typical",
+      "unambiguous": true,
+      "variables": {
+        "product": "SKU-9082: Men's 100% Pure Mongolian Cashmere Crewneck Sweater ($68). Specifications: Material: 100% Acrylic knit; Care: Machine wash cold; Origin: Imported; Dimensions: Chest 42 in, Length 27 in.",
+        "seed_token": "fixed",
+        "samples": 1
+      },
+      "expected_answers": {
+        "auto_publish_approved": "no",
+        "title_spec_conflict": "yes",
+        "primary_defect_action": "fix_title_or_specs"
+      }
+    },
+    {
+      "name": "edge",
+      "variables": {
+        "product": "SKU-3110: Countertop Induction Hot Plate 1800W. Specs: Brushed stainless housing, 10 power levels, ceramic glass surface. Note: Voltage and plug type omitted from feed.",
+        "seed_token": "fixed",
+        "samples": 1
+      }
+    },
+    {
+      "name": "minimal",
+      "variables": {}
+    }
+  ]
+}
