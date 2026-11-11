@@ -29,7 +29,8 @@ question and overall:
 
 Usage:
   python3 scripts/policy_calibration.py results_receipt.jsonl [--question reason]
-    [--conformal {lac,aps,raps}] [--conformal-alpha 0.10] [--json]
+    [--conformal {lac,aps,raps}] [--conformal-alpha 0.10]
+    [--conformal-abstain-labels abstain,insufficient_evidence] [--json]
 """
 
 import argparse
@@ -46,18 +47,7 @@ CONFORMAL_FOLDS: int = 5
 CONFORMAL_TOLERANCE: float = 1e-12
 DEFAULT_RAPS_K_REG: int = 1
 DEFAULT_RAPS_LAMBDA_REG: float = 0.01
-DEFAULT_ABSTAIN_LABELS: frozenset[str] = frozenset({
-    "0",
-    "abstain",
-    "insufficient_evidence",
-    "none",
-    "none_of_the_above",
-    "none_visible",
-    "oos",
-    "out_of_scope",
-    "uncertain",
-    "unknown",
-})
+DEFAULT_ABSTAIN_LABELS: frozenset[str] = frozenset()
 
 
 class ReceiptSlotItem(TypedDict):
@@ -261,6 +251,7 @@ def evaluate_kfold_conformal(
     items: Sequence[ReceiptSlotItem],
     method: str,
     alpha: float,
+    abstain_labels: Sequence[str] | None = None,
 ) -> ConformalSummary | None:
   """Evaluates 5-fold out-of-sample split conformal prediction sets.
 
@@ -268,6 +259,8 @@ def evaluate_kfold_conformal(
     items: Loaded receipt slot items for one question or across all questions.
     method: Conformal score family (`"lac"`, `"aps"`, or `"raps"`).
     alpha: Target miscoverage rate strictly inside `(0, 1)`.
+    abstain_labels: Optional sequence of option labels treated as abstention
+      triggers when included in a prediction set (empty by default).
 
   Returns:
     Aggregated `ConformalSummary` when probability maps and labels are present,
@@ -316,6 +309,14 @@ def evaluate_kfold_conformal(
   escalated_count = 0
   total_set_size = 0
 
+  abstain_lookup = (
+      DEFAULT_ABSTAIN_LABELS
+      if abstain_labels is None
+      else frozenset(
+          label.strip().lower() for label in abstain_labels if label.strip()
+      )
+  )
+
   for entry_fold, _, score_map, gold_key in prepared_entries:
     threshold_q = fold_quantiles[entry_fold]
     prediction_set = [
@@ -330,7 +331,7 @@ def evaluate_kfold_conformal(
     total_set_size += set_size
     is_singleton = set_size == 1
     contains_abstain = any(
-        opt_name.strip().lower() in DEFAULT_ABSTAIN_LABELS
+        opt_name.strip().lower() in abstain_lookup
         for opt_name in prediction_set
     )
     if is_singleton:
@@ -411,6 +412,7 @@ def report(
     items: Sequence[ReceiptSlotItem],
     conformal_method: str | None = None,
     conformal_alpha: float = 0.10,
+    conformal_abstain_labels: Sequence[str] | None = None,
 ) -> dict[str, object] | None:
   """Builds accuracy, Brier, 10-bin ECE, gate, and optional conformal summaries.
 
@@ -420,6 +422,8 @@ def report(
       `"raps"`).
     conformal_alpha: Target miscoverage rate in `(0, 1)` when `conformal_method`
       is enabled.
+    conformal_abstain_labels: Optional sequence of option labels treated as
+      abstention triggers when included in a conformal prediction set.
 
   Returns:
     Summary dictionary for JSON or console rendering, or `None` if `items` is
@@ -492,6 +496,7 @@ def report(
         items,
         conformal_method,
         conformal_alpha,
+        abstain_labels=conformal_abstain_labels,
     )
   return summary_payload
 
@@ -583,11 +588,25 @@ def main(argv: Sequence[str] | None = None) -> None:
       default=0.10,
       help="target miscoverage rate alpha in (0, 1) for --conformal",
   )
+  parser.add_argument(
+      "--conformal-abstain-labels",
+      default="",
+      help=(
+          "comma-separated option labels treated as abstention triggers in "
+          "--conformal sets (empty by default)"
+      ),
+  )
   parser.add_argument("--json", action="store_true")
   parsed_args = parser.parse_args(argv)
 
   if parsed_args.conformal and not (0.0 < parsed_args.conformal_alpha < 1.0):
     sys.exit("--conformal-alpha must lie strictly between 0 and 1")
+
+  abstain_labels = tuple(
+      part.strip()
+      for part in parsed_args.conformal_abstain_labels.split(",")
+      if part.strip()
+  )
 
   loaded_items = load(parsed_args.receipt, parsed_args.question)
   if not loaded_items:
@@ -598,6 +617,7 @@ def main(argv: Sequence[str] | None = None) -> None:
       loaded_items,
       conformal_method=parsed_args.conformal,
       conformal_alpha=parsed_args.conformal_alpha,
+      conformal_abstain_labels=abstain_labels,
   )
   if overall_summary is not None:
     output_reports["overall"] = overall_summary
@@ -607,6 +627,7 @@ def main(argv: Sequence[str] | None = None) -> None:
         question_items,
         conformal_method=parsed_args.conformal,
         conformal_alpha=parsed_args.conformal_alpha,
+        conformal_abstain_labels=abstain_labels,
     )
     if question_summary is not None:
       output_reports[question_id] = question_summary

@@ -49,19 +49,6 @@ const (
 	DefaultConformalLambdaReg = 0.01
 )
 
-var defaultAbstainLabels = []string{
-	"0",
-	"abstain",
-	"insufficient_evidence",
-	"none",
-	"none_of_the_above",
-	"none_visible",
-	"oos",
-	"out_of_scope",
-	"uncertain",
-	"unknown",
-}
-
 var (
 	// ErrEmptyCalibration reports that an empty calibration slice was supplied.
 	ErrEmptyCalibration = errors.New("client: calibration set must be non-empty")
@@ -97,7 +84,7 @@ type ConformalConfig struct {
 	SeedKey string `json:"seed_key,omitempty"`
 	// ItemKey scopes stateless HMAC-SHA256 draws to a specific request/question identifier (for example "req-42:intent").
 	ItemKey string `json:"item_key,omitempty"`
-	// AbstainLabels lists option names treated as abstention triggers when included in the prediction set.
+	// AbstainLabels lists option names treated as abstention triggers when included in the prediction set (empty by default).
 	AbstainLabels []string `json:"abstain_labels,omitempty"`
 }
 
@@ -487,12 +474,8 @@ func ConformalPredictionSet(probs map[string]float64, qHat float64, cfg Conforma
 	}
 	scores := computeScoresForItem(ordered, method, kReg, lamReg, cfg, cfg.ItemKey)
 
-	abstainList := cfg.AbstainLabels
-	if abstainList == nil {
-		abstainList = defaultAbstainLabels
-	}
-	abstainSet := make(map[string]bool, len(abstainList))
-	for _, a := range abstainList {
+	abstainSet := make(map[string]bool, len(cfg.AbstainLabels))
+	for _, a := range cfg.AbstainLabels {
 		if trimmed := strings.ToLower(strings.TrimSpace(a)); trimmed != "" {
 			abstainSet[trimmed] = true
 		}

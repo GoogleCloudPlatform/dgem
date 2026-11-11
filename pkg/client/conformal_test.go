@@ -132,15 +132,21 @@ func TestConformalPreFusionSafetyAndAbstainTriggers(t *testing.T) {
 		t.Fatalf("postOnly = %+v err=%v, want SetSize=1 ShouldEscalate=false", postOnly, err)
 	}
 
-	for _, absKey := range []string{"0", "abstain", "insufficient_evidence", "none", "none_of_the_above", "none_visible", "oos", "out_of_scope", "uncertain", "unknown", " OOS "} {
-		absRes, absErr := ConformalPredictionSet(map[string]float64{absKey: 0.96, "valid_opt": 0.04}, 0.20, ConformalConfig{Method: ConformalLAC})
-		if absErr != nil || !absRes.ContainsAbstain || !absRes.ShouldEscalate {
-			t.Fatalf("abstain key %q got res=%+v err=%v, want ContainsAbstain=true ShouldEscalate=true", absKey, absRes, absErr)
+	for _, validClass := range []string{"0", "none", "oos", "out_of_scope"} {
+		defaultRes, defaultErr := ConformalPredictionSet(map[string]float64{validClass: 0.96, "valid_opt": 0.04}, 0.20, ConformalConfig{Method: ConformalLAC})
+		if defaultErr != nil || defaultRes.ContainsAbstain || defaultRes.ShouldEscalate || !defaultRes.Singleton {
+			t.Fatalf("default class %q got res=%+v err=%v, want Singleton=true ContainsAbstain=false ShouldEscalate=false", validClass, defaultRes, defaultErr)
 		}
 	}
-	optOutRes, optOutErr := ConformalPredictionSet(map[string]float64{"oos": 0.96, "valid_opt": 0.04}, 0.20, ConformalConfig{Method: ConformalLAC, AbstainLabels: []string{}})
-	if optOutErr != nil || optOutRes.ContainsAbstain || optOutRes.ShouldEscalate || !optOutRes.Singleton {
-		t.Fatalf("opt-out got res=%+v err=%v, want Singleton=true ShouldEscalate=false", optOutRes, optOutErr)
+	optInCfg := ConformalConfig{
+		Method:        ConformalLAC,
+		AbstainLabels: []string{"abstain", "insufficient_evidence", "oos"},
+	}
+	for _, absKey := range []string{"abstain", "insufficient_evidence", "oos", " OOS "} {
+		absRes, absErr := ConformalPredictionSet(map[string]float64{absKey: 0.96, "valid_opt": 0.04}, 0.20, optInCfg)
+		if absErr != nil || !absRes.ContainsAbstain || !absRes.ShouldEscalate {
+			t.Fatalf("opt-in abstain key %q got res=%+v err=%v, want ContainsAbstain=true ShouldEscalate=true", absKey, absRes, absErr)
+		}
 	}
 }
 

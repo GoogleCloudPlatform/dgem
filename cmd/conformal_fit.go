@@ -80,7 +80,7 @@ func caseConformalProbabilities(c CalibrationCaseResult) (map[string]float64, st
 	return probs, goldKey, true
 }
 
-func applyConformalCalibration(cases []CalibrationCaseResult, methodRaw string, alpha float64) ([]CalibrationCaseResult, *ConformalFitSummary, error) {
+func applyConformalCalibration(cases []CalibrationCaseResult, methodRaw string, alpha float64, abstainLabels ...string) ([]CalibrationCaseResult, *ConformalFitSummary, error) {
 	trimmed := strings.TrimSpace(methodRaw)
 	if trimmed == "" {
 		return cases, nil, nil
@@ -96,6 +96,7 @@ func applyConformalCalibration(cases []CalibrationCaseResult, methodRaw string, 
 	cfg := client.DefaultConformalConfig()
 	cfg.Method = method
 	cfg.Alpha = alpha
+	cfg.AbstainLabels = abstainLabels
 
 	type preparedItem struct {
 		idx     int

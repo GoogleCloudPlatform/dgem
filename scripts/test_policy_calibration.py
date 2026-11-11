@@ -108,6 +108,51 @@ class PolicyCalibrationTest(unittest.TestCase):
       self.assertEqual(conformal_stats["evaluated_n"], 120)
       self.assertGreaterEqual(conformal_stats["empirical_coverage"], 0.84)
 
+      oos_rows = [
+          json.dumps({
+              "id": f"clinc-{idx:02d}",
+              "slots": {
+                  "intent": {
+                      "predicted": "oos",
+                      "expected": "oos",
+                      "correct": True,
+                      "confidence": 0.97,
+                      "hesitation": 0.08,
+                      "probabilities": {"oos": 0.97, "balance": 0.03},
+                  }
+              },
+          })
+          for idx in range(20)
+      ]
+      oos_receipt = pathlib.Path(temp_dir) / "clinc_oos.jsonl"
+      oos_receipt.write_text("\n".join(oos_rows) + "\n", encoding="utf-8")
+
+      default_buffer = io.StringIO()
+      with mock.patch("sys.stdout", default_buffer):
+        policy_calibration.main([
+            str(oos_receipt),
+            "--conformal",
+            "lac",
+            "--json",
+        ])
+      default_oos = json.loads(default_buffer.getvalue())["intent"]["conformal"]
+      self.assertEqual(default_oos["singleton_share"], 1.0)
+      self.assertEqual(default_oos["escalated_share"], 0.0)
+
+      opt_in_buffer = io.StringIO()
+      with mock.patch("sys.stdout", opt_in_buffer):
+        policy_calibration.main([
+            str(oos_receipt),
+            "--conformal",
+            "lac",
+            "--conformal-abstain-labels",
+            "oos,abstain",
+            "--json",
+        ])
+      opt_in_oos = json.loads(opt_in_buffer.getvalue())["intent"]["conformal"]
+      self.assertEqual(opt_in_oos["singleton_share"], 1.0)
+      self.assertEqual(opt_in_oos["escalated_share"], 1.0)
+
 
 if __name__ == "__main__":
   unittest.main()

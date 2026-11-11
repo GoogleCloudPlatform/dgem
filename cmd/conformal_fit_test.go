@@ -94,4 +94,26 @@ func TestApplyConformalCalibrationFiveFoldCoverageAndTailCompletion(t *testing.T
 	if _, _, err := applyConformalCalibration(cases, "lac", 1.0); err == nil {
 		t.Fatal("applyConformalCalibration(alpha=1.0) error = nil, want non-nil")
 	}
+
+	var oosCases []CalibrationCaseResult
+	for i := 0; i < 20; i++ {
+		oosCases = append(oosCases, CalibrationCaseResult{
+			ID:               fmt.Sprintf("clinc-%02d", i),
+			Metric:           "calibration/clinc-oos-intent-select",
+			Expected:         "oos",
+			Actual:           "oos",
+			Accurate:         true,
+			VocabCardinality: 2,
+			Confidence:       0.97,
+			TopProbabilities: map[string]float64{"oos": 0.97, "balance": 0.03},
+		})
+	}
+	_, defaultSummary, err := applyConformalCalibration(oosCases, "lac", 0.10)
+	if err != nil || defaultSummary == nil || defaultSummary.EscalationRate != 0 {
+		t.Fatalf("default oos summary = %+v err=%v, want EscalationRate=0", defaultSummary, err)
+	}
+	_, optInSummary, err := applyConformalCalibration(oosCases, "lac", 0.10, "oos")
+	if err != nil || optInSummary == nil || optInSummary.EscalationRate != 1.0 {
+		t.Fatalf("opt-in oos summary = %+v err=%v, want EscalationRate=1.0", optInSummary, err)
+	}
 }

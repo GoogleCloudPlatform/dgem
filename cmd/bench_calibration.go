@@ -58,9 +58,10 @@ var (
 	calUSDPer1k         float64
 	calDualMirror       bool
 	calNullPriorDebias  bool
-	calPriorAlpha       float64
-	calConformalMethod  string
-	calConformalAlpha   float64
+	calPriorAlpha             float64
+	calConformalMethod        string
+	calConformalAlpha         float64
+	calConformalAbstainLabels []string
 )
 
 // Semantic color palette following A2A CLI guidelines
@@ -136,6 +137,7 @@ func init() {
 	benchCalibrationCmd.Flags().StringVar(&permutation.MirrorMode, "mirror-mode", "reversed", "Dual-mirror second slot: reversed | copy | reversed-digits | reversed-first")
 	benchCalibrationCmd.Flags().StringVar(&calConformalMethod, "conformal", "", "Compute 5-fold held-out split conformal prediction sets ('lac', 'aps', or 'raps')")
 	benchCalibrationCmd.Flags().Float64Var(&calConformalAlpha, "conformal-alpha", client.DefaultConformalAlpha, "Target miscoverage rate alpha in (0, 1) for --conformal prediction sets")
+	benchCalibrationCmd.Flags().StringSliceVar(&calConformalAbstainLabels, "conformal-abstain-labels", nil, "Comma-separated option labels treated as abstention triggers in --conformal sets (empty by default)")
 
 	RootCmd.AddCommand(benchCalibrationCmd)
 }
@@ -295,7 +297,7 @@ func runBenchCalibration(cmd *cobra.Command, args []string) error {
 		}
 		report.TemperatureFit = tfit
 		stampTemperatureMethod(report.JevParity, tfit)
-		confCases, confSummary, confErr := applyConformalCalibration(report.Cases, calConformalMethod, calConformalAlpha)
+		confCases, confSummary, confErr := applyConformalCalibration(report.Cases, calConformalMethod, calConformalAlpha, calConformalAbstainLabels...)
 		if confErr != nil {
 			return confErr
 		}
@@ -553,7 +555,7 @@ func runBenchCalibration(cmd *cobra.Command, args []string) error {
 	if permutation.DualMirrorLetterCollisionSeen() {
 		report.IDCWarning = permutation.DualMirrorLetterWarning
 	}
-	confCases, confSummary, confErr := applyConformalCalibration(report.Cases, calConformalMethod, calConformalAlpha)
+	confCases, confSummary, confErr := applyConformalCalibration(report.Cases, calConformalMethod, calConformalAlpha, calConformalAbstainLabels...)
 	if confErr != nil {
 		return confErr
 	}

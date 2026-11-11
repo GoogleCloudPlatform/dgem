@@ -119,6 +119,7 @@ Because conformal sets calibrate for marginal coverage $1 - \alpha$, their escal
 - **Narrow option sets ($K \le 4$) vs. wide option sets ($K \gg 26$)**: On live hosted G4 runs at $\alpha = 0.10$ (`50`-item calibration suite with $K \in [2, 26]$ and `500` CLINC150 utterances across `151` options), `lac` achieved `0.912` and `0.904` empirical coverage (`raps`: `0.915` and `0.904`). Whereas $H / \ln K \ge 0.16$ escalated `30%` of $K \le 4$ items and `25%` of 151-option items, `lac` escalated `16%` and `58%` (`2.4x` more on the 151-option suite, where many sets contain two or more members) while keeping fewer wrong Stage 1 answers (`3.2%` vs. `8.4%`).
 - **Choose the operating point that fits your budget**: Keep the normalized-entropy hesitation cut-off when you want a stable Stage 2 escalation budget across varying option counts; use split conformal sets when bounding missed Stage 1 answers matters more than capping escalation volume on wide taxonomies.
 - **Pre-prior exchangeability**: Conformal thresholds always evaluate on pre-fusion Stage 1 option probabilities (`RawProbabilities` when caller priors are supplied), preserving exchangeability on held-out traffic.
+- **Opt-in abstention labels**: By default, escalation fires strictly when `|C(x)| != 1`, so valid classes such as `oos` or `0` are not treated as abstentions; pass `--conformal-abstain-labels abstain,insufficient_evidence` when your policy includes explicit abstention options that should also escalate as singletons.
 
 ## 7. Re-check when things change
 
