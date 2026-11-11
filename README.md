@@ -119,7 +119,7 @@ Download a prebuilt static archive (`linux/{amd64,arm64}`, `darwin/{amd64,arm64}
 ```bash
 OS="$(uname -s | tr '[:upper:]' '[:lower:]')"
 ARCH="$(uname -m | sed 's/x86_64/amd64/;s/aarch64/arm64/')"
-TAG="v0.4.2"
+TAG="v0.4.3"
 curl -fsSLO "https://github.com/GoogleCloudPlatform/dgem/releases/download/${TAG}/dgem_${TAG}_${OS}_${ARCH}.tar.gz"
 curl -fsSLO "https://github.com/GoogleCloudPlatform/dgem/releases/download/${TAG}/SHA256SUMS"
 tar -xzf "dgem_${TAG}_${OS}_${ARCH}.tar.gz"

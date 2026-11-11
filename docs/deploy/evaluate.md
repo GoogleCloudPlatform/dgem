@@ -150,7 +150,7 @@ what you are really evaluating. The [Policies & Decisions](../policies/first-pol
 
 | If you want to… | Read |
 | :--- | :--- |
-| Check that your use case fits a decision model | [Real-world applications](../policies/applications.md), especially the [decision matrix](../policies/applications.md#7-architecture-decision-matrix): bounded answers fit; free-form text, conversation and code generation do not |
+| Check that your use case fits a decision model | [Real-world applications](../policies/applications.md), especially the [decision matrix](../policies/applications.md#9-architecture-decision-matrix): bounded answers fit; free-form text, conversation and code generation do not |
 | Start from an existing policy instead of a blank file | [Template catalog](../policies/templates.md): a [creator's guide](../policies/templates.md#0-gentle-template-intro--template-creators-guide), then ready-made policies for triage, routing and intent, vision, guardrails and reranking |
 | Write your first policy step by step | [Your first decision policy](../policies/first-policy.md): write it, run it, read hesitation, add samples and conditional questions |
 | Make it fast and reliable | [Authoring guide](../policies/authoring.md#2-designing-jsontmpl-policy-schemas--prefix-cache-optimization): prefix caching, single-pass policies, option design |

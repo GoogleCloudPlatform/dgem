@@ -148,7 +148,7 @@ what you are really evaluating. The [Policies & Decisions](/dgem/policies/first-
 
 | If you want to… | Read |
 | :--- | :--- |
-| Check that your use case fits a decision model | [Real-world applications](/dgem/policies/applications/), especially the [decision matrix](/dgem/policies/applications/#7-architecture-decision-matrix): bounded answers fit; free-form text, conversation and code generation do not |
+| Check that your use case fits a decision model | [Real-world applications](/dgem/policies/applications/), especially the [decision matrix](/dgem/policies/applications/#9-architecture-decision-matrix): bounded answers fit; free-form text, conversation and code generation do not |
 | Start from an existing policy instead of a blank file | [Template catalog](/dgem/policies/templates/): a [creator's guide](/dgem/policies/templates/#0-gentle-template-intro--template-creators-guide), then ready-made policies for triage, routing and intent, vision, guardrails and reranking |
 | Write your first policy step by step | [Your first decision policy](/dgem/policies/first-policy/): write it, run it, read hesitation, add samples and conditional questions |
 | Make it fast and reliable | [Authoring guide](/dgem/policies/authoring/#2-designing-jsontmpl-policy-schemas--prefix-cache-optimization): prefix caching, single-pass policies, option design |
