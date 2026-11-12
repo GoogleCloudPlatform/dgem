@@ -96,8 +96,9 @@ func main() {
 	if err != nil {
 		log.Fatalf("swarm lock arbiter: %v", err)
 	}
-	fmt.Printf("[2] Swarm Lock Arbiter (%dms): collision=%v winner=%s escalate=%v actions=%v\n\n",
-		lockMs, lockDec.WriteCollision, lockDec.WinningAgent, lockDec.EscalateToHuman, lockDec.AgentActions)
+	fmt.Printf("[2] Swarm Lock Arbiter (%dms): collision=%v winner=%s escalate=%v rollback=%s (ord_var=%.3f) escalated_slots=%v actions=%v\n\n",
+		lockMs, lockDec.WriteCollision, lockDec.WinningAgent, lockDec.EscalateToHuman,
+		lockDec.RollbackSeverity, lockDec.RollbackOrdinalVar, lockDec.EscalatedSlots, lockDec.AgentActions)
 
 	// 3. Sliding-Window Operational Checklist Verification.
 	chk, err := EvaluateChecklistWindow(ctx, g, modelName, templatesDir, "win-101",
@@ -105,6 +106,7 @@ func main() {
 	if err != nil {
 		log.Fatalf("live checklist verify: %v", err)
 	}
-	fmt.Printf("[3] Live Checklist (%dms): completed=%d contradicted=%d urgency=%s commitment=%v max_hesitation=%.1f%%\n",
-		chk.WallTimeMs, len(chk.CompletedItems), len(chk.ContradictedItems), chk.InterruptUrgency, chk.CommitmentRecorded, chk.MaxHesitation*100)
+	fmt.Printf("[3] Live Checklist (%dms): completed=%d contradicted=%d urgency=%s (ord_var=%.3f) commitment=%v max_hesitation=%.1f%% escalated_slots=%v\n",
+		chk.WallTimeMs, len(chk.CompletedItems), len(chk.ContradictedItems), chk.InterruptUrgency,
+		chk.UrgencyOrdinalVar, chk.CommitmentRecorded, chk.MaxHesitation*100, chk.EscalatedSlots)
 }

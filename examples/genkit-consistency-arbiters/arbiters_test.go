@@ -24,7 +24,9 @@ import (
 	"net/http/httptest"
 	"path/filepath"
 	"sort"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/GoogleCloudPlatform/dgem/examples/dgemgenkit"
 	"github.com/GoogleCloudPlatform/dgem/pkg/client"
@@ -105,15 +107,46 @@ func TestParsePackMultiplierAndConsistency(t *testing.T) {
 		want  int
 	}{
 		{"San Pellegrino Sparkling Water 6x330ml Cans", 6},
+		{"Mineral Sparkling Water 2 x 500ml", 2},
+		{"Isotonic Sports Drink 500ml x 4", 4},
+		{"6x Brand Product 330ml", 6},
+		{"12 x Sparkling Mineral Water 330ml", 12},
 		{"Coca-Cola Zero Sugar (Pack of 12, 355ml)", 12},
 		{"Monster Energy Ultra 24-Pack", 24},
+		{"Organic Oat Barista Milk 6-pack 1L", 6},
 		{"Clif Bar Crunchy Peanut Butter 10 ct Box", 10},
+		{"Sensitive Toothpaste 75ml Twin-Pack", 2},
+		{"Dishwasher Rinse Aid 250ml Triple Pack", 3},
+		{"Dark Roast Espresso 2 x 20 pods", 2},
+		{"Dark Roast Espresso 20 pods", 1},
+		{"Vitamin D3 60 capsules", 1},
 		{"Single 500ml Glass Bottle Olive Oil", 1},
+		{"Whole Bean Espresso 250g Bag", 1},
+		{"Still Spring Water 1.5L", 1},
+		{"27-Inch IPS Monitor 1920x1080 144Hz", 1},
+		{"Remote Control 4x4 Offroad Truck", 1},
 	}
 	for _, tc := range cases {
 		if got := ParsePackMultiplier(tc.title); got != tc.want {
 			t.Fatalf("ParsePackMultiplier(%q) = %d, want %d", tc.title, got, tc.want)
 		}
+	}
+
+	// Verify linear O(N) runtime on 50,000-character unclosed/repetitive inputs (no polynomial backtracking).
+	adversarialInputs := []string{
+		"6x" + strings.Repeat(" ", 50000) + "500",
+		"12" + strings.Repeat("-", 50000) + "unclosed",
+		"pack" + strings.Repeat(" ", 50000) + "of",
+		strings.Repeat("9", 50000) + "x330ml",
+	}
+	start := time.Now()
+	for _, input := range adversarialInputs {
+		if got := ParsePackMultiplier(input); got != 1 {
+			t.Fatalf("ParsePackMultiplier(len=%d) = %d, want 1", len(input), got)
+		}
+	}
+	if elapsed := time.Since(start); elapsed > 250*time.Millisecond {
+		t.Fatalf("50,000-char ParsePackMultiplier suite took %v, want <= 250ms", elapsed)
 	}
 
 	if ValidatePackQuantityConsistency(
@@ -132,6 +165,77 @@ func TestParsePackMultiplierAndConsistency(t *testing.T) {
 		"multipack_vs_single_mismatch",
 	) {
 		t.Fatalf("ValidatePackQuantityConsistency = false, want true on sibling_variant")
+	}
+}
+
+func TestNormalizedOrdinalVarianceAndSelectiveEscalation(t *testing.T) {
+	varCases := []struct {
+		name  string
+		probs []float64
+		want  float64
+	}{
+		{"empty_fails_closed_zero", nil, 0.0},
+		{"singleton_zero", []float64{1.0}, 0.0},
+		{"point_mass_5pt", []float64{0, 0, 1, 0, 0}, 0.0},
+		{"bimodal_polar_5pt_reaches_popoviciu_bound", []float64{0.5, 0, 0, 0, 0.5}, 1.0},
+		{"bimodal_polar_4pt_scale_invariant", []float64{0.5, 0, 0, 0.5}, 1.0},
+		{"benign_adjacent_5pt", []float64{0, 0.5, 0.5, 0, 0}, 0.0625},
+		{"uniform_5pt", []float64{0.2, 0.2, 0.2, 0.2, 0.2}, 0.5},
+		{"negative_entry_fails_closed_zero", []float64{0.6, -0.1, 0.5}, 0.0},
+		{"nan_entry_fails_closed_zero", []float64{0.5, math.NaN(), 0.5}, 0.0},
+		{"inf_entry_fails_closed_zero", []float64{0.5, math.Inf(1), 0.5}, 0.0},
+	}
+	for _, tc := range varCases {
+		got := NormalizedOrdinalVariance(tc.probs)
+		if math.Abs(got-tc.want) > 1e-12 {
+			t.Fatalf("%s: NormalizedOrdinalVariance(%v) = %.12f, want %.12f", tc.name, tc.probs, got, tc.want)
+		}
+	}
+
+	sidak := SidakSlotAlpha(0.10, 8)
+	if math.Abs(sidak-0.0130842) > 1e-5 {
+		t.Fatalf("SidakSlotAlpha(0.10, 8) = %.7f, want ~0.0130842", sidak)
+	}
+
+	// Invalid probability inputs fail closed to escalate=true.
+	if !ShouldEscalateOrdinalSlot(nil, 0.10, sidak) {
+		t.Fatalf("ShouldEscalateOrdinalSlot(nil) = false, want true")
+	}
+	if !ShouldEscalateOrdinalSlot([]float64{0.5, math.NaN(), 0.5}, 0.10, sidak) {
+		t.Fatalf("ShouldEscalateOrdinalSlot(NaN) = false, want true")
+	}
+
+	// Benign adjacent split [0, 0.5, 0.5, 0, 0] has H_norm = 0.4307 (>= 0.16) yet Popoviciu variance = 0.0625 <= 0.10:
+	// selective slot gating keeps it without escalating the bundle, whereas bimodal [0.5, 0, 0, 0, 0.5] escalates.
+	levels5 := []string{"l0", "l1", "l2", "l3", "l4"}
+	bundle := []BundleSlotGateInput{
+		{
+			SlotID:        "benign_adjacent_score",
+			OrderedLevels: levels5,
+			Probabilities: map[string]float64{"l0": 0.0, "l1": 0.5, "l2": 0.5, "l3": 0.0, "l4": 0.0},
+			Hesitation:    0.43,
+		},
+		{
+			SlotID:        "bimodal_polar_score",
+			OrderedLevels: levels5,
+			Probabilities: map[string]float64{"l0": 0.5, "l1": 0.0, "l2": 0.0, "l3": 0.0, "l4": 0.5},
+			Hesitation:    0.43,
+		},
+		{
+			SlotID:        "confident_nominal",
+			Probabilities: map[string]float64{"yes": 0.97, "no": 0.03},
+			Hesitation:    0.04,
+		},
+		{
+			SlotID:        "hesitant_nominal",
+			Probabilities: map[string]float64{"yes": 0.55, "no": 0.45},
+			Hesitation:    0.29,
+		},
+	}
+	escalated := SelectEscalatedBundleSlots(bundle, 0.16, 0.10, sidak)
+	wantEscalated := []string{"bimodal_polar_score", "hesitant_nominal"}
+	if fmt.Sprintf("%v", escalated) != fmt.Sprintf("%v", wantEscalated) {
+		t.Fatalf("SelectEscalatedBundleSlots = %v, want %v", escalated, wantEscalated)
 	}
 }
 
@@ -410,13 +514,16 @@ func TestGenkitPipelinesEndToEndWithTemplates(t *testing.T) {
 	if !lockDec.WriteCollision || lockDec.AgentActions["agent_1"] != "grant_lock" || lockDec.AgentActions["agent_2"] != "serialize_after_peer" {
 		t.Fatalf("lockDec = %+v, want WriteCollision=true agent_1=grant_lock agent_2=serialize_after_peer", lockDec)
 	}
+	if lockDec.RollbackSeverity != "clean_fast_forward" || lockDec.RollbackOrdinalVar >= 0.121 || fmt.Sprintf("%v", lockDec.EscalatedSlots) != "[file_write_collision]" {
+		t.Fatalf("lockDec ordinal gating = %+v, want RollbackSeverity=clean_fast_forward RollbackOrdinalVar<0.121 EscalatedSlots=[file_write_collision]", lockDec)
+	}
 
 	// 3. Live checklist window.
 	chk, err := EvaluateChecklistWindow(ctx, g, modelName, templatesDir, "win-01", "Operator verified badge and consent.")
 	if err != nil {
 		t.Fatalf("EvaluateChecklistWindow error: %v", err)
 	}
-	if !chk.CommitmentRecorded {
-		t.Fatalf("chk = %+v, want CommitmentRecorded=true", chk)
+	if !chk.CommitmentRecorded || chk.InterruptUrgency != "silent_no_alert" || chk.UrgencyOrdinalVar >= 0.121 || fmt.Sprintf("%v", chk.EscalatedSlots) != "[speaker_commitment_present]" || chk.SidakSlotAlpha <= 0 {
+		t.Fatalf("chk = %+v, want CommitmentRecorded=true InterruptUrgency=silent_no_alert UrgencyOrdinalVar<0.121 EscalatedSlots=[speaker_commitment_present]", chk)
 	}
 }
