@@ -97,6 +97,14 @@ Leaving the field empty uses the template's own `layout`, or else the server's d
 server used in `diagnostics.layout`; the Studio shows it next to the menu. Servers older than v0.2.0 ignore the field
 and always use `schema_first`.
 
+## Stabilize untrusted delimiters and slot seeds
+
+When your policy evaluates untrusted tool arguments, retrieved documents, or user prompts, how you seed the answer slot and fence the untrusted payload determines per-item score stability:
+
+- **Use `"seed_token": "fixed"` for deterministic single-pass gates.** By default, the `"seed_token"` field uses `"random"` so multi-sample requests (`samples: 4`) marginalize over distinct vocabulary corruption draws (`stderr` and `agreement`). On a single pass (`samples: 1`), a random draw can place a semantically loaded vocabulary token in the answer slot and shift borderline probabilities. Set `"seed_token": "fixed"` (or set the `DEFAULT_SEED_TOKEN=fixed` container variable) to initialize every answer slot with the `PAD` token (`0`). Use `"seed_token": "random"` with `samples: 4` (and optional `"combine": "poe"` log-odds aggregation) only when you need multi-draw error bars on stock weights.
+- **Avoid raw hexadecimal nonces inside XML delimiter tags.** Wrapping untrusted text in tags such as `<block_a9deadbeefcafe12>` introduces two sources of score variance across nonce draws: SentencePiece tokenizes random hexadecimal strings into variable token lengths (shifting rotary position offsets across `<user_text>`), and hexadecimal substrings occasionally spell real English or code tokens (`dead`, `cafe`, `exec`, `def`, `add`) that attract attention on prompt-injection boundaries.
+- **Prefer JSON-escaped fields or fixed-width numeric delimiters.** Passing untrusted inputs through `{{ .payload | toJson }}` inside a `document_first` template escapes embedded quotes and tags deterministically in the serializer without adding random tokens to the prompt. When an explicit anti-forgery nonce is required by policy, format the nonce as fixed-width hyphenated digit pairs (for example, `48-19-03-72-61-84-20-95`) so every draw produces a constant token count and zero alphabetic subwords.
+
 ## Yes/no questions in small requests are read alone
 
 Asked in one joint read, a yes/no question that follows another one can copy its answer, mostly in small requests and
