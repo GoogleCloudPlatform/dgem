@@ -279,12 +279,13 @@ func (sp *SamplePolicy) UnmarshalJSON(data []byte) error {
 	return nil
 }
 
-// QuestionDiagnostic holds raw token entropy and probability mass.
+// QuestionDiagnostic holds raw token entropy, pre-softmax option logprobs, and probability mass.
 type QuestionDiagnostic struct {
-	ArgmaxIsLabel bool    `json:"argmax_is_label"`
-	ArgmaxToken   string  `json:"argmax_token"`
-	Entropy       float64 `json:"entropy"`
-	LabelMass     float64 `json:"label_mass"`
+	ArgmaxIsLabel bool               `json:"argmax_is_label"`
+	ArgmaxToken   string             `json:"argmax_token"`
+	Entropy       float64            `json:"entropy"`
+	LabelMass     float64            `json:"label_mass"`
+	Logprobs      map[string]float64 `json:"logprobs,omitempty"`
 }
 
 func (qd *QuestionDiagnostic) UnmarshalJSON(data []byte) error {

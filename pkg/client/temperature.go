@@ -147,15 +147,148 @@ func ParseSchemaTemperature(schemaJSON string) (Temperature, error) {
 	return t, nil
 }
 
+// PriorBias maps each question ID to per-option additive log-odds offsets (Platt / vector prior-shift calibration):
+// z'_k = z_k / T + b_{q,k}. Fitting both temperature T and prior_bias on a held-out dataset corrects zero-shot
+// base-rate offsets where pure temperature scaling (which preserves argmax at p = 0.5) stalls.
+type PriorBias map[string]map[string]float64
+
+// IsSet reports whether any non-zero additive log-odds offset is configured.
+func (pb PriorBias) IsSet() bool {
+	for _, opts := range pb {
+		for _, v := range opts {
+			if v != 0 {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// Validate checks that every question ID is non-empty and every bias offset is finite in [-20, 20].
+func (pb PriorBias) Validate() error {
+	for qid, opts := range pb {
+		if strings.TrimSpace(qid) == "" {
+			return fmt.Errorf("prior_bias: empty question id")
+		}
+		for opt, v := range opts {
+			if strings.TrimSpace(opt) == "" {
+				return fmt.Errorf("prior_bias[%q]: empty option key", qid)
+			}
+			if math.IsNaN(v) || math.IsInf(v, 0) || v < -20 || v > 20 {
+				return fmt.Errorf("prior_bias[%q][%q] must be between -20 and 20 (got %v)", qid, opt, v)
+			}
+		}
+	}
+	return nil
+}
+
+// ForOption returns the additive log-odds bias for questionID and optionKey (normalizing boolean yes/true and no/false).
+func (pb PriorBias) ForOption(questionID, answerType, optionKey string) float64 {
+	opts, ok := pb[questionID]
+	if !ok || len(opts) == 0 {
+		return 0
+	}
+	if v, ok := opts[optionKey]; ok {
+		return v
+	}
+	if normalizeAnswerType(answerType) == "noul" {
+		switch strings.ToLower(strings.TrimSpace(optionKey)) {
+		case "yes", "true":
+			if v, ok := opts["yes"]; ok {
+				return v
+			}
+			if v, ok := opts["true"]; ok {
+				return v
+			}
+		case "no", "false":
+			if v, ok := opts["no"]; ok {
+				return v
+			}
+			if v, ok := opts["false"]; ok {
+				return v
+			}
+		}
+	}
+	return 0
+}
+
+// HasQuestion reports whether questionID has at least one non-zero bias entry matching keys.
+func (pb PriorBias) HasQuestion(questionID, answerType string, keys []string) bool {
+	for _, k := range keys {
+		if pb.ForOption(questionID, answerType, k) != 0 {
+			return true
+		}
+	}
+	return false
+}
+
+// ParseSchemaPriorBias reads a policy's "prior_bias" key from a rendered schema (absent or null: empty PriorBias).
+func ParseSchemaPriorBias(schemaJSON string) (PriorBias, error) {
+	var m map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(schemaJSON), &m); err != nil {
+		return nil, nil
+	}
+	raw, ok := m["prior_bias"]
+	if !ok {
+		return nil, nil
+	}
+	trimmed := strings.TrimSpace(string(raw))
+	if trimmed == "" || trimmed == "null" {
+		return nil, nil
+	}
+	var pb PriorBias
+	if err := json.Unmarshal(raw, &pb); err != nil {
+		return nil, fmt.Errorf("prior_bias must map question ids to {option: offset} numbers: %w", err)
+	}
+	if err := pb.Validate(); err != nil {
+		return nil, err
+	}
+	return pb, nil
+}
+
+func lookupDiagLogprob(diagLogprobs map[string]float64, answerType, optionKey string) (float64, bool) {
+	if len(diagLogprobs) == 0 {
+		return 0, false
+	}
+	if v, ok := diagLogprobs[optionKey]; ok {
+		return v, true
+	}
+	if normalizeAnswerType(answerType) == "noul" {
+		switch strings.ToLower(strings.TrimSpace(optionKey)) {
+		case "yes", "true":
+			if v, ok := diagLogprobs["yes"]; ok {
+				return v, true
+			}
+			if v, ok := diagLogprobs["true"]; ok {
+				return v, true
+			}
+		case "no", "false":
+			if v, ok := diagLogprobs["no"]; ok {
+				return v, true
+			}
+			if v, ok := diagLogprobs["false"]; ok {
+				return v, true
+			}
+		}
+	}
+	return 0, false
+}
+
 // ApplyTemperature rescales each answer's probabilities by p_k^(1/T) (renormalised) and recomputes confidence,
 // entropy, the yes probability (noul) and the expected score. The argmax answer does not change.
 func (r *StructuredDecisionResponse) ApplyTemperature(t Temperature) {
-	if r == nil || !t.IsSet() {
+	r.ApplyCalibration(t, nil)
+}
+
+// ApplyCalibration applies post-hoc temperature scaling (1/T) and optional per-question additive log-odds prior bias
+// (z'_k = z_k / T + b_{q,k}), reading lossless pre-softmax log-probabilities from Diagnostics.Questions[id].Logprobs
+// when present so answers saturated near 1.0 in float64 retain exact rank and calibration precision.
+func (r *StructuredDecisionResponse) ApplyCalibration(t Temperature, bias PriorBias) {
+	if r == nil || (!t.IsSet() && !bias.IsSet()) {
 		return
 	}
 	for id, a := range r.Answers {
-		T := t.For(a.Type)
-		if T == 1 || len(a.Probabilities) == 0 {
+		if len(a.Probabilities) == 0 {
 			continue
 		}
 		keys := make([]string, 0, len(a.Probabilities))
@@ -163,10 +296,36 @@ func (r *StructuredDecisionResponse) ApplyTemperature(t Temperature) {
 			keys = append(keys, k)
 		}
 		sort.Strings(keys)
+		T := t.For(a.Type)
+		hasBias := bias.HasQuestion(id, a.Type, keys)
+		if T == 1 && !hasBias {
+			continue
+		}
+		var diagLP map[string]float64
+		if qd, ok := r.Diagnostics.Questions[id]; ok {
+			diagLP = qd.Logprobs
+		}
+		useDiagLP := len(diagLP) > 0
+		baseLP := make([]float64, len(keys))
+		for i, k := range keys {
+			if useDiagLP {
+				if v, ok := lookupDiagLogprob(diagLP, a.Type, k); ok && !math.IsNaN(v) && !math.IsInf(v, 0) {
+					baseLP[i] = v
+					continue
+				}
+				useDiagLP = false
+				break
+			}
+		}
+		if !useDiagLP {
+			for i, k := range keys {
+				baseLP[i] = math.Log(math.Max(a.Probabilities[k], 1e-12))
+			}
+		}
 		lp := make([]float64, len(keys))
 		mx := math.Inf(-1)
 		for i, k := range keys {
-			lp[i] = math.Log(math.Max(a.Probabilities[k], 1e-12)) / T
+			lp[i] = baseLP[i]/T + bias.ForOption(id, a.Type, k)
 			mx = math.Max(mx, lp[i])
 		}
 		z := 0.0
@@ -175,7 +334,7 @@ func (r *StructuredDecisionResponse) ApplyTemperature(t Temperature) {
 			z += lp[i]
 		}
 		p := make(map[string]float64, len(keys))
-		ent, top := 0.0, -1.0
+		ent, top, topKey := 0.0, -1.0, ""
 		for i, k := range keys {
 			v := lp[i] / z
 			p[k] = v
@@ -184,11 +343,31 @@ func (r *StructuredDecisionResponse) ApplyTemperature(t Temperature) {
 			}
 			if v > top {
 				top = v
+				topKey = k
 			}
 		}
 		a.Probabilities = p
 		a.Entropy = ent
-		if lbl := firstNonEmpty(a.Label, a.Choice, a.Level); lbl != "" {
+		normType := normalizeAnswerType(a.Type)
+		if hasBias && topKey != "" {
+			switch normType {
+			case "noul":
+				switch strings.ToLower(topKey) {
+				case "yes", "true":
+					a.Label = "yes"
+				case "no", "false":
+					a.Label = "no"
+				default:
+					a.Label = topKey
+				}
+			case "choice":
+				a.Choice = topKey
+			case "score":
+				a.Level = topKey
+				a.Label = topKey
+			}
+			a.Confidence = top
+		} else if lbl := firstNonEmpty(a.Label, a.Choice, a.Level); lbl != "" {
 			if v, ok := p[lbl]; ok {
 				a.Confidence = v
 			} else {
@@ -197,7 +376,7 @@ func (r *StructuredDecisionResponse) ApplyTemperature(t Temperature) {
 		} else {
 			a.Confidence = top
 		}
-		switch normalizeAnswerType(a.Type) {
+		switch normType {
 		case "noul":
 			for _, k := range []string{"yes", "true"} {
 				if v, ok := p[k]; ok {
