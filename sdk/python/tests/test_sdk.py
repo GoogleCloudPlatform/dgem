@@ -20,6 +20,7 @@ import math
 import os
 import sys
 import threading
+import time
 import unittest
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
@@ -153,6 +154,17 @@ class DGemPythonSDKTest(unittest.TestCase):
     for bad_url in ("ftp://example.com", "file:///etc/passwd", "http://bad\r\nhost"):
       with self.assertRaises(DGemValidationError):
         DGemClient(bad_url)
+
+    start_seconds = time.perf_counter()
+    trailing_padded_client = DGemClient(
+        "http://127.0.0.1:8090" + ("/" * 50_000)
+    )
+    unclosed_slash_url = "http://127.0.0.1:8090" + ("/" * 50_000) + "v1"
+    unclosed_padded_client = DGemClient(unclosed_slash_url)
+    elapsed_seconds = time.perf_counter() - start_seconds
+    self.assertEqual(trailing_padded_client.base_url, "http://127.0.0.1:8090")
+    self.assertEqual(unclosed_padded_client.base_url, unclosed_slash_url)
+    self.assertLess(elapsed_seconds, 0.25)
 
   def test_live_http_redirect_strips_credentials_even_on_bounce_back(self) -> None:
     captured_requests: list[tuple[str, dict[str, str]]] = []

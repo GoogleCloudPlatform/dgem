@@ -40,10 +40,16 @@ import {
 } from "../dist/index.js";
 
 test("temperature scaling, hesitation bands, and cosine-prior fusion", () => {
+  const startMs = performance.now();
   const paddedClient = new DGemClient({
-    baseUrl: `http://127.0.0.1:8090${"/".repeat(2048)}`,
+    baseUrl: `http://127.0.0.1:8090${"/".repeat(50_000)}`,
   });
+  const unclosedSlashUrl = `http://127.0.0.1:8090${"/".repeat(50_000)}v1`;
+  const unclosedPaddedClient = new DGemClient({ baseUrl: unclosedSlashUrl });
+  const elapsedMs = performance.now() - startMs;
   assert.equal(paddedClient.baseUrl, "http://127.0.0.1:8090");
+  assert.equal(unclosedPaddedClient.baseUrl, unclosedSlashUrl);
+  assert.ok(elapsedMs < 250, `expected O(N) URL scan < 250ms, got ${elapsedMs}ms`);
 
   const sharpProbs = { billing: 0.98, sre: 0.015, account: 0.005 };
   assert.ok(normalizedEntropy(sharpProbs) < 0.15);
