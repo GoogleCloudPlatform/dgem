@@ -33,6 +33,8 @@ import type {
   QuestionAnswer,
   TaxonomyExpansionSuggestion,
   MCPToolSpec,
+  LocateMarkInput,
+  GuidedLocateResponse,
 } from './types.js';
 
 const PRESETS: PresetSample[] = [
@@ -151,10 +153,12 @@ const MCP_TOOLS: MCPToolSpec[] = [
     name: 'locate_object',
     badge: 'Guided locate',
     description:
-      'dgem answers presence and 3x3 location (~0.2 s), then Gemini 3.x (LOW thinking) returns the box. Opt-in: skip_h (skip Gemini when dgem is confidently absent) and hint. Optional SAM mask when DGEM_SAM_URL is set.',
+      'dgem answers presence and 3x3 location (~0.2 s); optional Set-of-Marks UI candidates (marks) resolve directly when H_norm < som_max_h, else Gemini 3.x (LOW thinking) returns the box.',
     defaultArgs: {
       target: 'the red emergency stop button',
       image_url: '',
+      marks: [],
+      som_max_h: 0.16,
       mask: false,
       skip_h: 0,
       hint: false,
@@ -222,8 +226,10 @@ export class DgemStudio extends LitElement {
   @state() private imageName = '';
   @state() private bboxMode: 'expectation' | 'argmax' | 'both' = 'both';
   /** Result of POST /api/locate (guided locate) for the current image. */
-  @state() private guidedLocate: any = null;
+  @state() private guidedLocate: GuidedLocateResponse | null = null;
   @state() private guidedLocating = false;
+  @state() private showSomEditor = false;
+  @state() private somMarksJson = '';
 
   @state() private loading = false;
   @state() private warmingUp = false;
@@ -1532,12 +1538,15 @@ export class DgemStudio extends LitElement {
         return;
       }
       if (this.selectedMcpTool === 'locate_object') {
+        const marks = Array.isArray(parsedArgs.marks) ? (parsedArgs.marks as LocateMarkInput[]) : undefined;
         const resp = await fetch('/api/locate', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json', 'X-DGem-Surface': 'web_studio_mcp' },
           body: JSON.stringify({
             target: String(parsedArgs.target || 'main object'),
             image: String(parsedArgs.image_url || this.imageDataUrl || ''),
+            marks,
+            som_max_h: Number(parsedArgs.som_max_h || 0),
             mask: Boolean(parsedArgs.mask),
             skip_h: Number(parsedArgs.skip_h || 0),
             hint: Boolean(parsedArgs.hint),
@@ -1645,11 +1654,35 @@ export class DgemStudio extends LitElement {
     return v <= 100 ? v * 10 : v;
   }
 
-  private async runGuidedLocate() {
+  private parseSomMarksInput(): LocateMarkInput[] {
+    const trimmed = this.somMarksJson.trim();
+    if (!trimmed) return [];
+    const parsed: unknown = JSON.parse(trimmed);
+    if (!Array.isArray(parsed)) {
+      throw new Error('Set-of-Marks JSON must be an array of {id, label, box:[ymin,xmin,ymax,xmax]}');
+    }
+    return parsed as LocateMarkInput[];
+  }
+
+  private loadSampleSomMarks(): void {
+    this.showSomEditor = true;
+    this.somMarksJson = JSON.stringify(
+      [
+        { id: 'M1', label: 'Primary navigation', box: [4, 4, 12, 28] },
+        { id: 'M2', label: 'Search bar', box: [4, 32, 12, 78] },
+        { id: 'M3', label: 'Primary checkout CTA', box: [78, 55, 90, 94] },
+      ],
+      null,
+      2
+    );
+  }
+
+  private async runGuidedLocate(): Promise<void> {
     if (!this.imageDataUrl) return;
     this.guidedLocating = true;
     try {
-      const target = String(this.variableValues['target'] || 'the main object');
+      const target = String(this.variableValues['target'] || this.variableValues['goal'] || 'the main object');
+      const marks = this.parseSomMarksInput();
       const resp = await fetch('/api/locate', {
         method: 'POST',
         headers: {
@@ -1657,9 +1690,13 @@ export class DgemStudio extends LitElement {
           'X-DGem-Surface': 'web_studio',
           'X-DGem-Backend': this.backendTarget,
         },
-        body: JSON.stringify({ image: this.imageDataUrl, target }),
+        body: JSON.stringify({
+          image: this.imageDataUrl,
+          target,
+          ...(marks.length > 0 ? { marks } : {}),
+        }),
       });
-      this.guidedLocate = await resp.json();
+      this.guidedLocate = (await resp.json()) as GuidedLocateResponse;
     } catch (e) {
       this.guidedLocate = { error: String(e) };
     } finally {
@@ -1669,11 +1706,29 @@ export class DgemStudio extends LitElement {
 
   private renderGuidedBox() {
     const b = this.guidedLocate?.box_1000;
-    if (!b) return null;
+    let candidateMarks: LocateMarkInput[] = [];
+    try {
+      candidateMarks = this.parseSomMarksInput();
+    } catch {
+      candidateMarks = [];
+    }
+    if (!b && candidateMarks.length === 0) return null;
     return svg`
       <svg class="bbox-overlay" viewBox="0 0 1000 1000" preserveAspectRatio="none">
-        <rect x="${b.xmin}" y="${b.ymin}" width="${Math.max(10, b.xmax - b.xmin)}" height="${Math.max(10, b.ymax - b.ymin)}"
-          fill="rgba(16, 185, 129, 0.12)" stroke="#10b981" stroke-width="7" />
+        ${candidateMarks.map((m) => {
+          if (!Array.isArray(m.box) || m.box.length !== 4) return null;
+          const [ymin, xmin, ymax, xmax] = m.box.map((v) => Number(v) * 10);
+          return svg`
+            <rect x="${xmin}" y="${ymin}" width="${Math.max(8, xmax - xmin)}" height="${Math.max(8, ymax - ymin)}"
+              fill="none" stroke="rgba(99, 102, 241, 0.75)" stroke-dasharray="14 8" stroke-width="4" />
+          `;
+        })}
+        ${b
+          ? svg`
+              <rect x="${b.xmin}" y="${b.ymin}" width="${Math.max(10, b.xmax - b.xmin)}" height="${Math.max(10, b.ymax - b.ymin)}"
+                fill="rgba(16, 185, 129, 0.12)" stroke="#10b981" stroke-width="7" />
+            `
+          : null}
       </svg>
     `;
   }
@@ -1685,9 +1740,11 @@ export class DgemStudio extends LitElement {
     const path =
       g.path === 'skipped_absent'
         ? 'absent (dgem confident, Gemini skipped)'
-        : g.path === 'gemini_absent'
-          ? `absent (Gemini ${g.gemini?.model} found nothing)`
-          : `box from Gemini ${g.gemini?.model} @ ${g.gemini?.thinking}${g.gemini?.hint ? ' with dgem hint' : ''}`;
+        : g.path === 'som_mark'
+          ? `Set-of-Marks ${g.som?.selected_mark || ''} (H=${(g.som?.mark_h_norm ?? 0).toFixed(2)}, state=${g.som?.element_state || 'ready'}, Gemini skipped)`
+          : g.path === 'gemini_absent'
+            ? `absent (Gemini ${g.gemini?.model} found nothing)`
+            : `box from Gemini ${g.gemini?.model} @ ${g.gemini?.thinking}${g.gemini?.hint ? ' with dgem hint' : ''}${g.som?.matched_mark ? ` (matched ${g.som.matched_mark})` : ''}`;
     return html`<div style="font-size:0.74rem;color:var(--text-muted);margin-bottom:0.6rem">
       Guided locate (solid green): ${path} · dgem ${Math.round(g.dgem?.ms || 0)} ms
       (present=${g.dgem?.present}, cell=${g.dgem?.grid_cell})${g.gemini ? html` · Gemini ${Math.round(g.gemini.ms)} ms` : null}
@@ -2356,11 +2413,18 @@ export class DgemStudio extends LitElement {
                       <button
                         class="btn btn--sm"
                         ?disabled=${this.guidedLocating}
-                        title="dgem pass, then a Gemini 3.x box at LOW thinking"
+                        title="dgem pass (plus optional Set-of-Marks fast-return), then Gemini 3.x box at LOW thinking when needed"
                         @click=${() => this.runGuidedLocate()}
                       >
                         <span class="material-symbols-outlined">center_focus_strong</span>
                         ${this.guidedLocating ? 'Locating…' : 'Precise box (guided)'}
+                      </button>
+                      <button
+                        class="btn btn--sm"
+                        title="Toggle optional Set-of-Marks (SoM) UI/DOM candidate boxes for single-pass guided locate"
+                        @click=${() => (this.showSomEditor = !this.showSomEditor)}
+                      >
+                        ${this.showSomEditor ? 'Hide SoM marks' : 'Set-of-Marks (optional)'}
                       </button>
                       <div class="segmented">
                         ${(['both', 'expectation', 'argmax'] as const).map(
@@ -2376,6 +2440,32 @@ export class DgemStudio extends LitElement {
                         )}
                       </div>
                     </div>
+                    ${this.showSomEditor
+                      ? html`
+                          <div style="margin-bottom:0.9rem">
+                            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:0.35rem">
+                              <span style="font-size:0.74rem;color:var(--text-muted)">
+                                Optional Set-of-Marks JSON (<code>[{"id":"M1","label":"CTA","box":[ymin,xmin,ymax,xmax]}]</code> in [0,100]%)
+                              </span>
+                              <div style="display:flex;gap:0.4rem">
+                                <button class="btn btn--sm" @click=${() => this.loadSampleSomMarks()}>Load sample marks</button>
+                                ${this.somMarksJson
+                                  ? html`<button class="btn btn--sm" @click=${() => (this.somMarksJson = '')}>Clear marks</button>`
+                                  : null}
+                              </div>
+                            </div>
+                            <textarea
+                              rows="4"
+                              style="width:100%;font-family:var(--font-mono, monospace);font-size:0.75rem;padding:0.5rem;border-radius:6px;border:1px solid var(--border, #cbd5e1);background:var(--surface, transparent);color:inherit"
+                              placeholder='[{"id":"M1","label":"Checkout button","box":[80,60,92,95]}]'
+                              .value=${this.somMarksJson}
+                              @input=${(ev: Event) => {
+                                this.somMarksJson = (ev.target as HTMLTextAreaElement).value;
+                              }}
+                            ></textarea>
+                          </div>
+                        `
+                      : null}
                   `
                 : null}
             </div>

@@ -32,6 +32,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"math"
@@ -41,6 +42,7 @@ import (
 	"time"
 
 	"github.com/GoogleCloudPlatform/dgem/pkg/client"
+	"github.com/GoogleCloudPlatform/dgem/pkg/decisionindex"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
 	"google.golang.org/genai"
@@ -52,26 +54,38 @@ const (
 	defaultLocateThinking  = "low"
 )
 
+var errInvalidLocateInput = errors.New("invalid locate input")
+
+// LocateMarkInput describes an interactive UI element or accessibility node in [0, 100] percent coordinates.
+type LocateMarkInput struct {
+	ID    string    `json:"id" jsonschema:"Unique Set-of-Marks identifier (e.g. 'M1')."`
+	Label string    `json:"label,omitempty" jsonschema:"Short UI element or accessibility label (e.g. 'Checkout button')."`
+	Box   []float64 `json:"box" jsonschema:"Bounding box [ymin, xmin, ymax, xmax] in [0, 100] percent coordinates."`
+}
+
 // LocateRequest is the input shared by every surface.
 type LocateRequest struct {
-	Image       string  `json:"image" jsonschema:"Image URL or base64 data URI (the CLI and stdio MCP also accept a local path)."`
-	Target      string  `json:"target" jsonschema:"Description of the object or element to locate (e.g. 'the checkout button', 'the table')."`
-	Mask        bool    `json:"mask,omitempty" jsonschema:"Also return a mask from the SAM service at DGEM_SAM_URL (prompted with the box)."`
-	GeminiModel string  `json:"gemini_model,omitempty" jsonschema:"Gemini 3.x model for the box (default gemini-3.8-flash; gemini-3.5-flash-lite also supported)."`
-	Thinking    string  `json:"thinking,omitempty" jsonschema:"Gemini thinking level: low (default), medium, high or default."`
-	SkipH       float64 `json:"skip_h,omitempty" jsonschema:"Opt-in: skip Gemini when dgem says absent with normalized entropy below this (0.16 recommended; 0 = never skip). Measured safe on photos and mobile UI, not on defect images."`
-	Hint        bool    `json:"hint,omitempty" jsonschema:"Opt-in: pass dgem's 3x3 cell to Gemini as a 'may be wrong' hint (neutral on average)."`
-	Backend     string  `json:"backend,omitempty" jsonschema:"dgem backend: vertex_first (default), vertex or cloudrun."`
-	VertexURL   string  `json:"vertex_url,omitempty" jsonschema:"Optional Vertex AI endpoint ID or /invoke/* URL override."`
+	Image       string            `json:"image" jsonschema:"Image URL or base64 data URI (the CLI and stdio MCP also accept a local path)."`
+	Target      string            `json:"target" jsonschema:"Description of the object or element to locate (e.g. 'the checkout button', 'the table')."`
+	Marks       []LocateMarkInput `json:"marks,omitempty" jsonschema:"Optional Set-of-Marks UI/accessibility candidates (1..25 items with id, label, and [ymin, xmin, ymax, xmax] percent box). When dgem selects a mark below som_max_h, returns its box without calling Gemini."`
+	SomMaxH     float64           `json:"som_max_h,omitempty" jsonschema:"Max normalized entropy on Set-of-Marks selection to return the mark box without calling Gemini (0 uses default 0.16; negative always escalates to Gemini)."`
+	Mask        bool              `json:"mask,omitempty" jsonschema:"Also return a mask from the SAM service at DGEM_SAM_URL (prompted with the box)."`
+	GeminiModel string            `json:"gemini_model,omitempty" jsonschema:"Gemini 3.x model for the box (default gemini-3.8-flash; gemini-3.5-flash-lite also supported)."`
+	Thinking    string            `json:"thinking,omitempty" jsonschema:"Gemini thinking level: low (default), medium, high or default."`
+	SkipH       float64           `json:"skip_h,omitempty" jsonschema:"Opt-in: skip Gemini when dgem says absent with normalized entropy below this (0.16 recommended; 0 = never skip). Measured safe on photos and mobile UI, not on defect images."`
+	Hint        bool              `json:"hint,omitempty" jsonschema:"Opt-in: pass dgem's 3x3 cell to Gemini as a 'may be wrong' hint (neutral on average)."`
+	Backend     string            `json:"backend,omitempty" jsonschema:"dgem backend: vertex_first (default), vertex or cloudrun."`
+	VertexURL   string            `json:"vertex_url,omitempty" jsonschema:"Optional Vertex AI endpoint ID or /invoke/* URL override."`
 }
 
 // LocateResult reports which path ran and the time spent in each stage.
 type LocateResult struct {
 	Target        string        `json:"target"`
 	Present       bool          `json:"present"`
-	Path          string        `json:"path"` // skipped_absent | gemini | gemini_absent
+	Path          string        `json:"path"` // skipped_absent | som_mark | gemini | gemini_absent
 	Box           *BBoxCoords   `json:"box_1000,omitempty"`
 	BoxPct        *[4]float64   `json:"box_pct,omitempty"` // [ymin, xmin, ymax, xmax] percent
+	SoM           *LocateSoM    `json:"som,omitempty"`
 	Mask          *LocateMask   `json:"mask,omitempty"`
 	MaskNote      string        `json:"mask_note,omitempty"`
 	Dgem          LocateDgem    `json:"dgem"`
@@ -79,6 +93,18 @@ type LocateResult struct {
 	SamMs         float64       `json:"sam_ms,omitempty"`
 	TotalMs       float64       `json:"total_ms"`
 	BackendTarget string        `json:"backend_target,omitempty"`
+}
+
+// LocateSoM summarizes Set-of-Marks evaluation and candidate snapping when marks are supplied.
+type LocateSoM struct {
+	SelectedMark       string      `json:"selected_mark,omitempty"`
+	MarkH              float64     `json:"mark_h_norm"`
+	ElementState       string      `json:"element_state,omitempty"`
+	MatchedMark        string      `json:"matched_mark,omitempty"`
+	MatchedDistancePct float64     `json:"matched_distance_pct,omitempty"`
+	CandidateCount     int         `json:"candidate_count"`
+	FilteredCount      int         `json:"filtered_count"`
+	ExpectedCenterPct  *[2]float64 `json:"expected_center_pct,omitempty"`
 }
 
 type LocateDgem struct {
@@ -113,24 +139,130 @@ var locateGeminiFunc = geminiLocateBox
 // locateSAMFunc calls the SAM service. A package variable so tests can stub it.
 var locateSAMFunc = samLocateMask
 
-func locateSchema() string {
+func gridCellOptions() []map[string]string {
 	cells := []string{"top_left", "top_center", "top_right", "middle_left", "middle_center", "middle_right",
 		"bottom_left", "bottom_center", "bottom_right"}
 	opts := make([]map[string]string, len(cells))
 	for i, c := range cells {
 		opts[i] = map[string]string{"name": c, "description": strings.ReplaceAll(c, "_", " ") + " of a 3x3 grid"}
 	}
+	return opts
+}
+
+func locateSchema() string {
 	s := map[string]interface{}{
 		"instructions": "Look at the attached image and answer every question about the target described in the state.",
 		"questions": []interface{}{
 			map[string]interface{}{"id": "present", "type": "boolean", "instructions": "Is the described target visible in the image?"},
 			map[string]interface{}{"id": "grid_cell", "type": "choice",
-				"instructions": "Divide the image into a 3x3 grid. Which cell contains the centre of the target?", "options": opts},
+				"instructions": "Divide the image into a 3x3 grid. Which cell contains the centre of the target?", "options": gridCellOptions()},
 		},
 		"samples": 1,
 	}
 	b, _ := json.Marshal(s)
 	return string(b)
+}
+
+func parseLocateMarks(inputs []LocateMarkInput) ([]decisionindex.CandidateMark, map[string]decisionindex.CandidateMark, error) {
+	if len(inputs) == 0 {
+		return nil, nil, nil
+	}
+	marks := make([]decisionindex.CandidateMark, 0, len(inputs))
+	byID := make(map[string]decisionindex.CandidateMark, len(inputs))
+	for i, in := range inputs {
+		id := strings.TrimSpace(in.ID)
+		if id == "" {
+			return nil, nil, fmt.Errorf("%w: marks[%d].id is required", errInvalidLocateInput, i)
+		}
+		if len(in.Box) != 4 {
+			return nil, nil, fmt.Errorf("%w: marks[%d] (%q) box must have 4 coordinates [ymin, xmin, ymax, xmax]", errInvalidLocateInput, i, id)
+		}
+		var box [4]float64
+		for j, v := range in.Box {
+			if math.IsNaN(v) || math.IsInf(v, 0) || v < 0 || v > 100 {
+				return nil, nil, fmt.Errorf("%w: marks[%d] (%q) box[%d]=%v must be within [0, 100]", errInvalidLocateInput, i, id, j, v)
+			}
+			box[j] = v
+		}
+		if box[2] <= box[0] || box[3] <= box[1] {
+			return nil, nil, fmt.Errorf("%w: marks[%d] (%q) box must satisfy ymax > ymin and xmax > xmin", errInvalidLocateInput, i, id)
+		}
+		cm := decisionindex.CandidateMark{ID: id, Label: strings.TrimSpace(in.Label), Box: box}
+		marks = append(marks, cm)
+		byID[id] = cm
+	}
+	return marks, byID, nil
+}
+
+func locateSoMSchema(target string, marks []decisionindex.CandidateMark) (string, error) {
+	somQs, err := decisionindex.BuildSetOfMarksQuestions(target, marks)
+	if err != nil {
+		return "", fmt.Errorf("%w: %v", errInvalidLocateInput, err)
+	}
+	toOptions := func(q decisionindex.SystemOneQuestion) []map[string]string {
+		opts := make([]map[string]string, 0, len(q.Order))
+		for _, k := range q.Order {
+			opts = append(opts, map[string]string{"name": k, "description": q.Criteria[k]})
+		}
+		return opts
+	}
+	s := map[string]interface{}{
+		"instructions": "Look at the attached UI screenshot and answer every question about the target described in the state.",
+		"questions": []interface{}{
+			map[string]interface{}{"id": "present", "type": "boolean", "instructions": "Is the described target visible in the image?"},
+			map[string]interface{}{"id": "grid_cell", "type": "choice",
+				"instructions": "Divide the image into a 3x3 grid. Which cell contains the centre of the target?", "options": gridCellOptions()},
+			map[string]interface{}{"id": "next_target_mark", "type": "choice",
+				"instructions": somQs["next_target_mark"].Instructions, "options": toOptions(somQs["next_target_mark"])},
+			map[string]interface{}{"id": "element_state", "type": "choice",
+				"instructions": somQs["element_state"].Instructions, "options": toOptions(somQs["element_state"])},
+		},
+		"samples": 1,
+	}
+	b, _ := json.Marshal(s)
+	return string(b), nil
+}
+
+func formatSoMMarkHint(cell string, marks []decisionindex.CandidateMark) string {
+	if len(marks) == 0 {
+		return ""
+	}
+	parts := make([]string, 0, len(marks))
+	for _, m := range marks {
+		label := m.Label
+		if label == "" {
+			label = "UI element"
+		}
+		parts = append(parts, fmt.Sprintf("%s (%s) at [%.1f, %.1f, %.1f, %.1f]%%",
+			m.ID, label, m.Box[0], m.Box[1], m.Box[2], m.Box[3]))
+	}
+	prefix := "Candidate UI marks"
+	if cell != "" {
+		prefix = fmt.Sprintf("Candidate UI marks near dgem's %s cell", strings.ReplaceAll(cell, "_", " "))
+	}
+	return prefix + " (percent [ymin, xmin, ymax, xmax]): " + strings.Join(parts, "; ") + "."
+}
+
+func applyLocateSAMMask(ctx context.Context, req LocateRequest, res *LocateResult, box [4]float64) {
+	if !req.Mask {
+		return
+	}
+	samURL := strings.TrimSpace(os.Getenv("DGEM_SAM_URL"))
+	if samURL == "" {
+		res.MaskNote = "mask unavailable: no SAM service configured (DGEM_SAM_URL)"
+		return
+	}
+	sctx, sspan := gatewayTracer().Start(ctx, "dgem.locate.sam")
+	t2 := time.Now()
+	m, err := locateSAMFunc(sctx, samURL, req.Image, box)
+	res.SamMs = float64(time.Since(t2).Microseconds()) / 1000
+	if err != nil {
+		sspan.SetStatus(codes.Error, err.Error())
+		res.MaskNote = "mask unavailable: " + err.Error()
+	} else {
+		res.Mask = m
+	}
+	sspan.End()
 }
 
 func normalizedAnswer(qa client.QuestionAnswer, k int) (string, float64) {
@@ -143,10 +275,28 @@ func runGuidedLocate(ctx context.Context, req LocateRequest, decide locateDecide
 	start := time.Now()
 	target := strings.TrimSpace(req.Target)
 	if target == "" {
-		return nil, fmt.Errorf("'target' is required")
+		return nil, fmt.Errorf("%w: 'target' is required", errInvalidLocateInput)
 	}
 	if strings.TrimSpace(req.Image) == "" {
-		return nil, fmt.Errorf("'image' is required")
+		return nil, fmt.Errorf("%w: 'image' is required", errInvalidLocateInput)
+	}
+	if req.SomMaxH > 1.0 || math.IsNaN(req.SomMaxH) {
+		return nil, fmt.Errorf("%w: som_max_h must be <= 1.0", errInvalidLocateInput)
+	}
+	marks, markByID, err := parseLocateMarks(req.Marks)
+	if err != nil {
+		return nil, err
+	}
+	schema := locateSchema()
+	if len(marks) > 0 {
+		schema, err = locateSoMSchema(target, marks)
+		if err != nil {
+			return nil, err
+		}
+	}
+	somMaxH := req.SomMaxH
+	if somMaxH == 0 {
+		somMaxH = recommendedLocateSkipH
 	}
 	skipH := req.SkipH
 	thinking := strings.ToLower(strings.TrimSpace(req.Thinking))
@@ -156,7 +306,7 @@ func runGuidedLocate(ctx context.Context, req LocateRequest, decide locateDecide
 	switch thinking {
 	case "low", "medium", "high", "default":
 	default:
-		return nil, fmt.Errorf("thinking must be low, medium, high or default")
+		return nil, fmt.Errorf("%w: thinking must be low, medium, high or default", errInvalidLocateInput)
 	}
 	res := &LocateResult{Target: target}
 
@@ -167,7 +317,7 @@ func runGuidedLocate(ctx context.Context, req LocateRequest, decide locateDecide
 	dctx, dspan := gatewayTracer().Start(ctx, "dgem.locate.dgem")
 	t0 := time.Now()
 	state, _ := json.Marshal(map[string]string{"target": target})
-	resp, err := decide(dctx, locateSchema(), string(state), []string{req.Image})
+	resp, err := decide(dctx, schema, string(state), []string{req.Image})
 	res.Dgem.Ms = float64(time.Since(t0).Microseconds()) / 1000
 	if err != nil {
 		dspan.SetStatus(codes.Error, err.Error())
@@ -182,6 +332,33 @@ func runGuidedLocate(ctx context.Context, req LocateRequest, decide locateDecide
 		attribute.String("dgem.locate.grid_cell", res.Dgem.GridCell))
 	dspan.End()
 
+	var cellMarks []decisionindex.CandidateMark
+	if len(marks) > 0 {
+		_, somSpan := gatewayTracer().Start(ctx, "dgem.locate.som")
+		markAns := resp.Answers["next_target_mark"]
+		selMark, markH := normalizedAnswer(markAns, len(marks)+1)
+		elemState, _ := normalizedAnswer(resp.Answers["element_state"], 4)
+		cellMarks = decisionindex.FilterMarksByGridCell(res.Dgem.GridCell, marks, true)
+		somSummary := &LocateSoM{
+			SelectedMark:   selMark,
+			MarkH:          markH,
+			ElementState:   elemState,
+			CandidateCount: len(marks),
+			FilteredCount:  len(cellMarks),
+		}
+		if ecy, ecx, visMass := decisionindex.ExpectedMarkCenterFromProbabilities(markAns.Probabilities, marks); visMass > 0 {
+			somSummary.ExpectedCenterPct = &[2]float64{ecy, ecx}
+		}
+		res.SoM = somSummary
+		somSpan.SetAttributes(
+			attribute.String("dgem.locate.som_selected_mark", selMark),
+			attribute.Float64("dgem.locate.som_mark_h_norm", markH),
+			attribute.Int("dgem.locate.som_candidates", len(marks)),
+			attribute.Int("dgem.locate.som_filtered", len(cellMarks)),
+		)
+		somSpan.End()
+	}
+
 	// 2. Skip when dgem is confident the target is absent.
 	if skipH > 0 && res.Dgem.Present == "no" && res.Dgem.PresentH < skipH {
 		res.Path = "skipped_absent"
@@ -190,12 +367,39 @@ func runGuidedLocate(ctx context.Context, req LocateRequest, decide locateDecide
 		return res, nil
 	}
 
-	// 3. Gemini box, hinted with dgem's cell.
+	// 2b. Fast-return Set-of-Marks element box when dgem selects a visible mark below somMaxH.
+	if len(marks) > 0 && somMaxH > 0 && res.SoM != nil && res.SoM.SelectedMark != "" &&
+		res.SoM.SelectedMark != "none_visible" && res.SoM.MarkH < somMaxH {
+		if chosen, ok := markByID[res.SoM.SelectedMark]; ok {
+			boxVal := chosen.Box
+			res.Path, res.Present, res.BoxPct = "som_mark", true, &boxVal
+			res.Box = &BBoxCoords{YMin: boxVal[0] * 10, XMin: boxVal[1] * 10, YMax: boxVal[2] * 10, XMax: boxVal[3] * 10}
+			res.SoM.MatchedMark = chosen.ID
+			applyLocateSAMMask(ctx, req, res, boxVal)
+			res.TotalMs = float64(time.Since(start).Microseconds()) / 1000
+			root.SetAttributes(attribute.String("dgem.locate.path", res.Path))
+			return res, nil
+		}
+	}
+
+	// 3. Gemini box, hinted with dgem's cell (and filtered Set-of-Marks candidates when supplied).
 	model := SanitizeCascadeModel(req.GeminiModel)
 	g := &LocateGemini{Model: model, Thinking: thinking}
 	if req.Hint && res.Dgem.GridCell != "" {
 		g.Hint = fmt.Sprintf("Hint from a fast first-pass model (it may be wrong): the target is probably in the %s part of the image (3x3 grid).",
 			strings.ReplaceAll(res.Dgem.GridCell, "_", " "))
+	}
+	if len(marks) > 0 {
+		hintMarks := cellMarks
+		if len(hintMarks) == 0 {
+			hintMarks = marks
+		}
+		somHint := formatSoMMarkHint(res.Dgem.GridCell, hintMarks)
+		if g.Hint != "" {
+			g.Hint += " " + somHint
+		} else {
+			g.Hint = somHint
+		}
 	}
 	gctx, gspan := gatewayTracer().Start(ctx, "dgem.locate.gemini")
 	t1 := time.Now()
@@ -220,26 +424,16 @@ func runGuidedLocate(ctx context.Context, req LocateRequest, decide locateDecide
 	}
 	res.Path, res.Present, res.BoxPct = "gemini", true, box
 	res.Box = &BBoxCoords{YMin: box[0] * 10, XMin: box[1] * 10, YMax: box[2] * 10, XMax: box[3] * 10}
-
-	// 4. Optional SAM mask.
-	if req.Mask {
-		samURL := strings.TrimSpace(os.Getenv("DGEM_SAM_URL"))
-		if samURL == "" {
-			res.MaskNote = "mask unavailable: no SAM service configured (DGEM_SAM_URL)"
-		} else {
-			sctx, sspan := gatewayTracer().Start(ctx, "dgem.locate.sam")
-			t2 := time.Now()
-			m, err := locateSAMFunc(sctx, samURL, req.Image, *box)
-			res.SamMs = float64(time.Since(t2).Microseconds()) / 1000
-			if err != nil {
-				sspan.SetStatus(codes.Error, err.Error())
-				res.MaskNote = "mask unavailable: " + err.Error()
-			} else {
-				res.Mask = m
-			}
-			sspan.End()
+	if len(marks) > 0 && res.SoM != nil {
+		gcy, gcx := decisionindex.BoxCenter(*box)
+		if snapped, dist, ok := decisionindex.SelectContainingOrNearestMark(gcy, gcx, marks); ok {
+			res.SoM.MatchedMark = snapped.ID
+			res.SoM.MatchedDistancePct = dist
 		}
 	}
+
+	// 4. Optional SAM mask.
+	applyLocateSAMMask(ctx, req, res, *box)
 	res.TotalMs = float64(time.Since(start).Microseconds()) / 1000
 	root.SetAttributes(attribute.String("dgem.locate.path", res.Path))
 	return res, nil
@@ -396,7 +590,7 @@ func handleLocate(w http.ResponseWriter, r *http.Request) {
 	res, err := runGuidedLocate(ctx, req.LocateRequest, locateDecideVia(backendTarget, targetURL))
 	if err != nil {
 		status := http.StatusBadGateway
-		if strings.Contains(err.Error(), "is required") || strings.Contains(err.Error(), "thinking must be") {
+		if errors.Is(err, errInvalidLocateInput) {
 			status = http.StatusBadRequest
 		}
 		writeErr(status, err.Error())

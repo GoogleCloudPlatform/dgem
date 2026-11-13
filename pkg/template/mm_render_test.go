@@ -21,7 +21,7 @@ import (
 
 // Every shipped multimodal template renders to valid JSON (the call-quality template starts with a template comment).
 func TestMultimodalTemplatesRender(t *testing.T) {
-	for _, name := range []string{"call_quality_audio", "workplace_hazard_video", "ui_design_review", "pcb_defect_triage", "kyc_document_audit"} {
+	for _, name := range []string{"call_quality_audio", "workplace_hazard_video", "ui_design_review", "pcb_defect_triage", "kyc_document_audit", "ui_pathfinder_som"} {
 		out, err := NewEngine().RenderFile("../../templates/multimodal/"+name+".json.tmpl", map[string]interface{}{})
 		if err != nil {
 			t.Fatalf("%s: %v", name, err)

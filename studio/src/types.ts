@@ -147,3 +147,46 @@ export interface MCPToolSpec {
   description: string;
   defaultArgs: Record<string, unknown>;
 }
+
+export interface LocateMarkInput {
+  id: string;
+  label?: string;
+  box: number[];
+}
+
+export interface LocateSoMSummary {
+  selected_mark?: string;
+  mark_h_norm: number;
+  element_state?: string;
+  matched_mark?: string;
+  matched_distance_pct?: number;
+  candidate_count: number;
+  filtered_count: number;
+  expected_center_pct?: [number, number];
+}
+
+export interface GuidedLocateResponse {
+  error?: string;
+  target?: string;
+  present?: boolean;
+  path?: 'skipped_absent' | 'som_mark' | 'gemini' | 'gemini_absent' | string;
+  box_1000?: { ymin: number; xmin: number; ymax: number; xmax: number };
+  box_pct?: [number, number, number, number];
+  som?: LocateSoMSummary;
+  mask_note?: string;
+  dgem?: {
+    present: string;
+    present_h_norm: number;
+    grid_cell: string;
+    grid_cell_h_norm: number;
+    ms: number;
+  };
+  gemini?: {
+    model: string;
+    thinking: string;
+    hint?: string;
+    ms: number;
+    thought_tokens: number;
+  };
+  total_ms?: number;
+}
