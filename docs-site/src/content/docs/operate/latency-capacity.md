@@ -49,6 +49,14 @@ Set them as environment variables on the container; `scripts/deploy_vertex_endpo
 Keep-alive matters under load: the server speaks HTTP/1.1 with a 256-connection backlog. Use clients that reuse
 connections.
 
+### Size the canvas and concurrency to your policy
+
+On sparse mixture-of-experts (MoE) GPUs (`26B` total parameters, `~4B` active per token across `8` of `128` routed experts), throughput peaks at moderate batch concurrency (typically `8`–`16` active sequences on a single 80 GB GPU) and drops if concurrency grows unbounded:
+
+- **Lower `--canvas` (`canvas_length`) to `16` or `32` for short policies.** Measured on the `google/diffusiongemma-26B-A4B-it` SentencePiece tokenizer, a single-question `lines` template (`<|channel>thought\n<channel|>allow: yes<turn|>`) occupies `8` active tokens (`7` template tokens plus the `<turn|>` close token `106`, or `9` active tokens for a numbered `q1: yes` question). Policies with `2`, `5`, and `10` boolean or single-token `choice` questions occupy `14`, `29`, and `55` active tokens. Every remaining position up to `canvas_length` holds trailing `PAD` (`0`) tokens—`120` of `128` positions (`93.75%`) at `--canvas 128`, compared with `24` (`75.0%`) at `--canvas 32` and `8` (`50.0%`) at `--canvas 16`—that participate in bidirectional canvas attention and MoE expert dispatch without changing decision accuracy. Keep `--canvas 32` (or `16` for single-slot and two-slot deployments) rather than `128` unless your policy uses `think` traces or more than five questions.
+- **Cap `MAX_INFLIGHT` and `MAX_SEQS` at the MoE knee.** Past `16`–`32` simultaneous sequences (and earlier when `samples: 4` or `8` multiplies each decision into `4`–`8` vLLM sequences), ragged batches activate nearly all `128` experts per layer—turning a `4B`-active step into a `26B` memory-bandwidth step—while KV-cache pressure triggers chunked-prefill preemption. Set `MAX_INFLIGHT` (`8`–`16`) so burst traffic queues cleanly in userspace instead of thrashing the engine scheduler.
+- **Set `DISABLE_MM=1` on text-only deployments.** Passing `--language-model-only` skips loading and profiling the vision tower, freeing GPU memory for `KV_CACHE_GB`.
+
 ## Scaling out
 
 - **Vertex AI:** one dedicated-endpoint replica per GPU; set `VERTEX_MIN_REPLICAS` / `VERTEX_MAX_REPLICAS` and the
