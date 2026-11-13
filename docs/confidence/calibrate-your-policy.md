@@ -105,7 +105,23 @@ question type the same way. Yes/no questions often want a higher temperature tha
 The temperature is applied after Stage 1 and after the Gemini cascade: the cascade still gates on raw entropy, and
 answers the cascade resolved are left as Gemini gave them. Responses report the temperature applied in `temperature`.
 
-## 6. Re-check when things change
+## 6. Split conformal prediction sets (optional)
+
+Split conformal prediction sets (`lac`, `aps`, or `raps`) offer a coverage-targeted operating point ($1 - \alpha$) alongside—rather than as a replacement for—the normalized-entropy hesitation cut-off ($H / \ln K \ge 0.16$). Clear inputs return a singleton candidate set (`|C(x)| == 1`), whereas uncertain inputs return two or more candidates (`|C(x)| >= 2`):
+
+```bash
+./bin/dgem bench-calibration --from-receipt <receipt.json> --conformal lac --conformal-alpha 0.10
+python3 scripts/policy_calibration.py results_receipt.jsonl --conformal lac --conformal-alpha 0.10
+```
+
+Because conformal sets calibrate for marginal coverage $1 - \alpha$, their escalation rate tracks each policy's underlying error rate rather than evening out across option counts:
+
+- **Narrow option sets ($K \le 4$) vs. wide option sets ($K \gg 26$)**: On live hosted G4 runs at $\alpha = 0.10$ (`50`-item calibration suite with $K \in [2, 26]$ and `500` CLINC150 utterances across `151` options), `lac` achieved `0.912` and `0.904` empirical coverage (`raps`: `0.915` and `0.904`). Whereas $H / \ln K \ge 0.16$ escalated `30%` of $K \le 4$ items and `25%` of 151-option items, `lac` escalated `16%` and `58%` (`2.4x` more on the 151-option suite, where many sets contain two or more members) while keeping fewer wrong Stage 1 answers (`3.2%` vs. `8.4%`).
+- **Choose the operating point that fits your budget**: Keep the normalized-entropy hesitation cut-off when you want a stable Stage 2 escalation budget across varying option counts; use split conformal sets when bounding missed Stage 1 answers matters more than capping escalation volume on wide taxonomies.
+- **Pre-prior exchangeability**: Conformal thresholds always evaluate on pre-fusion Stage 1 option probabilities (`RawProbabilities` when caller priors are supplied), preserving exchangeability on held-out traffic.
+- **Opt-in abstention labels**: By default, escalation fires strictly when `|C(x)| != 1`, so valid classes such as `oos` or `0` are not treated as abstentions; pass `--conformal-abstain-labels abstain,insufficient_evidence` when your policy includes explicit abstention options that should also escalate as singletons.
+
+## 7. Re-check when things change
 
 Re-run the report after changing the policy wording, the options, `samples`, or the serving image. A new vLLM
 version can change some individual answers even when overall accuracy is unchanged.

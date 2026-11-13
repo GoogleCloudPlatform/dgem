@@ -58,7 +58,10 @@ var (
 	calUSDPer1k         float64
 	calDualMirror       bool
 	calNullPriorDebias  bool
-	calPriorAlpha       float64
+	calPriorAlpha             float64
+	calConformalMethod        string
+	calConformalAlpha         float64
+	calConformalAbstainLabels []string
 )
 
 // Semantic color palette following A2A CLI guidelines
@@ -132,6 +135,9 @@ func init() {
 	benchCalibrationCmd.Flags().BoolVar(&permutation.MirrorAliasNames, "mirror-alias-names", true, "Dual-mirror: rename reversed options item_1..item_K (default) instead of keeping real option names")
 	benchCalibrationCmd.Flags().StringVar(&permutation.MirrorSlotSuffix, "mirror-slot-suffix", "__rev", "Dual-mirror: suffix for the reversed slot id (legacy runs used __mirror_rev)")
 	benchCalibrationCmd.Flags().StringVar(&permutation.MirrorMode, "mirror-mode", "reversed", "Dual-mirror second slot: reversed | copy | reversed-digits | reversed-first")
+	benchCalibrationCmd.Flags().StringVar(&calConformalMethod, "conformal", "", "Compute 5-fold held-out split conformal prediction sets ('lac', 'aps', or 'raps')")
+	benchCalibrationCmd.Flags().Float64Var(&calConformalAlpha, "conformal-alpha", client.DefaultConformalAlpha, "Target miscoverage rate alpha in (0, 1) for --conformal prediction sets")
+	benchCalibrationCmd.Flags().StringSliceVar(&calConformalAbstainLabels, "conformal-abstain-labels", nil, "Comma-separated option labels treated as abstention triggers in --conformal sets (empty by default)")
 
 	RootCmd.AddCommand(benchCalibrationCmd)
 }
@@ -174,6 +180,10 @@ type CalibrationCaseResult struct {
 	Pass1LatencyMs         float64                    `json:"pass1_latency_ms,omitempty"`
 	Pass2LatencyMs         float64                    `json:"pass2_latency_ms,omitempty"`
 	TopProbabilities       map[string]float64         `json:"top_probabilities,omitempty"`
+	PredictionSet          []string                   `json:"prediction_set,omitempty"`
+	PredictionSetSize      int                        `json:"prediction_set_size,omitempty"`
+	ConformalQHat          float64                    `json:"conformal_q_hat,omitempty"`
+	ConformalCovered       *bool                      `json:"conformal_covered,omitempty"`
 	IDC                    *permutation.SlotIDCDetail `json:"idc,omitempty"`
 	Error                  string                     `json:"error,omitempty"`
 }
@@ -240,6 +250,7 @@ type CalibrationReport struct {
 	TotalElapsedSec       float64                   `json:"total_elapsed_sec"`
 	TemperatureScale      float64                   `json:"temperature_scale,omitempty"`
 	TemperatureFit        *TemperatureFit           `json:"temperature_fit,omitempty"`
+	Conformal             *ConformalFitSummary      `json:"conformal,omitempty"`
 	JevParity             *JevParitySummary         `json:"jev_parity,omitempty"`
 	Cascade               *CascadeSummary           `json:"cascade,omitempty"`
 	Categories            []CalibrationGroupSummary `json:"categories"`
@@ -248,6 +259,14 @@ type CalibrationReport struct {
 }
 
 func runBenchCalibration(cmd *cobra.Command, args []string) error {
+	if strings.TrimSpace(calConformalMethod) != "" {
+		if _, err := client.ParseConformalMethod(calConformalMethod); err != nil {
+			return fmt.Errorf("invalid --conformal %q (use 'lac', 'aps', or 'raps'): %w", calConformalMethod, err)
+		}
+		if math.IsNaN(calConformalAlpha) || math.IsInf(calConformalAlpha, 0) || calConformalAlpha <= 0 || calConformalAlpha >= 1 {
+			return fmt.Errorf("invalid --conformal-alpha %v (must lie strictly between 0 and 1)", calConformalAlpha)
+		}
+	}
 	if calFromReceipt != "" {
 		raw, err := os.ReadFile(calFromReceipt)
 		if err != nil {
@@ -278,6 +297,12 @@ func runBenchCalibration(cmd *cobra.Command, args []string) error {
 		}
 		report.TemperatureFit = tfit
 		stampTemperatureMethod(report.JevParity, tfit)
+		confCases, confSummary, confErr := applyConformalCalibration(report.Cases, calConformalMethod, calConformalAlpha, calConformalAbstainLabels...)
+		if confErr != nil {
+			return confErr
+		}
+		report.Cases = confCases
+		report.Conformal = confSummary
 		if calOutput != "" {
 			data, err := json.MarshalIndent(report, "", "  ")
 			if err != nil {
@@ -530,6 +555,12 @@ func runBenchCalibration(cmd *cobra.Command, args []string) error {
 	if permutation.DualMirrorLetterCollisionSeen() {
 		report.IDCWarning = permutation.DualMirrorLetterWarning
 	}
+	confCases, confSummary, confErr := applyConformalCalibration(report.Cases, calConformalMethod, calConformalAlpha, calConformalAbstainLabels...)
+	if confErr != nil {
+		return confErr
+	}
+	report.Cases = confCases
+	report.Conformal = confSummary
 
 	if isCascadeRun {
 		pass2Label := calVertexModel
@@ -1309,6 +1340,19 @@ func printCalibrationSummary(report CalibrationReport, outputPath string) {
 		fmt.Printf("  • Combined Cascade Acc:    %s (%d / %d) [%+.1f%% gain] @ %.0f ms effective latency\n",
 			stylePass.Render(fmt.Sprintf("%.1f%%", cs.CascadeAccuracyPct)),
 			cs.CascadeCorrect, cs.TotalCases, cs.AccuracyGainPct, cs.CascadeAvgLatMs)
+		fmt.Println(styleAccent.Render("=========================================================================================="))
+	}
+
+	if report.Conformal != nil {
+		cf := report.Conformal
+		fmt.Println()
+		fmt.Println(styleAccent.Render("=========================================================================================="))
+		fmt.Println(styleAccent.Render("  Held-Out Split Conformal Prediction Sets (5-Fold Out-of-Sample)"))
+		fmt.Println(styleAccent.Render("=========================================================================================="))
+		fmt.Printf("  Method / Target (1-a): %s (alpha=%.2f, target coverage >= %.1f%%, %d folds, n=%d)\n",
+			styleID.Render(cf.Method), cf.Alpha, (1.0-cf.Alpha)*100.0, cf.Folds, cf.EvaluatedCases)
+		fmt.Printf("  Empirical Coverage:    %.1f%%  |  Mean Set Size: %.2f  |  Singleton: %.1f%%  |  Escalate: %.1f%%\n",
+			cf.EmpiricalCoverage*100.0, cf.MeanSetSize, cf.SingletonRate*100.0, cf.EscalationRate*100.0)
 		fmt.Println(styleAccent.Render("=========================================================================================="))
 	}
 
