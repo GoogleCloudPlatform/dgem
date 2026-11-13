@@ -49,3 +49,81 @@ func TestTemperature(t *testing.T) {
 		t.Fatalf("schema temperature not read: %+v", s)
 	}
 }
+
+func TestApplyCalibrationDiagLogprobsAndPriorBias(t *testing.T) {
+	// 1. Saturated float probabilities (1.0 vs 0.0) recover exact log-odds from Diagnostics.Questions[id].Logprobs.
+	sat := &StructuredDecisionResponse{
+		Answers: map[string]QuestionAnswer{
+			"finding": {
+				Type:          "noul",
+				Label:         "yes",
+				Noul:          1.0,
+				Confidence:    1.0,
+				Probabilities: map[string]float64{"yes": 1.0, "no": 0.0},
+			},
+		},
+		Diagnostics: Diagnostics{
+			Questions: map[string]QuestionDiagnostic{
+				"finding": {Logprobs: map[string]float64{"yes": 0.0, "no": -40.0}},
+			},
+		},
+	}
+	sat.ApplyTemperature(Temperature{All: 10.0})
+	// Exact: 1 / (1 + exp(-4.0)) = 0.98201379 (vs legacy 1e-12 clamp: 1 / (1 + exp(-2.7631)) = 0.94065).
+	wantExact := 1.0 / (1.0 + math.Exp(-4.0))
+	if math.Abs(sat.Answers["finding"].Noul-wantExact) > 1e-6 {
+		t.Fatalf("expected lossless logprob scaling %.6f, got %.6f", wantExact, sat.Answers["finding"].Noul)
+	}
+
+	// 2. PriorBias (Platt intercept shift) flips a base-rate-inflated false positive across 0.5,
+	// whereas pure Temperature scaling preserves argmax >= 0.5.
+	decoy := &StructuredDecisionResponse{
+		Answers: map[string]QuestionAnswer{
+			"finding": {
+				Type:          "noul",
+				Label:         "yes",
+				Noul:          0.880797078,
+				Confidence:    0.880797078,
+				Probabilities: map[string]float64{"yes": 0.880797078, "no": 0.119202922},
+			},
+			"route": {
+				Type:          "choice",
+				Choice:        "escalate",
+				Confidence:    0.7,
+				Probabilities: map[string]float64{"escalate": 0.7, "allow": 0.3},
+			},
+		},
+		Diagnostics: Diagnostics{
+			Questions: map[string]QuestionDiagnostic{
+				"finding": {Logprobs: map[string]float64{"yes": 0.0, "no": -2.0}},
+			},
+		},
+	}
+	pb, err := ParseSchemaPriorBias(`{"prior_bias": {"finding": {"true": -2.0}, "route": {"allow": 1.5}}}`)
+	if err != nil {
+		t.Fatalf("ParseSchemaPriorBias failed: %v", err)
+	}
+	decoy.ApplyCalibration(Temperature{All: 2.0}, pb)
+	// finding: base yes=0, no=-2 -> scaled yes=0/2 - 2.0 = -2.0, no=-2/2 + 0 = -1.0 -> p(yes) = sigmoid(-1.0) = 0.26894142
+	wantPlatt := 1.0 / (1.0 + math.Exp(1.0))
+	gotFinding := decoy.Answers["finding"]
+	if gotFinding.Label != "no" || math.Abs(gotFinding.Noul-wantPlatt) > 1e-6 || math.Abs(gotFinding.Confidence-(1.0-wantPlatt)) > 1e-6 {
+		t.Fatalf("Platt prior bias did not flip decoy cleanly: %+v", gotFinding)
+	}
+	if decoy.Answers["route"].Choice != "allow" {
+		t.Fatalf("choice prior bias did not flip route to allow: %+v", decoy.Answers["route"])
+	}
+
+	// 3. Guard-branch validation rejects out-of-range and malformed prior_bias values.
+	for _, bad := range []string{
+		`{"prior_bias": {"finding": {"yes": 25}}}`,
+		`{"prior_bias": {"finding": {"yes": -25}}}`,
+		`{"prior_bias": {"": {"yes": 1}}}`,
+		`{"prior_bias": {"finding": {"": 1}}}`,
+		`{"prior_bias": "not-an-object"}`,
+	} {
+		if _, err := ParseSchemaPriorBias(bad); err == nil {
+			t.Fatalf("expected error for malformed prior_bias %s", bad)
+		}
+	}
+}

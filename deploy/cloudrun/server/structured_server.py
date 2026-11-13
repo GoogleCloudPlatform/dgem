@@ -27,9 +27,9 @@ Answers take Jev's shapes, with this server's diagnostics alongside:
   score:  {"score", "legend", "probabilities", "confidence"}
 The request body may also carry the schema keys "instructions", "samples",
 "auto_max", "auto_threshold", "steps", "think", "ask", "chunk_rows",
-"chunk_prompt", "sequential", "layout", "isolate" ("auto", "noul", "none" or "all") and
-"seed_token" ("random" or "fixed") and "labels" ("az", "az_aa" or "az_lower") as
-extensions. Images go ahead of the
+"chunk_prompt", "sequential", "layout", "isolate" ("auto", "noul", "none" or "all"),
+"seed_token" ("random" or "fixed"), "labels" ("az", "az_aa" or "az_lower") and
+"combine" ("linear" or "poe") as extensions. Images go ahead of the
 state, either as multipart/form-data with the JSON body in a part named
 "request" and each image as a file part, or as an "images" array of data
 URLs in the JSON body.
@@ -100,15 +100,19 @@ then run this in front of it:
 
 import argparse
 import hmac
+import http.client
+import io
 import json
 import math
 import os
 import random
+import socket
 import ssl
 import subprocess
 import threading
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 from concurrent.futures import ThreadPoolExecutor
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -167,6 +171,12 @@ if DEFAULT_LABELS not in LABEL_SETS:
 DEFAULT_SEED_TOKEN = os.environ.get("DEFAULT_SEED_TOKEN", "random")
 if DEFAULT_SEED_TOKEN not in SEED_TOKENS:
     raise SystemExit("DEFAULT_SEED_TOKEN must be random or fixed")
+# dgem: how multi-sample reads combine across draws: "linear" (default, arithmetic mean of per-draw probabilities)
+# or "poe" (Product-of-Experts: softmax of mean per-draw log-odds, preserving separation when scores crowd near 1).
+COMBINE_MODES = ("linear", "poe")
+DEFAULT_COMBINE = os.environ.get("DEFAULT_COMBINE", "linear")
+if DEFAULT_COMBINE not in COMBINE_MODES:
+    raise SystemExit("DEFAULT_COMBINE must be linear or poe")
 # Which questions get a read of their own when the request does not say ("alone"): "auto" (the default), "none" (one
 # joint read), "noul" (yes/no questions) or "all". Read jointly, a yes/no question after another one tended to copy
 # its answer in agent/tool-call states, mostly in small requests: with 2 questions an action judgment scored
@@ -356,6 +366,9 @@ def parse_schema(value):
     seed_token = value.get("seed_token", DEFAULT_SEED_TOKEN)  # dgem
     if seed_token not in SEED_TOKENS:
         raise SchemaError('schema: seed_token must be "random" or "fixed"')
+    combine = value.get("combine", DEFAULT_COMBINE)  # dgem
+    if combine not in COMBINE_MODES:
+        raise SchemaError('schema: combine must be "linear" or "poe"')
     think = value.get("think", 0)
     if isinstance(think, bool) or not isinstance(think, int) or not 0 <= think <= 4096:
         raise SchemaError("schema: think must be a thought budget in tokens, 0 to 4096")
@@ -372,6 +385,7 @@ def parse_schema(value):
         "layout": layout,
         "seed_token": seed_token,
         "labels": label_set,
+        "combine": combine,
         "format": "lines" if len(qs) <= 10 else "indexed",
     }
 
@@ -612,14 +626,80 @@ def _wait_for_upstream(max_wait=180):
             time.sleep(1.0)
 
 
-def upstream_chat(body, timeout=600):
+_UPSTREAM_LOCAL = threading.local()
+
+
+def _upstream_post_json(route_path, body, timeout=600):
+    """dgem: reuse per-thread HTTP/1.1 keep-alive connections to vLLM instead of opening a new TCP socket per read."""
     _wait_for_upstream()
-    req = urllib.request.Request(
-        ARGS.upstream.rstrip("/") + "/v1/chat/completions",
-        data=json.dumps(body).encode(),
-        headers={"content-type": "application/json"},
+    base = ARGS.upstream.rstrip("/")
+    parsed = urllib.parse.urlsplit(base)
+    scheme = (parsed.scheme or "http").lower()
+    host = parsed.hostname or "127.0.0.1"
+    port = parsed.port or (443 if scheme == "https" else 80)
+    target_path = (parsed.path.rstrip("/") + route_path) or route_path
+    full_url = base + route_path
+    payload = json.dumps(body).encode()
+    conn_key = (scheme, host, port, float(timeout))
+    retryable = (
+        http.client.RemoteDisconnected,
+        http.client.BadStatusLine,
+        http.client.CannotSendRequest,
+        http.client.ResponseNotReady,
+        BrokenPipeError,
+        ConnectionResetError,
     )
-    return json.load(urllib.request.urlopen(req, timeout=timeout))
+    for attempt in range(2):
+        cached = getattr(_UPSTREAM_LOCAL, "entry", None)
+        if cached is not None and cached[0] == conn_key:
+            conn = cached[1]
+        else:
+            if cached is not None:
+                try:
+                    cached[1].close()
+                except OSError:
+                    pass
+            conn = (
+                http.client.HTTPSConnection(host, port, timeout=timeout)
+                if scheme == "https"
+                else http.client.HTTPConnection(host, port, timeout=timeout)
+            )
+            _UPSTREAM_LOCAL.entry = (conn_key, conn)
+        try:
+            if conn.sock is None:
+                conn.connect()
+                try:
+                    conn.sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+                except OSError:
+                    pass
+            conn.request(
+                "POST",
+                target_path,
+                body=payload,
+                headers={"Content-Type": "application/json", "Connection": "keep-alive"},
+            )
+            resp = conn.getresponse()
+            raw = resp.read()
+            if resp.will_close:
+                conn.close()
+                _UPSTREAM_LOCAL.entry = None
+            if resp.status >= 400:
+                raise urllib.error.HTTPError(
+                    full_url, resp.status, resp.reason, resp.headers, io.BytesIO(raw)
+                )
+            return json.loads(raw)
+        except retryable:
+            try:
+                conn.close()
+            except OSError:
+                pass
+            _UPSTREAM_LOCAL.entry = None
+            if attempt == 1:
+                raise
+
+
+def upstream_chat(body, timeout=600):
+    return _upstream_post_json("/v1/chat/completions", body, timeout=timeout)
 
 
 def _health_info():
@@ -651,13 +731,7 @@ def _health_info():
 
 
 def upstream_completions(body, timeout=600):
-    _wait_for_upstream()
-    req = urllib.request.Request(
-        ARGS.upstream.rstrip("/") + "/v1/completions",
-        data=json.dumps(body).encode(),
-        headers={"content-type": "application/json"},
-    )
-    return json.load(urllib.request.urlopen(req, timeout=timeout))
+    return _upstream_post_json("/v1/completions", body, timeout=timeout)
 
 
 def chat_prompt_ids(sys_text, state_text, thinking=False):
@@ -786,7 +860,8 @@ def slot_distribution(top, label_ids):
     floor = min(top.values()) - 5.0
     lp_t = [top.get(i, floor) for i in label_ids]
     mx = max(lp_t)
-    ex = [math.exp(x - mx) for x in lp_t]
+    centered_lp = [x - mx for x in lp_t]
+    ex = [math.exp(x) for x in centered_lp]
     probs = [e / sum(ex) for e in ex]
     top_p = [math.exp(v) for v in top.values()]
     # dgem: with constrained reads (the default, vLLM PR #58216) the returned logprobs are normalized over the
@@ -796,6 +871,7 @@ def slot_distribution(top, label_ids):
     # Responses carry diagnostics.constrained so a reader knows which applies.
     return {
         "probs": probs,
+        "logprobs": centered_lp,
         "label_mass": sum(math.exp(x) for x in lp_t),
         "entropy": -sum(p * math.log(p) for p in top_p if p > 0),
         "argmax_is_label": max(top, key=top.get) in label_ids,
@@ -1088,6 +1164,7 @@ def decide(schema, state_content, seed):
         "layout": schema["layout"],
         "seed_token": schema["seed_token"],
         "labels": schema["labels"],
+        "combine": schema["combine"],
         "isolated": [q["id"] for q in schema["questions"] if q.get("alone")],
         "stages": stages,
         "skipped": skipped,
@@ -1208,7 +1285,16 @@ def decide_group(schema, sys_text, state_content, seed, prefix=None, lead=""):
     n = len(reads)
     for qi, q in enumerate(schema["questions"]):
         per = [r[qi]["probs"] for r in reads]
-        mean = [sum(p[i] for p in per) / n for i in range(len(q["labels"]))]
+        per_lp = [r[qi]["logprobs"] for r in reads]
+        mean_lp_raw = [sum(lp[i] for lp in per_lp) / n for i in range(len(q["labels"]))]
+        mx_lp = max(mean_lp_raw)
+        centered_mean_lp = [x - mx_lp for x in mean_lp_raw]
+        if schema.get("combine") == "poe" and n > 1:
+            ex_poe = [math.exp(x) for x in centered_mean_lp]
+            z_poe = sum(ex_poe)
+            mean = [e / z_poe for e in ex_poe]
+        else:
+            mean = [sum(p[i] for p in per) / n for i in range(len(q["labels"]))]
         top = max(range(len(mean)), key=lambda i: mean[i])
         a = {
             "type": q["type"],
@@ -1233,6 +1319,7 @@ def decide_group(schema, sys_text, state_content, seed, prefix=None, lead=""):
         diag_q[q["id"]] = {
             "pos": slots[qi]["pos"],
             "entropy": [r[qi]["entropy"] for r in reads],
+            "logprobs": {c[0]: lp for c, lp in zip(q["choices"], centered_mean_lp)},
             "label_mass": reads[0][qi]["label_mass"],
             "argmax_is_label": reads[0][qi]["argmax_is_label"],
         }
@@ -1290,6 +1377,7 @@ JEV_EXTENSIONS = (
     "isolate",
     "seed_token",
     "labels",
+    "combine",
 )
 
 
@@ -1499,6 +1587,16 @@ class _Server(ThreadingHTTPServer):
     # request" at 16+ concurrent requests). Excess requests queue on MAX_INFLIGHT instead.
     request_queue_size = 256
     daemon_threads = True
+
+    def get_request(self):
+        # dgem: disable Nagle's algorithm so BaseHTTPRequestHandler's separate header + body writes
+        # on HTTP/1.1 keep-alive connections do not hit the 40 ms Linux delayed-ACK stall.
+        sock, addr = super().get_request()
+        try:
+            sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+        except OSError:
+            pass
+        return sock, addr
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -1880,7 +1978,7 @@ def _watchdog(period=60.0):
 
 
 def main():
-    global ARGS, CANVAS_LEN, CANVAS_STEP, DEFAULT_SEED_TOKEN, DEFAULT_LABELS
+    global ARGS, CANVAS_LEN, CANVAS_STEP, DEFAULT_SEED_TOKEN, DEFAULT_LABELS, DEFAULT_COMBINE
     p = argparse.ArgumentParser()
     p.add_argument("--upstream", default="http://127.0.0.1:8010")
     p.add_argument("--model", default="dgemma")
@@ -1905,6 +2003,12 @@ def main():
         help="choice-option labels for requests without labels: az (A-Z, 26), az_aa (+AA-AZ, 52), az_lower (+a-z, 52, lines only)",
     )
     p.add_argument(
+        "--combine",
+        choices=COMBINE_MODES,
+        default=DEFAULT_COMBINE,
+        help="multi-sample aggregation for requests without combine: linear (mean probability) or poe (mean log-odds softmax)",
+    )
+    p.add_argument(
         "--no-constrained",
         dest="constrained",
         action="store_false",
@@ -1923,6 +2027,7 @@ def main():
     ARGS = p.parse_args()
     DEFAULT_SEED_TOKEN = ARGS.seed_token
     DEFAULT_LABELS = ARGS.labels
+    DEFAULT_COMBINE = ARGS.combine
     CANVAS_LEN = ARGS.canvas
     CANVAS_STEP = ARGS.canvas_step
     init_tokenizer(AutoTokenizer.from_pretrained(ARGS.tokenizer))

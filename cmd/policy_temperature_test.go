@@ -54,4 +54,23 @@ func TestApplyPolicyTemperature(t *testing.T) {
 	if got, err := mcpTemperature(0, map[string]float64{"boolean": 3}); err != nil || got.For("noul") != 3 {
 		t.Fatalf("mcp by-type: %+v %v", got, err)
 	}
+
+	// Policy prior_bias shifts decision boundary unless explicit request Temperature{All: 1} overrides or cascade resolved.
+	plattSchema := `{"questions": [], "temperature": 2.0, "prior_bias": {"urgent": {"yes": -2.0}}}`
+	r = mk()
+	tt, _, err = applyPolicyTemperature(r, plattSchema, nil, nil)
+	if err != nil || tt == nil || r.Answers["urgent"].Label != "no" || r.Answers["urgent"].Noul >= 0.5 {
+		t.Fatalf("policy prior_bias should shift urgent below 0.5: tt=%+v err=%v ans=%+v", tt, err, r.Answers["urgent"])
+	}
+	r = mk()
+	if tt, _, err := applyPolicyTemperature(r, plattSchema, &client.Temperature{All: 1}, nil); err != nil || tt != nil || r.Answers["urgent"].Noul != 0.9 {
+		t.Fatalf("explicit request temperature 1 must bypass prior_bias too: tt=%+v err=%v ans=%+v", tt, err, r.Answers["urgent"])
+	}
+	r = mk()
+	if _, _, err := applyPolicyTemperature(r, plattSchema, nil, cas); err != nil || r.Answers["urgent"].Noul != 0.9 {
+		t.Fatalf("cascade-resolved slot must not be altered by prior_bias: err=%v ans=%+v", err, r.Answers["urgent"])
+	}
+	if _, _, err := applyPolicyTemperature(mk(), `{"prior_bias": {"urgent": {"yes": 99}}}`, nil, nil); err == nil {
+		t.Fatal("out-of-bounds prior_bias must fail validation")
+	}
 }

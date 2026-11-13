@@ -18,23 +18,37 @@ import (
 	"github.com/GoogleCloudPlatform/dgem/pkg/client"
 )
 
-// applyPolicyTemperature rescales a decision's probabilities with the policy's temperature: the request's value if
-// given, else the template's "temperature" key. It runs after Stage 1 and after the cascade (so cascade gating keeps
-// using raw entropy) and leaves answers resolved by the Stage-2 cascade untouched. Returns the temperature applied
-// (nil when none) and the new maximum entropy.
+// applyPolicyTemperature rescales a decision's probabilities with the policy's temperature and optional prior_bias:
+// the request's temperature if given (where an explicit 1 bypasses policy calibration), else the template's
+// "temperature" and "prior_bias" keys. It runs after Stage 1 and after the cascade (so cascade gating keeps using raw
+// entropy) and leaves answers resolved by the Stage-2 cascade untouched. Returns the temperature applied (nil when
+// none) and the new maximum entropy.
 func applyPolicyTemperature(resp *client.StructuredDecisionResponse, schemaJSON string, req *client.Temperature,
 	cascade *CascadeExecutionSummary) (*client.Temperature, float64, error) {
 	t := client.Temperature{}
+	var bias client.PriorBias
 	if req != nil && (req.All > 0 || len(req.ByType) > 0) {
-		t = *req // an explicit request value wins, including 1 ("no temperature for this request")
+		t = *req // an explicit request value wins, including 1 ("no calibration for this request")
+		if t.IsSet() {
+			var err error
+			bias, err = client.ParseSchemaPriorBias(schemaJSON)
+			if err != nil {
+				return nil, 0, err
+			}
+		}
 	} else {
 		st, err := client.ParseSchemaTemperature(schemaJSON)
 		if err != nil {
 			return nil, 0, err
 		}
+		pb, err := client.ParseSchemaPriorBias(schemaJSON)
+		if err != nil {
+			return nil, 0, err
+		}
 		t = st
+		bias = pb
 	}
-	if resp == nil || !t.IsSet() {
+	if resp == nil || (!t.IsSet() && !bias.IsSet()) {
 		return nil, maxAnswerEntropy(resp), nil
 	}
 	escalated := map[string]client.QuestionAnswer{}
@@ -47,11 +61,15 @@ func applyPolicyTemperature(resp *client.StructuredDecisionResponse, schemaJSON 
 			}
 		}
 	}
-	resp.ApplyTemperature(t)
+	resp.ApplyCalibration(t, bias)
 	for id, a := range escalated {
 		resp.Answers[id] = a
 	}
-	return &t, maxAnswerEntropy(resp), nil
+	applied := t
+	if !applied.IsSet() {
+		applied = client.Temperature{All: 1}
+	}
+	return &applied, maxAnswerEntropy(resp), nil
 }
 
 func maxAnswerEntropy(resp *client.StructuredDecisionResponse) float64 {
