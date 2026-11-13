@@ -1,0 +1,6 @@
+ts/node_modules/
+ts/dist/
+python/build/
+python/dist/
+python/src/*.egg-info/
+*.egg-info/

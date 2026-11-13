@@ -1,0 +1,24 @@
+[build-system]
+requires = ["setuptools>=68.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "dgem-sdk"
+version = "0.4.3"
+description = "Zero-dependency Python client, calibration math, conformal sets, and agent adapters for DiffusionGemma (dgem)"
+readme = "README.md"
+license = {text = "Apache-2.0"}
+requires-python = ">=3.11"
+classifiers = [
+  "Development Status :: 4 - Beta",
+  "Intended Audience :: Developers",
+  "License :: OSI Approved :: Apache Software License",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Typing :: Typed",
+]
+dependencies = []
+
+[tool.setuptools.packages.find]
+where = ["src"]
