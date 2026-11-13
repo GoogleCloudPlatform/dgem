@@ -19,6 +19,7 @@ from http.server import ThreadingHTTPServer
 import json
 import math
 import os
+import socket
 import sys
 import threading
 import types
@@ -44,6 +45,7 @@ class _CountingUpstreamServer(ThreadingHTTPServer):
 
     def get_request(self):
         sock, addr = super().get_request()
+        sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
         with self.lock:
             self.accepted_connections += 1
         return sock, addr
@@ -129,6 +131,26 @@ class UpstreamKeepAliveAndLogprobsTest(unittest.TestCase):
             self.assertEqual(response["choices"][0]["echo_model"], "dgemma")
         self.assertEqual(self.upstream.requests_served, 12)
         self.assertEqual(self.upstream.accepted_connections, 1)
+        cached_sock = self.mod._UPSTREAM_LOCAL.entry[1].sock
+        self.assertNotEqual(cached_sock.getsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY), 0)
+
+        # Verify _Server.get_request sets TCP_NODELAY on accepted HTTP/1.1 client connections.
+        srv = self.mod._Server(("127.0.0.1", 0), self.mod.Handler)
+        self.addCleanup(srv.server_close)
+        accepted_nodelay = []
+
+        def accept_once():
+            accepted_sock, _ = srv.get_request()
+            accepted_nodelay.append(accepted_sock.getsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY))
+            accepted_sock.close()
+
+        accept_thread = threading.Thread(target=accept_once, daemon=True)
+        accept_thread.start()
+        with socket.create_connection(srv.server_address, timeout=2.0):
+            pass
+        accept_thread.join(timeout=2.0)
+        self.assertEqual(len(accepted_nodelay), 1)
+        self.assertNotEqual(accepted_nodelay[0], 0)
 
         # Force upstream Connection: close on call 13, then verify call 14 opens cleanly.
         self.upstream.force_close_next = True

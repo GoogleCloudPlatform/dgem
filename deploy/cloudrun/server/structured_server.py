@@ -106,6 +106,7 @@ import json
 import math
 import os
 import random
+import socket
 import ssl
 import subprocess
 import threading
@@ -665,6 +666,12 @@ def _upstream_post_json(route_path, body, timeout=600):
             )
             _UPSTREAM_LOCAL.entry = (conn_key, conn)
         try:
+            if conn.sock is None:
+                conn.connect()
+                try:
+                    conn.sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+                except OSError:
+                    pass
             conn.request(
                 "POST",
                 target_path,
@@ -1580,6 +1587,16 @@ class _Server(ThreadingHTTPServer):
     # request" at 16+ concurrent requests). Excess requests queue on MAX_INFLIGHT instead.
     request_queue_size = 256
     daemon_threads = True
+
+    def get_request(self):
+        # dgem: disable Nagle's algorithm so BaseHTTPRequestHandler's separate header + body writes
+        # on HTTP/1.1 keep-alive connections do not hit the 40 ms Linux delayed-ACK stall.
+        sock, addr = super().get_request()
+        try:
+            sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+        except OSError:
+            pass
+        return sock, addr
 
 
 class Handler(BaseHTTPRequestHandler):
