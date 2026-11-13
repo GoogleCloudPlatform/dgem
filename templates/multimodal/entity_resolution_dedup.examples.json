@@ -1,0 +1,25 @@
+{
+  "multimodal": true,
+  "examples": [
+    {
+      "name": "typical",
+      "variables": {
+        "title_a": "San Pellegrino Sparkling Natural Mineral Water 6x330ml Cans",
+        "title_b": "San Pellegrino Sparkling Mineral Water 330ml Single Can",
+        "samples": 1
+      }
+    },
+    {
+      "name": "edge",
+      "variables": {
+        "title_a": "TrailPro Hydration Electrolyte Drink Mix Lemon-Lime Pack of 12",
+        "title_b": "TrailPro Hydration Electrolyte Drink Mix Lemon-Lime 12-Count Box",
+        "samples": 1
+      }
+    },
+    {
+      "name": "minimal",
+      "variables": {}
+    }
+  ]
+}

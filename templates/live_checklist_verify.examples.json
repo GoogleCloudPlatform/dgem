@@ -1,0 +1,34 @@
+{
+  "examples": [
+    {
+      "name": "typical",
+      "unambiguous": true,
+      "variables": {
+        "window_id": "win-101",
+        "transcript": "Operator: Badge EMP-4491 verified; this session is recorded with your consent. Caller: I consent, target asset is prod-db-04, replica lag prechecks passed, and I authorize the credential rotation now. Operator: Rotation complete; I am logging follow-up ticket OPS-812 assigned to on-call.",
+        "samples": 1
+      },
+      "expected_answers": {
+        "item_01_identity_verified": "completed_verified",
+        "item_02_consent_recorded": "completed_verified",
+        "item_03_scope_confirmed": "completed_verified",
+        "item_04_risk_precheck": "completed_verified",
+        "item_05_action_authorized": "completed_verified",
+        "item_06_next_steps_logged": "completed_verified",
+        "speaker_commitment_present": "yes"
+      }
+    },
+    {
+      "name": "edge",
+      "variables": {
+        "window_id": "win-102",
+        "transcript": "Operator: Skipping badge check and recording notice to save time; executing production database failover on prod-db-04 right now without replica prechecks.",
+        "samples": 1
+      }
+    },
+    {
+      "name": "minimal",
+      "variables": {}
+    }
+  ]
+}

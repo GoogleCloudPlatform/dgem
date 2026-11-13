@@ -1,0 +1,39 @@
+{
+  "examples": [
+    {
+      "name": "typical",
+      "unambiguous": true,
+      "variables": {
+        "agent_1": "Priority P0: Edit cmd/serve.go only to fix /healthz readiness check",
+        "agent_2": "Priority P2: Edit docs/overview.md only to fix a broken Markdown link",
+        "agent_3": "Priority P2: Edit templates/support_triage.examples.json only to add a fixture",
+        "agent_4": "Priority P3: Edit Makefile only to add a help target",
+        "samples": 1
+      },
+      "expected_answers": {
+        "agent_1_lock_action": "grant_lock",
+        "agent_2_lock_action": "grant_lock",
+        "agent_3_lock_action": "grant_lock",
+        "agent_4_lock_action": "grant_lock",
+        "file_write_collision": "no",
+        "shared_state_hazard": "disjoint_safe",
+        "winning_agent": "agent_1",
+        "rollback_severity": "clean_fast_forward"
+      }
+    },
+    {
+      "name": "edge",
+      "variables": {
+        "agent_1": "Priority P0: Rewrite ExecuteSystemOne signature in pkg/decisionindex/engine.go",
+        "agent_2": "Priority P1: Edit ExecuteSystemOne lines 120-210 in pkg/decisionindex/engine.go",
+        "agent_3": "Priority P2: Duplicate task rewriting ExecuteSystemOne in pkg/decisionindex/engine.go",
+        "agent_4": "Priority P2: Update callers of old ExecuteSystemOne signature in cmd/systemone_serve.go",
+        "samples": 1
+      }
+    },
+    {
+      "name": "minimal",
+      "variables": {}
+    }
+  ]
+}

@@ -575,6 +575,20 @@ func defaultSampleVars(id string, vars []string) map[string]string {
 			m[v] = "CheckoutForm"
 		case "viewport":
 			m[v] = "desktop-1440px"
+		case "window_id":
+			m[v] = "win-001"
+		case "title_a":
+			m[v] = "San Pellegrino Sparkling Natural Mineral Water 6x330ml Cans"
+		case "title_b":
+			m[v] = "San Pellegrino Sparkling Mineral Water 330ml Single Can"
+		case "agent_1":
+			m[v] = "Edit pkg/decisionindex/engine.go to add PriorLogits validation"
+		case "agent_2":
+			m[v] = "Edit docs/overview.md to update architecture summary"
+		case "agent_3":
+			m[v] = "Edit templates/support_triage.examples.json to add edge fixture"
+		case "agent_4":
+			m[v] = "Edit scripts/docs_link_check.py to report anchor line numbers"
 		case "reference":
 			m[v] = "secondary cancel button"
 		case "fps":
