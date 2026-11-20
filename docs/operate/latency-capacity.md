@@ -51,6 +51,14 @@ Set them as environment variables on the container; `scripts/deploy_vertex_endpo
 Keep-alive matters under load: the server speaks HTTP/1.1 with a 256-connection backlog. Use clients that reuse
 connections.
 
+### Size the canvas and concurrency to your policy
+
+On sparse mixture-of-experts (MoE) GPUs (`26B` total parameters, `~4B` active per token across `8` of `128` routed experts), throughput peaks at moderate batch concurrency (typically `8`–`16` active sequences on a single 80 GB GPU) and drops if concurrency grows unbounded:
+
+- **Size per-request `diffusion_canvas_length` and the `--canvas` ceiling to your template.** In `structured_server.py`, `--canvas` (`CANVAS_LEN`) defaults to `64`, and `canvas_width(template)` (`min(CANVAS_LEN, -(-need // CANVAS_STEP) * CANVAS_STEP)` with `CANVAS_STEP = 16`) automatically rounds each request's `diffusion_canvas_length` down to the smallest multiple of `16` that fits the template (`16` for 1- and 2-question `lines` templates, `32` for 5 questions, and `64` for 10 questions) rather than padding short requests out to `CANVAS_LEN`. Measured on the `google/diffusiongemma-26B-A4B-it` SentencePiece tokenizer, a single-question `lines` template (`<|channel>thought\n<channel|>allow: yes<turn|>`) occupies `8` active tokens (`7` template tokens plus `<turn|>`, or `9` active tokens for `q1: yes`), while `2`, `5`, and `10` boolean or single-token `choice` questions occupy `14`, `29`, and `55` active tokens. If you call raw vLLM directly without `structured_server.py`, set `diffusion_canvas_length` per request to the smallest multiple of `16` that holds the template (`16` for 1–2 questions instead of `64` or `128`), because trailing `PAD` (`0`) positions still participate in bidirectional canvas attention and MoE expert dispatch without changing decision accuracy. On `structured_server.py`, lower `--canvas` from `64` to `32` (or `16`) when you want a hard upper ceiling for deployments that never serve `think` traces or wide multi-question policies.
+- **Cap `MAX_INFLIGHT` and `MAX_SEQS` at the MoE knee.** Past `16`–`32` simultaneous sequences (and earlier when `samples: 4` or `8` multiplies each decision into `4`–`8` vLLM sequences), ragged batches activate nearly all `128` experts per layer—turning a `4B`-active step into a `26B` memory-bandwidth step—while KV-cache pressure triggers chunked-prefill preemption. Set `MAX_INFLIGHT` (`8`–`16`) so burst traffic queues cleanly in userspace instead of thrashing the engine scheduler.
+- **Set `DISABLE_MM=1` on text-only deployments.** Passing `--language-model-only` skips loading and profiling the vision tower, freeing GPU memory for `KV_CACHE_GB`.
+
 ## Scaling out
 
 - **Vertex AI:** one dedicated-endpoint replica per GPU; set `VERTEX_MIN_REPLICAS` / `VERTEX_MAX_REPLICAS` and the
