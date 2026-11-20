@@ -1,0 +1,17 @@
+{
+  "hooks": {
+    "BeforeTool": [
+      {
+        "matcher": "run_shell_command|write_file|replace|mcp_.*",
+        "hooks": [
+          {
+            "name": "dgem-before-tool",
+            "type": "command",
+            "command": "python3 \"${extensionPath}/adk_guard.py\" gemini-cli-hook",
+            "timeout": 12000
+          }
+        ]
+      }
+    ]
+  }
+}

@@ -1,0 +1,25 @@
+{
+  "name": "dgem-safety-guard",
+  "version": "0.1.0",
+  "description": "Stage-0 + dgem BeforeTool safety gate for Gemini CLI (install alongside hooks/hooks.json)",
+  "settings": [
+    {
+      "name": "dgem Gateway URL",
+      "description": "Base URL of the running dgem serve gateway (for example http://127.0.0.1:8095).",
+      "envVar": "DGEM_GATEWAY_URL",
+      "sensitive": false
+    },
+    {
+      "name": "dgem Gateway API Key",
+      "description": "Optional X-DGem-Api-Key for authenticated dgem serve gateways.",
+      "envVar": "DGEM_GATEWAY_KEY",
+      "sensitive": true
+    },
+    {
+      "name": "dgem Auth Token",
+      "description": "Optional Bearer IAM or OIDC token for Cloud Run or IAP-fronted gateways.",
+      "envVar": "DGEM_AUTH_TOKEN",
+      "sensitive": true
+    }
+  ]
+}
