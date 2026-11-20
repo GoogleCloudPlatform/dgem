@@ -105,13 +105,11 @@ already catches most of the cases it affects.
 
 ### 4.4 Calibration by domain
 
-Raw probabilities are somewhat over-confident, and by how much depends on the domain: the temperature that best
-calibrates confidence differs noticeably between domains (for example, natural-language inference needs a much
-higher temperature than short intent questions).
+Sampler-distillation post-training sharpens single-step slot distributions, so raw probabilities are over-confident by an amount that depends on the domain (for example, natural-language inference needs a higher temperature than short intent questions).
 
-**What you do:** fit one temperature per policy on held-out decisions; a single global value does not fit every
-domain ([Calibrate your policy](/dgem/confidence/calibrate-your-policy/)). Temperature never changes which answer wins, only how
-confident it reports.
+**What you do:** fit one `"temperature"` value per policy on held-out decisions ([Calibrate your policy](/dgem/confidence/calibrate-your-policy/)). Temperature scaling rescales log-probabilities by $1 / T$ without changing which option wins, aligning reported confidence with empirical accuracy.
+
+Separate intra-model multi-sampling from Stage 2 escalation: setting `"samples": "auto"` spends extra diffusion noise draws on the *same* `dgem` checkpoint (and adds a second sequential round-trip), whereas `cascade_mode: "entropy"` hands calibrated high-hesitation cases to a larger Stage 2 model (`gemini-3.8-flash`) or human reviewer.
 
 ### 4.5 Results judged against measured noise
 
