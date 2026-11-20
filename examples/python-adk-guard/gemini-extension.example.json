@@ -1,0 +1,20 @@
+{
+  "name": "dgem-safety-guard",
+  "version": "0.1.0",
+  "description": "Stage-0 + dgem BeforeTool safety gate for Gemini CLI",
+  "hooks": {
+    "BeforeTool": [
+      {
+        "matcher": "run_shell_command|write_file|replace",
+        "hooks": [
+          {
+            "name": "dgem-before-tool",
+            "type": "command",
+            "command": "python3 /path/to/dgem/examples/python-adk-guard/adk_guard.py gemini-cli-hook",
+            "timeout": 12000
+          }
+        ]
+      }
+    ]
+  }
+}
