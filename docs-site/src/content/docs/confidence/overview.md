@@ -103,15 +103,14 @@ In-pass corrections (dividing out a blank-question prior, or reading a reversed 
 decisions reliably in our tests, so order bias is **tracked as a release gate rather than corrected**. Hesitation
 already catches most of the cases it affects.
 
-### 4.4 Calibration by domain
+### 4.4 Calibration by domain and base rate
 
-Raw probabilities are somewhat over-confident, and by how much depends on the domain: the temperature that best
-calibrates confidence differs noticeably between domains (for example, natural-language inference needs a much
-higher temperature than short intent questions).
+Sampler-distillation post-training sharpens single-step slot distributions, so raw probabilities are over-confident by an amount that depends on the domain. Two distinct post-hoc levers address this:
 
-**What you do:** fit one temperature per policy on held-out decisions; a single global value does not fit every
-domain ([Calibrate your policy](/dgem/confidence/calibrate-your-policy/)). Temperature never changes which answer wins, only how
-confident it reports.
+- **Temperature scaling (`"temperature"`):** rescales log-probabilities by $1 / T$ without changing which option wins. Fit one temperature per policy on held-out decisions ([Calibrate your policy](/dgem/confidence/calibrate-your-policy/)).
+- **Prior-bias / Platt scaling (`"prior_bias"`):** when your production base rate differs sharply from the model's zero-shot prior (for example, static-analysis alerts where only a minority of flagged snippets are real vulnerabilities), pure temperature scaling cannot move false-positive scores across $0.5$. Fit both `"temperature"` and per-option `"prior_bias"` offsets ($z'_k = z_k / T + b_{q,k}$) on held-out `diagnostics.questions[id].logprobs` so both calibration error and decision thresholds align with your target prevalence.
+
+Separate intra-model multi-sampling from Stage 2 escalation: setting `"samples": "auto"` spends extra diffusion noise draws on the *same* `dgem` checkpoint (and adds a second sequential round-trip), whereas `cascade_mode: "entropy"` hands calibrated high-hesitation cases to a larger Stage 2 model (`gemini-3.8-flash`) or human reviewer.
 
 ### 4.5 Results judged against measured noise
 
