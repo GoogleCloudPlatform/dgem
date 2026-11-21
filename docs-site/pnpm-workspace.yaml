@@ -17,3 +17,5 @@ allowBuilds:
 onlyBuiltDependencies:
   - esbuild
   - sharp
+overrides:
+  katex: ^0.19.0
