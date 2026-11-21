@@ -14,10 +14,10 @@
           {"id": "b1", "kind": "test_trace", "full_tokens": 410, "stub_tokens": 80, "summary": "Failing race detector stack trace from TestWorkerPoolDrain pointing to worker_pool.go:88 and :114."},
           {"id": "b2", "kind": "file_excerpt", "full_tokens": 640, "stub_tokens": 110, "summary": "TaskDispatcher interface definition in dispatcher.go; only method signatures are referenced by worker_pool.go."},
           {"id": "b3", "kind": "turn_summary", "full_tokens": 480, "stub_tokens": 75, "summary": "Prior attempt summary noting mutex lock order constraints in package pool."},
-          {"id": "b4", "kind": "tool_output", "full_tokens": 590, "stub_tokens": 60, "summary": "Stale directory listing of docs/marketing/ from turn 1."},
-          {"id": "b5", "kind": "tool_output", "full_tokens": 510, "stub_tokens": 55, "summary": "Completed CSS lint output from an unrelated frontend check in turn 2."},
-          {"id": "b6", "kind": "file_excerpt", "full_tokens": 700, "stub_tokens": 95, "summary": "Unrelated README badge table inspected during repository onboarding."},
-          {"id": "b7", "kind": "tool_output", "full_tokens": 430, "stub_tokens": 50, "summary": "Superseded git status output before checking out the current branch."}
+          {"id": "b4", "kind": "tool_output", "full_tokens": 590, "stub_tokens": 60, "summary": "Stale directory listing of docs/marketing/ from turn 1; completely unrelated to Go code."},
+          {"id": "b5", "kind": "tool_output", "full_tokens": 510, "stub_tokens": 55, "summary": "Redundant exact duplicate of b1's race detector stack trace already retained verbatim above."},
+          {"id": "b6", "kind": "tool_output", "full_tokens": 700, "stub_tokens": 95, "summary": "Unrelated raw PNG binary hex dump of a marketing logo from an archived press kit."},
+          {"id": "b7", "kind": "tool_output", "full_tokens": 430, "stub_tokens": 50, "summary": "Stale, empty stdout from a canceled 'echo ok' shell probe on turn 1; zero diagnostic value."}
         ]
       },
       "expected_answers": {
