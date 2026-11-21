@@ -17,6 +17,7 @@ package cmd
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"strings"
@@ -156,4 +157,102 @@ func systemOneForwardBody(body []byte, req decisionindex.SystemOneRequest) ([]by
 	}
 	top["images"] = imgs
 	return json.Marshal(top)
+}
+
+// seedTokenUsers lists callers (dgem.user) whose requests default to seed_token="fixed" when the request body
+// does not explicitly set seed_token; "*" means every caller. Set with --seed-token-users / DGEM_SEED_TOKEN_USERS.
+var seedTokenUsers []string
+
+func seedTokenCaller(user string) bool {
+	for _, u := range seedTokenUsers {
+		if u == "*" || (user != "" && strings.EqualFold(u, user)) {
+			return true
+		}
+	}
+	return false
+}
+
+// normalizeSeedToken validates a seed_token value ("random" or "fixed"; empty means unset).
+func normalizeSeedToken(v string) (string, error) {
+	s := strings.ToLower(strings.TrimSpace(v))
+	switch s {
+	case "", "random", "fixed":
+		return s, nil
+	default:
+		return "", fmt.Errorf("seed_token must be random or fixed (got %q)", v)
+	}
+}
+
+// applySystemOneSeedToken injects defaultSeedToken (e.g. "fixed") into a JSON /v1/systemone body only when
+// "seed_token" is not already set by the caller. Returns the (possibly updated) body and the effective seed_token
+// ("" if unset). When no change is needed, the original body bytes are returned verbatim.
+func applySystemOneSeedToken(body []byte, defaultSeedToken string) ([]byte, string, error) {
+	var top map[string]json.RawMessage
+	if err := json.Unmarshal(body, &top); err != nil {
+		return body, "", nil
+	}
+	if raw, ok := top["seed_token"]; ok && len(bytes.TrimSpace(raw)) > 0 && !bytes.Equal(bytes.TrimSpace(raw), []byte("null")) {
+		var existing string
+		if err := json.Unmarshal(raw, &existing); err != nil {
+			return nil, "", fmt.Errorf("seed_token must be a string (\"random\" or \"fixed\")")
+		}
+		norm, err := normalizeSeedToken(existing)
+		if err != nil {
+			return nil, "", err
+		}
+		if norm != "" {
+			return body, norm, nil
+		}
+	}
+	if defaultSeedToken == "" {
+		return body, "", nil
+	}
+	val, err := json.Marshal(defaultSeedToken)
+	if err != nil {
+		return nil, "", err
+	}
+	top["seed_token"] = val
+	out, err := json.Marshal(top)
+	if err != nil {
+		return nil, "", err
+	}
+	return out, defaultSeedToken, nil
+}
+
+// applySchemaSeedToken resolves seed_token on a /api/decide schema: explicit caller override wins,
+// otherwise an existing template seed_token is kept, otherwise defaultSeedToken (from DGEM_SEED_TOKEN_USERS)
+// is injected. Returns the (possibly updated) schema JSON and the effective seed_token ("" if unset).
+func applySchemaSeedToken(schemaJSON, explicit, defaultSeedToken string) (string, string, error) {
+	exp, err := normalizeSeedToken(explicit)
+	if err != nil {
+		return schemaJSON, "", err
+	}
+	var m map[string]any
+	if err := json.Unmarshal([]byte(schemaJSON), &m); err != nil {
+		return schemaJSON, "", fmt.Errorf("seed_token: schema is not a JSON object: %w", err)
+	}
+	if exp != "" {
+		m["seed_token"] = exp
+		b, err := json.Marshal(m)
+		if err != nil {
+			return schemaJSON, "", err
+		}
+		return string(b), exp, nil
+	}
+	if raw, ok := m["seed_token"]; ok && raw != nil {
+		if s, ok := raw.(string); ok {
+			if norm, nErr := normalizeSeedToken(s); nErr == nil && norm != "" {
+				return schemaJSON, norm, nil
+			}
+		}
+	}
+	if defaultSeedToken == "" {
+		return schemaJSON, "", nil
+	}
+	m["seed_token"] = defaultSeedToken
+	b, err := json.Marshal(m)
+	if err != nil {
+		return schemaJSON, "", err
+	}
+	return string(b), defaultSeedToken, nil
 }

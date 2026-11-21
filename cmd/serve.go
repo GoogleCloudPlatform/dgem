@@ -121,6 +121,7 @@ func init() {
 	serveCmd.Flags().StringVar(&serveCascadeModel, "cascade-model", DefaultCascadeGeminiModel, "Default Stage-2 Vertex AI Gemini 3.x model for cascade escalation (e.g. 'gemini-3.8-flash', 'gemini-3.5-flash-lite'; env: DGEM_CASCADE_MODEL)")
 	serveCmd.Flags().StringVar(&serveCascadeModels, "cascade-models", DefaultCascadeGeminiModels, "Comma-separated list of selectable Stage-2 Vertex AI Gemini 3.x models exposed in the API & Web Studio (env: DGEM_CASCADE_MODELS)")
 	serveCmd.Flags().StringSliceVar(&systemOneRawUsers, "systemone-raw-users", nil, "Callers (verified identity, e.g. a service account email; '*' for all) whose /v1/systemone requests are forwarded to the serving image unchanged when it can answer them as sent (<=8 questions, 2-26 options or levels); other requests use the adapter (env: DGEM_SYSTEMONE_RAW_USERS)")
+	serveCmd.Flags().StringSliceVar(&seedTokenUsers, "seed-token-users", nil, "Callers (verified identity, e.g. a service account email; '*' for all) whose requests default to seed_token=\"fixed\" when unset in the body, on /v1/systemone (pass-through and adapter) and /api/decide (env: DGEM_SEED_TOKEN_USERS)")
 	serveCmd.Flags().StringVar(&serveSystemOneMode, "systemone-mode", "adapter", "Serving mode for POST /v1/systemone: 'adapter' (applies wide-option bracket tournaments & multi-slot canvas batching, default) or 'passthrough'")
 	serveCmd.Flags().Float64Var(&serveSystemOneTemp, "systemone-temperature", 1.0, "Post-hoc slot logit temperature scaling factor T* for /v1/systemone (default 1.0)")
 
@@ -161,6 +162,7 @@ type GatewayDecideRequest struct {
 	SuggestExpansions    bool                `json:"suggest_expansions,omitempty"` // dynamically inject 'other_unclassified' and propose new {"name", "description"} options
 	ExpansionEntropy     float64             `json:"expansion_entropy,omitempty"`  // Shannon entropy threshold (in nats) for expansion suggestions (default 0.35)
 	Layout               string              `json:"layout,omitempty"`             // prompt layout: "document_first" | "schema_first"; empty = template or server default
+	SeedToken            string              `json:"seed_token,omitempty"`         // answer-slot seed token: "random" | "fixed"; empty = template, per-caller default, or server default
 	Stage2Prior          string              `json:"stage2_prior,omitempty"`       // how Stage 1's answer is shown to the Stage-2 cascade: "full" | "soft" | "none"; empty = DGEM_CASCADE_PRIOR or "soft"
 	Temperature          *client.Temperature `json:"temperature,omitempty"`        // post-hoc temperature: a number, or {"noul":T,"choice":T,"score":T}; overrides the template's "temperature"
 }
@@ -1508,6 +1510,14 @@ func runServe(cmd *cobra.Command, args []string) error {
 			}
 		}
 	}
+	if v := os.Getenv("DGEM_SEED_TOKEN_USERS"); v != "" && !cmd.Flags().Changed("seed-token-users") {
+		seedTokenUsers = nil
+		for _, u := range strings.Split(v, ",") {
+			if u = strings.TrimSpace(u); u != "" {
+				seedTokenUsers = append(seedTokenUsers, u)
+			}
+		}
+	}
 	if envSOTemp := os.Getenv("DGEM_SYSTEMONE_TEMP"); envSOTemp != "" && !cmd.Flags().Changed("systemone-temperature") {
 		if t, err := strconv.ParseFloat(envSOTemp, 64); err == nil && t > 0 {
 			serveSystemOneTemp = t
@@ -2108,6 +2118,26 @@ func runServe(cmd *cobra.Command, args []string) error {
 			return
 		}
 
+		seedToken := payload.SeedToken
+		if seedToken == "" {
+			seedToken = r.Header.Get("X-DGem-Seed-Token")
+		}
+		if seedToken == "" {
+			seedToken = r.URL.Query().Get("seed_token")
+		}
+		defaultSeedToken := ""
+		if seedTokenCaller(callerEmail(r)) {
+			defaultSeedToken = "fixed"
+		}
+		var effectiveSeedToken string
+		if schemaContent, effectiveSeedToken, err = applySchemaSeedToken(schemaContent, seedToken, defaultSeedToken); err != nil {
+			failDecide(http.StatusBadRequest, err.Error(), err.Error())
+			return
+		}
+		if effectiveSeedToken != "" {
+			rootSpan.SetAttributes(attribute.String("dgem.seed_token", effectiveSeedToken))
+		}
+
 		var injectedSlots map[string]bool
 		var existingOptions map[string][]client.ProposedOption
 		if suggestExpansions {
@@ -2417,6 +2447,9 @@ func runServe(cmd *cobra.Command, args []string) error {
 	if len(systemOneRawUsers) > 0 {
 		fmt.Printf("   • SystemOne raw:       %s (forwarded unchanged when the serving image can answer as sent)\n", strings.Join(systemOneRawUsers, ", "))
 	}
+	if len(seedTokenUsers) > 0 {
+		fmt.Printf("   • Seed token fixed:    %s (defaults unset seed_token to \"fixed\" on /v1/systemone and /api/decide)\n", strings.Join(seedTokenUsers, ", "))
+	}
 	switch {
 	case blc.on():
 		fmt.Printf("   ⚠ Body logging:        ON (%s) until %s for %s (sample %.2f): request/response content goes to the logs as log_type %q\n",
@@ -2652,15 +2685,45 @@ func v1ProxyHandler(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		if passThrough {
+			defaultST := ""
+			if seedTokenCaller(callerEmail(r)) {
+				defaultST = "fixed"
+			}
+			nb, effST, stErr := applySystemOneSeedToken(bodyBytes, defaultST)
+			if stErr != nil {
+				failSpan(prepSpan, http.StatusBadRequest, stErr.Error())
+				prepSpan.End()
+				failSpan(proxySpan, http.StatusBadRequest, stErr.Error())
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusBadRequest)
+				_ = json.NewEncoder(w).Encode(map[string]interface{}{
+					"error": map[string]string{"message": stErr.Error(), "type": "invalid_request_error"},
+				})
+				return
+			}
+			bodyBytes = nb
+			if effST != "" {
+				prepSpan.SetAttributes(attribute.String("dgem.seed_token", effST))
+				proxySpan.SetAttributes(attribute.String("dgem.seed_token", effST))
+			}
 			prepSpan.SetAttributes(attribute.String("dgem.systemone.mode", "passthrough"))
 			prepSpan.End()
 			proxySpan.SetAttributes(attribute.String("dgem.systemone.mode", "passthrough"))
 		} else {
+			soOpts := decisionindex.DefaultEngineOptions()
+			soOpts.TemperatureScale = serveSystemOneTemp
+			effST := strings.ToLower(strings.TrimSpace(soReq.SeedToken))
+			if effST == "" && seedTokenCaller(callerEmail(r)) {
+				soOpts.SeedToken = "fixed"
+				effST = "fixed"
+			}
+			if effST != "" {
+				prepSpan.SetAttributes(attribute.String("dgem.seed_token", effST))
+				proxySpan.SetAttributes(attribute.String("dgem.seed_token", effST))
+			}
 			prepSpan.SetAttributes(attribute.String("dgem.systemone.mode", "adapter"))
 			prepSpan.End()
 			proxySpan.SetAttributes(attribute.String("dgem.systemone.mode", "adapter"))
-			soOpts := decisionindex.DefaultEngineOptions()
-			soOpts.TemperatureScale = serveSystemOneTemp
 			cli := GetClientForURL(resolvedURL)
 			soResp, soErr := decisionindex.ExecuteSystemOne(ctx, cli, soReq, soOpts)
 			if soErr != nil {
@@ -2696,6 +2759,29 @@ func v1ProxyHandler(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	} else {
+		if reqPath == "/v1/systemone" && !isMultipart {
+			defaultST := ""
+			if seedTokenCaller(callerEmail(r)) {
+				defaultST = "fixed"
+			}
+			nb, effST, stErr := applySystemOneSeedToken(bodyBytes, defaultST)
+			if stErr != nil {
+				failSpan(prepSpan, http.StatusBadRequest, stErr.Error())
+				prepSpan.End()
+				failSpan(proxySpan, http.StatusBadRequest, stErr.Error())
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusBadRequest)
+				_ = json.NewEncoder(w).Encode(map[string]interface{}{
+					"error": map[string]string{"message": stErr.Error(), "type": "invalid_request_error"},
+				})
+				return
+			}
+			bodyBytes = nb
+			if effST != "" {
+				prepSpan.SetAttributes(attribute.String("dgem.seed_token", effST))
+				proxySpan.SetAttributes(attribute.String("dgem.seed_token", effST))
+			}
+		}
 		prepSpan.End()
 	}
 
