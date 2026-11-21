@@ -61,8 +61,9 @@ var (
 	serveDefaultBackend string
 	serveCascadeModel   string
 	serveCascadeModels  string
-	serveSystemOneMode  string
-	serveSystemOneTemp  float64
+	serveSystemOneMode           string
+	serveSystemOneTemp           float64
+	serveSystemOneMaxConcurrency int
 	backendConfigMu     sync.RWMutex
 	proxyHTTPClient     = newProxyHTTPClient()
 )
@@ -124,6 +125,7 @@ func init() {
 	serveCmd.Flags().StringSliceVar(&seedTokenUsers, "seed-token-users", nil, "Callers (verified identity, e.g. a service account email; '*' for all) whose requests default to seed_token=\"fixed\" when unset in the body, on /v1/systemone (pass-through and adapter) and /api/decide (env: DGEM_SEED_TOKEN_USERS)")
 	serveCmd.Flags().StringVar(&serveSystemOneMode, "systemone-mode", "adapter", "Serving mode for POST /v1/systemone: 'adapter' (applies wide-option bracket tournaments & multi-slot canvas batching, default) or 'passthrough'")
 	serveCmd.Flags().Float64Var(&serveSystemOneTemp, "systemone-temperature", 1.0, "Post-hoc slot logit temperature scaling factor T* for /v1/systemone (default 1.0)")
+	serveCmd.Flags().IntVar(&serveSystemOneMaxConcurrency, "systemone-max-concurrency", 4, "Maximum concurrent upstream passes per multi-pass /v1/systemone adapter request (1 = serial; default 4; env: DGEM_SYSTEMONE_MAX_CONCURRENCY)")
 
 	RootCmd.AddCommand(serveCmd)
 }
@@ -1523,6 +1525,11 @@ func runServe(cmd *cobra.Command, args []string) error {
 			serveSystemOneTemp = t
 		}
 	}
+	if envSOConc := os.Getenv("DGEM_SYSTEMONE_MAX_CONCURRENCY"); envSOConc != "" && !cmd.Flags().Changed("systemone-max-concurrency") {
+		if c, err := strconv.Atoi(strings.TrimSpace(envSOConc)); err == nil && c >= 1 {
+			serveSystemOneMaxConcurrency = c
+		}
+	}
 
 	if env := os.Getenv("DGEM_BACKENDS"); env != "" && !cmd.Flags().Changed("backends") {
 		serveBackendsFlag = env
@@ -2712,6 +2719,9 @@ func v1ProxyHandler(w http.ResponseWriter, r *http.Request) {
 		} else {
 			soOpts := decisionindex.DefaultEngineOptions()
 			soOpts.TemperatureScale = serveSystemOneTemp
+			if serveSystemOneMaxConcurrency > 0 {
+				soOpts.MaxConcurrency = serveSystemOneMaxConcurrency
+			}
 			effST := strings.ToLower(strings.TrimSpace(soReq.SeedToken))
 			if effST == "" && seedTokenCaller(callerEmail(r)) {
 				soOpts.SeedToken = "fixed"
@@ -2733,7 +2743,10 @@ func v1ProxyHandler(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 			if soResp.EvaluationTrace != nil {
-				proxySpan.SetAttributes(attribute.Int("dgem.systemone.forward_passes", soResp.EvaluationTrace.ForwardPasses))
+				proxySpan.SetAttributes(
+					attribute.Int("dgem.systemone.forward_passes", soResp.EvaluationTrace.ForwardPasses),
+					attribute.Float64("dgem.systemone.server_ms", soResp.EvaluationTrace.ServerMs),
+				)
 			}
 			respBytes, mErr := json.Marshal(soResp)
 			if mErr != nil {
