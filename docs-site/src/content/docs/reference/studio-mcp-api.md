@@ -25,7 +25,7 @@ flowchart LR
     end
 
     subgraph Backends["DiffusionGemma GPU Backends"]
-        CR["Serverless Cloud Run GPU\n1× RTX Pro 6000 (48GB) / 1× L4 (24GB)"]
+        CR["Serverless Cloud Run GPU\n1× RTX Pro 6000 (96GB) / 1× L4 (24GB)"]
         METAL["Local Apple Silicon Metal\ndiffgemma serve (:8080)"]
     end
 
@@ -85,7 +85,7 @@ When a `multimodal/*` policy (`bbox_localization`, `bbox_multi_object_detr`) is 
 - Decision Studio draws both the **Continuous Softmax Expectation Box** ($\hat{c}_m = \sum_k v_k p_{m,k}$, green solid overlay) and the **Discrete 21-Bin Argmax Box** (amber dashed overlay) directly over the image, alongside **per-edge entropy** bars (`ymin`, `xmin`, `ymax`, `xmax`). These boxes are coarse ([what dgem can do with images](/dgem/policies/images/)); the canvas is for inspecting dgem's spatial readout, not for precise localization.
 
 ### 2.4 Scale-to-Zero GPU Cold-Start Orchestrator & OpenTelemetry Waterfall
-- **Live GPU State Pill**: Polls `GET /api/status` to show whether the upstream Cloud Run GPU (`NVIDIA RTX Pro 6000` 48GB or `NVIDIA L4` 24GB) is `warm_and_ready`, `warming_up` (with elapsed seconds and progress bar), or `scaled_to_zero`.
+- **Live GPU State Pill**: Polls `GET /api/status` to show whether the upstream Cloud Run GPU (`NVIDIA RTX Pro 6000` 96GB or `NVIDIA L4` 24GB) is `warm_and_ready`, `warming_up` (with elapsed seconds and progress bar), or `scaled_to_zero`.
 - **One-Click GPU Wakeup (`POST /api/warmup`)**: Wakes a `0`-instance Cloud Run GPU in the background and streams readiness to all connected browser tabs and MCP agents simultaneously (`MarkGPUWarm()` broadcast channel).
 - **OpenTelemetry Trace Inspector (`GET /api/traces`)**: Displays the exact W3C `trace_id`, splitting total wall time into `cold_start_wait_ms` (GCS FUSE weight streaming) vs. `gpu_forward_ms` (pure [`DiffusionGemma`](https://gemma.ai/models/diffusiongemma/) forward pass), and exports spans to Google Cloud Trace when `GOOGLE_CLOUD_PROJECT` is set.
 

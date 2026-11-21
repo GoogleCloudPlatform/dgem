@@ -91,8 +91,8 @@ To cost nothing while idle, the upstream `dgemma` Cloud Run GPU service scales d
 
 When the GPU is already warm (`dgem.warmup_attempts = 1` and `dgem.gpu.cold_start_wait_ms = 0`), a 3-question decision takes tens of milliseconds of GPU time on an RTX PRO 6000; end to end adds network and routing ([Latency and capacity](/dgem/operate/latency-capacity/)). Three things make a decision slower:
 
-1. **Eager Execution (`--enforce-eager`) & `TRITON_ATTN`**:
-   FlashAttention-2 and CUDA Graphs reject [DiffusionGemma](https://gemma.ai/models/diffusiongemma/)'s mixed **causal-prompt + bidirectional-canvas** attention mask. Running `TRITON_ATTN` in eager mode introduces Python/kernel dispatch overhead across the iterative denoising steps (`dgem.gpu.steps`, typically 8–16 steps per read).
+1. **Eager Execution (`ENFORCE_EAGER=1`) & `TRITON_ATTN`**:
+   FlashAttention-2 rejects [DiffusionGemma](https://gemma.ai/models/diffusiongemma/)'s mixed **causal-prompt + bidirectional-canvas** attention mask, so vLLM serves it with `TRITON_ATTN`. CUDA graphs (`ENFORCE_EAGER=0`) do capture and serve with `TRITON_ATTN`—roughly halving warm GPU latency—but production defaults keep eager mode (`ENFORCE_EAGER=1`) for faster startup and fixed-seed reproducibility on NVFP4 ([Eager vs CUDA graphs](/dgem/operate/latency-capacity/#eager-vs-cuda-graphs-enforce_eager)). Running in eager mode introduces Python/kernel dispatch overhead across the iterative denoising steps (`dgem.gpu.steps`).
 2. **2-Stage Conditional Policy DAGs (`dgem.gpu.reads = 2`)**:
    Whenever a `.json.tmpl` policy uses `depends_on` / `ask_if` (for example, `secops_conditional_dag.json.tmpl`), `structured_server.py` partitions the questions into `level 0` and `level 1` in `schedule(qs)`, executing **2 sequential GPU forward passes (`reads=2`)** and doubling `dgem.gpu.denoise`.
 3. **Multimodal `SigLIP` Vision Encoding (`dgem.multimodal = true`)**:
