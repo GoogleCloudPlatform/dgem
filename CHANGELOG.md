@@ -6,6 +6,49 @@ image for a release in your own project with `make cloudrun-build`.
 
 ## Unreleased
 
+## v0.4.4 (2026-11-21)
+
+Serving-image (`deploy/cloudrun/`), gateway, `/v1/systemone` adapter, observability, Terraform, and documentation release.
+
+- **Serving-image upstream HTTP/1.1 keep-alive pool and lossless per-question logprobs (`deploy/cloudrun/server/structured_server.py`, `dgem.patch`, `pkg/client/`, `.github/workflows/`).**
+  Replaces per-request connections between `structured_server.py` and upstream `vLLM` with a shared bounded LIFO
+  HTTP/1.1 keep-alive pool (`TCP_NODELAY`, `read_many` `n=1` fast path, and CI-wired concurrency tests) and wires
+  lossless `diagnostics.questions[qid].logprobs` through `/v1/chat/completions`, `/v1/systemone`, and Go `pkg/client`
+  `ApplyTemperature` so saturated probabilities remain exact under post-hoc temperature scaling.
+- **Single-pass `/v1/systemone` prompt fidelity (`pkg/decisionindex/engine.go`).**
+  For single-pass fitting requests (`FitsServingImage`), aligns the adapter prompt with the serving image's native
+  `/v1/systemone` handler — preserving verbatim plain-text `state`, request `"questions"` and choice option order
+  (`OptionOrderSource` unless `OptionOrderAlpha` is set), and caller-only instructions — while keeping the adapter
+  response envelope (`evaluation_trace.server_ms`) and multi-pass/wide-option behavior unchanged.
+- **Bounded parallel multi-pass `/v1/systemone` execution (`pkg/decisionindex/engine.go`, `cmd/serve.go`).**
+  Executes independent multi-slot batches (`>8` questions), multiple wide questions (`>26` options), and wide-option
+  Round-1 bracket batches (`>160` options) concurrently up to `EngineOptions.MaxConcurrency` (default `4`, with
+  cancel-on-first-error and zero overhead for single-pass or `MaxConcurrency=1`), exposes `--systemone-max-concurrency`
+  / `DGEM_SYSTEMONE_MAX_CONCURRENCY` on `dgem serve`, and records `dgem.systemone.server_ms` on gateway adapter spans.
+- **Per-caller deterministic `seed_token="fixed"` (`cmd/serve.go`, `cmd/caller_log.go`, `pkg/decisionindex/engine.go`).**
+  Adds `--seed-token-users` / `DGEM_SEED_TOKEN_USERS` to default unset `seed_token` to `"fixed"` for listed callers on
+  `/v1/systemone` (both pass-through and adapter paths) and `/api/decide` (which also accepts JSON `"seed_token"`,
+  `X-DGem-Seed-Token`, or `?seed_token=`), keeping the global default `"random"`, respecting explicit caller overrides,
+  and logging `dgem.seed_token` on gateway spans.
+- **OpenTelemetry OTLP/gRPC trace export migration (`cmd/otel.go`, `go.mod`, `deploy/terraform/`, `scripts/setup_cloudrun_iam.sh`).**
+  Migrates gateway trace export off the deprecated `opentelemetry-operations-go/exporter/trace` module (scheduled for
+  archival after January 1, 2027) to standard `otlptracegrpc` (`telemetry.googleapis.com:443` with Application Default
+  Credentials and `x-goog-user-project`, honoring `OTEL_EXPORTER_OTLP_*` overrides, logging a non-fatal stderr warning
+  on init failure, and filtering internal OTLP export spans). Enables `telemetry.googleapis.com` and binds
+  `roles/telemetry.tracesWriter` alongside `roles/cloudtrace.agent` in Terraform and `scripts/setup_cloudrun_iam.sh`.
+- **Declarative Terraform deployment modules and expanded Vertex GPU profiles (`deploy/terraform/`, `scripts/deploy_vertex_endpoint.sh`, `scripts/teardown_vertex_endpoint.sh`).**
+  Adds declarative Terraform modules for Cloud Run GPU, Vertex AI, gateway, IAM, Secret Manager, and Artifact Registry;
+  adds `VERTEX_PROFILE=h100` and `a100` (with automatic `EXTRA_ARGS="--kv-cache-dtype bfloat16"` for SM80), makes
+  `ENFORCE_EAGER` overridable via environment (default unchanged: `1`), JSON-encodes non-empty `EXTRA_ARGS`, and
+  requires explicit `VERTEX_ENDPOINT_NAME` or `VERTEX_PROFILE` on teardown.
+- **Hardware sizing guide, fine-tuning & tuning docs, template fix, and CI/lint hygiene (`docs/`, `docs-site/`, `templates/`, `cmd/`, `pkg/`).**
+  Adds `docs/deploy/hardware.md` (correcting RTX PRO 6000 VRAM to `~96 GB` across docs, covering NVFP4/FP8/BF16 across
+  RTX PRO 6000, H100, A100, L4, `TP=1` scaling, and Cloud TPU status), documents *Eager vs CUDA graphs* in
+  `docs/operate/latency-capacity.md` and corrects `observability.md`, adds developer fine-tuning and production tuning
+  guides (`docs/policies/fine-tuning.md`, delimiter/shared-budget guidance), makes `agent_context_pruning` `'typical'`
+  blocks unambiguous, resolves `staticcheck`/`unused` findings across `cmd/` and `pkg/decisionindex/`, and updates
+  Astro (`7.4.7`), OpenTelemetry (`v1.47.0`), and KaTeX (`0.19.1`) dependencies alongside expanded CI gates.
+
 ## v0.4.3 (2026-11-10)
 
 Serving-image (`deploy/cloudrun/`), gateway, CLI, MCP, and policy-template release.
