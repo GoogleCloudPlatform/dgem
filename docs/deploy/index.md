@@ -25,9 +25,9 @@ This track takes `dgem` from your laptop to a production endpoint and keeps it r
 Deciding a whole dataset rather than one request at a time? [To batch or not to batch](batch.md) compares a warm
 endpoint, Cloud Run Jobs, Dataflow and Vertex AI batch prediction, with measured cost per 1,000 decisions.
 
-Hosting it yourself? [Build the serving image](public-images.md) first; [Evaluate dgem on your own GPU](evaluate.md)
-covers GPU requirements, checking the install with the regression matrix, and a custom evaluation on your own
-labelled data.
+Hosting it yourself? [Build the serving image](public-images.md) first; [Hardware and GPU sizing](hardware.md) compares
+measured GPU shapes (RTX PRO 6000, H100, A100, L4), and [Evaluate dgem on your own GPU](evaluate.md) covers checking
+the install with the regression matrix and a custom evaluation on your own labelled data.
 
 ## Crawl → walk → run
 
@@ -42,9 +42,9 @@ concurrency and network: measure it on your own deployment ([method](#method)).
 
 ## TL;DR recommendations
 
-- **GPU:** use a Blackwell GPU (RTX PRO 6000). The checkpoint is NVFP4 (4-bit); Blackwell runs FP4 natively, and
-  the L4 was slower on every request type in our tests. Other GPUs are untested
-  ([requirements](evaluate.md#0-hardware)).
+- **GPU:** use a Blackwell GPU (RTX PRO 6000, ~96 GB). The checkpoint is NVFP4 (4-bit); Blackwell runs FP4 natively,
+  beating H100 80GB, A100 80GB, and L4 on both latency and cost per decision in our tests
+  ([hardware and GPU sizing](hardware.md)).
 - **Production:** a Vertex AI dedicated endpoint with minimum replicas ≥ 1, autoscaling on GPU duty cycle.
 - **Failover:** a scale-to-zero Cloud Run GPU service using the lean image and Direct VPC egress.
 - **Bulk decisions:** Cloud Run Jobs with the batch server settings above ~10,000 rows, or your warm endpoint if it

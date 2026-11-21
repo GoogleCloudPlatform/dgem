@@ -41,10 +41,28 @@ how to measure. GPU time below means the server-reported denoise time (`diagnost
 | `MAX_MODEL_LEN` | 4096 (image); 8192 in the deploy scripts on RTX PRO 6000 | Longest prompt plus answer, in tokens. Longer prompts are refused, so raise it if your inputs are long; it needs KV cache memory |
 | `DEFAULT_ISOLATE` | `auto` | Which questions get a read of their own when a request doesn't say (`auto`, `none`, `noul`, `all`) |
 | `DISABLE_MM` | 0 | `1` turns off the vision tower (required on L4 Cloud Run, saves memory) |
-| `ENFORCE_EAGER` | 1 | Eager mode: shorter start-up, no graph compilation |
+| `ENFORCE_EAGER` | 1 | `1` = eager mode (faster start-up, fixed-seed reproducible on NVFP4). `0` = CUDA graphs + `torch.compile` (lower latency and higher throughput, not fixed-seed reproducible on NVFP4; see [below](#eager-vs-cuda-graphs-enforce_eager)). |
 
 Set them as environment variables on the container; `scripts/deploy_vertex_endpoint.sh` and
 `scripts/deploy_cloudrun_vllm.sh` pass the ones above. Change one at a time and measure before and after.
+
+### Eager vs CUDA graphs (`ENFORCE_EAGER`)
+
+Setting `ENFORCE_EAGER=0` enables CUDA graphs and `torch.compile` with `TRITON_ATTN`. On a single RTX PRO 6000
+serving the NVFP4 checkpoint, switching only `ENFORCE_EAGER` from `1` to `0` measured:
+
+- **Latency:** ~2.2× lower server-side median decision time (~55–58 ms → ~26 ms for a single question, with similar
+  gains on 4-question and image requests).
+- **Throughput:** ~1.5× higher peak throughput (~112–118 vs ~70–85 req/s at `samples: 1`).
+- **Start-up:** adds ~1 minute of compile and graph capture at boot (~1 s on the first real request after start-up).
+- **Determinism and answer shift:** with NVFP4 weights, `ENFORCE_EAGER=0` is **no longer reproducible** under
+  `seed_token: "fixed"`, and a small fraction of items shift stably beyond run-to-run noise even though regression-suite
+  accuracy stays unchanged.
+
+Because of that determinism trade-off, the deploy scripts keep `ENFORCE_EAGER=1` by default. Set `ENFORCE_EAGER=0`
+only when you have measured your own workload and do not require fixed-seed reproducibility on NVFP4 (and never on an
+L4 at `KV_CACHE_GB=2`, where CUDA graphs OOM on the first request). See
+[Hardware and GPU sizing](/dgem/deploy/hardware/) for per-GPU measurements across RTX PRO 6000, H100, A100, and L4.
 
 Keep-alive matters under load: the server speaks HTTP/1.1 with a 256-connection backlog. Use clients that reuse
 connections.

@@ -114,11 +114,14 @@ instance spends minutes pulling it and cold starts are not faster.
 
 | GPU | Status | Host RAM |
 | :--- | :--- | :--- |
-| **NVIDIA RTX PRO 6000 (Blackwell, 48 GB)** | **Recommended; tested** (native FP4, vision tower on) | 80 GiB |
-| NVIDIA L4 (Ada, 24 GB) | Works, slower per request | 32 GiB with `DISABLE_MM=1`; 64 GB with the vision tower on |
-| Other NVIDIA GPUs (for example H100, A100, other Blackwell cards) | Not tested | — |
+| **NVIDIA RTX PRO 6000 (Blackwell, ~96 GB)** | **Recommended; tested** (native FP4, vision tower on) | 80–180 GiB |
+| NVIDIA H100 (Hopper, 80 GB) | Tested (slower than RTX PRO 6000; Marlin FP4 fallback or BF16/FP8) | 208 GB |
+| NVIDIA A100 (Ampere SM80, 80 GB) | Tested (requires `EXTRA_ARGS="--kv-cache-dtype bfloat16"`) | 170 GB |
+| NVIDIA L4 (Ada, 24 GB) | Tested (slower, text only; keep `ENFORCE_EAGER=1`) | 32 GiB with `DISABLE_MM=1`; 64 GB with vision on |
+| Other NVIDIA GPUs (for example H200, B200) | Not tested | — |
 
-On an untested GPU, verify the install before relying on it: [Evaluate dgem on your own GPU](/dgem/deploy/evaluate/).
+See [Hardware and GPU sizing](/dgem/deploy/hardware/) for measured latency/throughput and required settings per GPU. On an untested
+GPU, verify the install before relying on it: [Evaluate dgem on your own GPU](/dgem/deploy/evaluate/).
 
 Pull the image you built (`gcloud auth configure-docker <REGION>-docker.pkg.dev` once), then run it.
 
@@ -181,9 +184,11 @@ docker run --gpus all -p 8080:8080 \
 | **`DEFAULT_ISOLATE`**, **`ISOLATE_AUTO_MAX`**, **`ISOLATE_MAX_QUESTIONS`** | `auto`, `3`, `8` | Which questions get a read of their own when a request doesn't say: `auto` (yes/no questions in text requests of 2–3 questions with at least 2 yes/no; from v0.3.0), `none` (one joint read, the behaviour before v0.3.0), `noul` (every yes/no question, requests of 2–8 questions) or `all`. A request can set `"isolate"`, and a question `"alone": true/false`. See [reading yes/no questions alone](/dgem/policies/prompt-layout/#yesno-questions-in-small-requests-are-read-alone). |
 | **`HTTP_IDLE_TIMEOUT`** | `120` | Seconds before an idle keep-alive connection is closed (0 = never). |
 | **`DEFAULT_LABELS`** | `az` | Labels for `choice` options in requests without `labels`: `az` (A–Z, at most 26 options), `az_aa` (A–Z then AA–AZ, at most 52) or `az_lower` (A–Z then a–z, at most 52, requests of up to 10 questions only). Experimental beyond `az`; keep the default unless you have measured otherwise. |
-| **`DEFAULT_SEED_TOKEN`** | `random` | What sits at each answer position before the read, for requests without `seed_token`: `random` (a seeded random token, so reads vary with the seed) or `fixed` (the padding token; reads stop depending on the seed). Experimental; keep `random` unless you have measured otherwise. |
+| **`DEFAULT_SEED_TOKEN`** | `random` | What sits at each answer position before the read, for requests without `seed_token`: `random` (a seeded random token, so reads vary with the seed) or `fixed` (the padding token; reads stop depending on the seed — reproducible across sequential repeats only in eager mode `ENFORCE_EAGER=1` with NVFP4). Experimental; keep `random` unless you have measured otherwise. |
 | **`DEFAULT_LAYOUT`** | `document_first` | Prompt layout for requests without `layout`: `document_first` (the state, then the questions) or `schema_first` (the questions as the system prompt, the behaviour before v0.2.0). |
 | **`DISABLE_MM`** | `0` | `1` disables the vision tower (required on an L4 with 32 GiB host RAM). |
+| **`ENFORCE_EAGER`** | `1` | `1` = eager mode (shorter start-up, fixed-seed reproducible on NVFP4). `0` = CUDA graphs + `torch.compile` (~2.2× lower server latency and ~1.5× higher peak throughput on RTX PRO 6000, but adds ~1 min start-up and loses fixed-seed reproducibility on NVFP4; OOMs on L4 at `KV_CACHE_GB=2`). See [Eager vs CUDA graphs](/dgem/operate/latency-capacity/#eager-vs-cuda-graphs-enforce_eager). |
+| **`EXTRA_ARGS`** | `""` | Additional flags passed to `vllm serve` (for example `--kv-cache-dtype bfloat16`, required on A100 SM80 GPUs). |
 
 ---
 

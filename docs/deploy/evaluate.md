@@ -27,12 +27,15 @@ The serving image ([build it](public-images.md) into your own Artifact Registry)
 
 | GPU | Status | Host RAM | Notes |
 | :--- | :--- | :--- | :--- |
-| **NVIDIA RTX PRO 6000 (Blackwell, 48 GB)** | **Recommended; what we test** | 80 GiB | Runs FP4 natively; vision tower on (`DISABLE_MM=0`) |
-| NVIDIA L4 (Ada, 24 GB) | Works, slower per request | 32 GiB with `DISABLE_MM=1`; 64 GB with the vision tower on | Out-of-memory restarts ~10 min into boot if host RAM is too small |
-| Other NVIDIA GPUs (for example H100, A100, other Blackwell cards) | Not tested | — | May work; run steps 1–4 before relying on it |
+| **NVIDIA RTX PRO 6000 (Blackwell, ~96 GB)** | **Recommended; tested** | 80–180 GiB | Native FP4 kernels; fastest and lowest cost per decision; vision tower on (`DISABLE_MM=0`) |
+| NVIDIA H100 (Hopper, 80 GB) | Tested; slower & higher cost/decision than RTX PRO 6000 | 208 GB (`a3-highgpu-1g`) | NVFP4 uses weight-only Marlin fallback; BF16/FP8 with `ENFORCE_EAGER=0` run native Hopper kernels |
+| NVIDIA A100 (Ampere SM80, 80 GB) | Tested; slower per request | 170 GB (`a2-ultragpu-1g`) | **Requires** `EXTRA_ARGS="--kv-cache-dtype bfloat16"` (FP8 KV cache requires SM89+) |
+| NVIDIA L4 (Ada, 24 GB) | Tested; slower, text only | 32 GiB with `DISABLE_MM=1`; 64 GB with vision on | Keep `ENFORCE_EAGER=1` (CUDA graphs OOM at 2 GB KV); OOM restarts ~10 min into boot if host RAM is too small |
+| Other NVIDIA GPUs (for example H200, B200) | Not tested | — | May work; run steps 1–4 before relying on it |
 
-The unquantized 16-bit weights (`google/diffusiongemma-26B-A4B-it`, ~50 GiB) need about twice the GPU memory
-(for example 2× A100-40GB) and are not what the serving image's defaults are set up for.
+The unquantized 16-bit weights (`google/diffusiongemma-26B-A4B-it`, ~49 GiB loaded) fit on a single ~96 GB RTX PRO 6000
+or 80 GB H100/A100 alongside a 12 GB KV cache, though the serving image's defaults target the NVFP4 checkpoint. See
+[Hardware and GPU sizing](hardware.md) for measured latency, throughput, and per-GPU settings.
 
 ## 1. Start the container and wait for readiness
 
