@@ -40,20 +40,34 @@ GCS_BUCKET="${GCS_BUCKET:-dgem-weights-${PROJECT_ID}}"
 ARTIFACT_URI="${ARTIFACT_URI:-gs://${GCS_BUCKET}/dgemma}"
 
 # Hardware profile (VERTEX_PROFILE):
-#   l4             g2-standard-16 + 1x NVIDIA_L4 (24 GB VRAM, 64 GB RAM). SigLIP off by default (tight VRAM).
-#                  Endpoint/model names: dgemma-dedicated / dgemma-invoke (the original endpoint).
-#   g4-rtxpro6000  g4-standard-48 + 1x NVIDIA_RTX_PRO_6000 (Blackwell, native FP4, 180 GB host RAM).
+#   g4-rtxpro6000  g4-standard-48 + 1x NVIDIA_RTX_PRO_6000 (Blackwell, ~96 GB VRAM, native FP4, 180 GB host RAM).
 #                  SigLIP on (multimodal parity with Cloud Run). Names: dgemma-dedicated-g4 / dgemma-invoke-g4.
+#   h100           a3-highgpu-1g + 1x NVIDIA_H100_80GB (Hopper, 80 GB VRAM, 208 GB host RAM). SigLIP on.
+#                  Note: NVFP4 runs via weight-only Marlin fallback on Hopper; pass BF16 weights or ENFORCE_EAGER=0
+#                  if you need lower latency on H100. Names: dgemma-dedicated-h100 / dgemma-invoke-h100.
+#   a100           a2-ultragpu-1g + 1x NVIDIA_A100_80GB (Ampere, SM80, 80 GB VRAM, 170 GB host RAM). SigLIP on.
+#                  Requires EXTRA_ARGS="--kv-cache-dtype bfloat16" (set by default here; FP8 KV cache needs SM89+).
+#                  Names: dgemma-dedicated-a100 / dgemma-invoke-a100.
+#   l4             g2-standard-16 + 1x NVIDIA_L4 (24 GB VRAM, 64 GB RAM). SigLIP off by default (tight VRAM;
+#                  ctx=4096; keep ENFORCE_EAGER=1). Names: dgemma-dedicated / dgemma-invoke.
 # Any VERTEX_* / engine variable below still overrides the profile.
 VERTEX_PROFILE="${VERTEX_PROFILE:-g4-rtxpro6000}"
+P_EXTRA_ARGS=""
 case "$VERTEX_PROFILE" in
   l4)
-    P_MACHINE=g2-standard-16; P_ACCEL=NVIDIA_L4; P_COUNT=1; P_MM=1; P_KV=2; P_SEQS=32; P_MAXREP=1
+    P_MACHINE=g2-standard-16; P_ACCEL=NVIDIA_L4; P_COUNT=1; P_MM=1; P_KV=2; P_SEQS=32; P_MAXREP=1; P_CTX=4096
     P_EP=dgemma-dedicated; P_MODEL=dgemma-invoke ;;
   g4-rtxpro6000)
-    P_MACHINE=g4-standard-48; P_ACCEL=NVIDIA_RTX_PRO_6000; P_COUNT=1; P_MM=0; P_KV=12; P_SEQS=32; P_MAXREP=2
+    P_MACHINE=g4-standard-48; P_ACCEL=NVIDIA_RTX_PRO_6000; P_COUNT=1; P_MM=0; P_KV=12; P_SEQS=32; P_MAXREP=2; P_CTX=8192
     P_EP=dgemma-dedicated-g4; P_MODEL=dgemma-invoke-g4 ;;
-  *) echo "Unknown VERTEX_PROFILE=$VERTEX_PROFILE (use l4 | g4-rtxpro6000)" >&2; exit 1 ;;
+  h100)
+    P_MACHINE=a3-highgpu-1g; P_ACCEL=NVIDIA_H100_80GB; P_COUNT=1; P_MM=0; P_KV=12; P_SEQS=32; P_MAXREP=2; P_CTX=8192
+    P_EP=dgemma-dedicated-h100; P_MODEL=dgemma-invoke-h100 ;;
+  a100)
+    P_MACHINE=a2-ultragpu-1g; P_ACCEL=NVIDIA_A100_80GB; P_COUNT=1; P_MM=0; P_KV=12; P_SEQS=32; P_MAXREP=2; P_CTX=8192
+    P_EXTRA_ARGS="--kv-cache-dtype bfloat16"
+    P_EP=dgemma-dedicated-a100; P_MODEL=dgemma-invoke-a100 ;;
+  *) echo "Unknown VERTEX_PROFILE=$VERTEX_PROFILE (use g4-rtxpro6000 | h100 | a100 | l4)" >&2; exit 1 ;;
 esac
 
 MODEL_DISPLAY_NAME="${VERTEX_MODEL_NAME:-$P_MODEL}"
@@ -67,10 +81,12 @@ MAX_REPLICAS="${VERTEX_MAX_REPLICAS:-$P_MAXREP}"
 # Engine settings are passed explicitly so Vertex and Cloud Run can run identical configurations.
 KV_CACHE_GB="${KV_CACHE_GB:-$P_KV}"
 MAX_SEQS="${MAX_SEQS:-$P_SEQS}"
-# Context length: 8192 on G4 (same short-prompt accuracy and latency as 4096; prompts up to 8k answered
-# instead of refused). The Decision Index canary uses 32768. The L4 profile keeps 4096 (24 GB VRAM).
-if [ "${VERTEX_PROFILE}" = "l4" ]; then DEFAULT_CTX=4096; else DEFAULT_CTX=8192; fi
-MAX_MODEL_LEN="${MAX_MODEL_LEN:-$DEFAULT_CTX}"
+MAX_MODEL_LEN="${MAX_MODEL_LEN:-$P_CTX}"
+# Default ENFORCE_EAGER=1 keeps fixed-seed reproducibility and avoids ~1 min compile/graph capture at start-up.
+# Set ENFORCE_EAGER=0 for CUDA graphs + torch.compile (lower latency, higher throughput, not fixed-seed
+# reproducible with NVFP4; OOMs on L4 at KV_CACHE_GB=2). See docs/operate/latency-capacity.md.
+ENFORCE_EAGER="${ENFORCE_EAGER:-1}"
+EXTRA_ARGS="${EXTRA_ARGS-$P_EXTRA_ARGS}"
 # Container stdout/stderr to Cloud Logging. Off by default on these deployments, which hid an engine crash.
 # This script calls v1beta1, where the field is enableContainerLogging (disableContainerLogging is v1-only and was
 # silently ignored here).
@@ -85,9 +101,17 @@ SERVICE_ACCOUNT="${VERTEX_SERVICE_ACCOUNT:-dgemma-gpu-sa@${PROJECT_ID}.iam.gserv
 API_BASE="https://${REGION}-aiplatform.googleapis.com/v1beta1"
 TOKEN="$(gcloud auth application-default print-access-token 2>/dev/null || gcloud auth print-access-token)"
 
-echo "==> Profile ${VERTEX_PROFILE}: ${MACHINE_TYPE} + ${ACCELERATOR_COUNT}x ${ACCELERATOR_TYPE}, replicas ${MIN_REPLICAS}-${MAX_REPLICAS}, DISABLE_MM=${DISABLE_MM}, KV_CACHE_GB=${KV_CACHE_GB}, MAX_SEQS=${MAX_SEQS}, DEFAULT_SAMPLES=${DEFAULT_SAMPLES}"
+echo "==> Profile ${VERTEX_PROFILE}: ${MACHINE_TYPE} + ${ACCELERATOR_COUNT}x ${ACCELERATOR_TYPE}, replicas ${MIN_REPLICAS}-${MAX_REPLICAS}, DISABLE_MM=${DISABLE_MM}, KV_CACHE_GB=${KV_CACHE_GB}, MAX_SEQS=${MAX_SEQS}, MAX_MODEL_LEN=${MAX_MODEL_LEN}, ENFORCE_EAGER=${ENFORCE_EAGER}, DEFAULT_SAMPLES=${DEFAULT_SAMPLES}"
 echo "    Image: ${IMAGE_URI}"
 echo "    Endpoint display name: ${ENDPOINT_DISPLAY_NAME} (an existing endpoint with this name is reused)"
+
+# Vertex AI rejects empty env values (HTTP 400); only include EXTRA_ARGS when non-empty.
+EXTRA_ARGS_ENV=""
+if [ -n "${EXTRA_ARGS}" ]; then
+  EXTRA_ARGS_JSON="$(printf '%s' "${EXTRA_ARGS}" | python3 -c 'import json,sys;print(json.dumps(sys.stdin.read()))')"
+  EXTRA_ARGS_ENV=",
+        { \"name\": \"EXTRA_ARGS\", \"value\": ${EXTRA_ARGS_JSON} }"
+fi
 
 echo "==> [1/4] Uploading model (${MODEL_DISPLAY_NAME}), routes: ${ROUTE_MODE:-invoke}..."
 # Service-to-service key for the serving image (X-DGem-Key; see docs/deploy/public-images.md). Held only by services
@@ -131,7 +155,7 @@ UPLOAD_PAYLOAD=$(cat <<EOF
         { "name": "DGEM_WEIGHTS_URI", "value": "${ARTIFACT_URI}" },
         { "name": "GCS_BUCKET", "value": "${GCS_BUCKET}" },
         { "name": "CANVAS", "value": "${CANVAS}" },
-        { "name": "ENFORCE_EAGER", "value": "1" },
+        { "name": "ENFORCE_EAGER", "value": "${ENFORCE_EAGER}" },
         { "name": "DISABLE_MM", "value": "${DISABLE_MM}" },
         { "name": "GPU_UTIL", "value": "0.85" },
         { "name": "KV_CACHE_GB", "value": "${KV_CACHE_GB}" },
@@ -139,7 +163,7 @@ UPLOAD_PAYLOAD=$(cat <<EOF
         { "name": "MAX_MODEL_LEN", "value": "${MAX_MODEL_LEN}" },
         { "name": "HTTP_IDLE_TIMEOUT", "value": "${HTTP_IDLE_TIMEOUT:-120}" },
         { "name": "DEFAULT_SAMPLES", "value": "${DEFAULT_SAMPLES}" },
-        { "name": "MAX_INFLIGHT", "value": "${MAX_INFLIGHT}" }${SERVER_KEY_ENV}
+        { "name": "MAX_INFLIGHT", "value": "${MAX_INFLIGHT}" }${EXTRA_ARGS_ENV}${SERVER_KEY_ENV}
       ]
     }
   }
