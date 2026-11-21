@@ -271,15 +271,31 @@ func criterionText(v json.RawMessage) string {
 
 // SystemOneRequest matches the POST /v1/systemone payload sent by decision_index.engines.http:HttpSystemOne.
 type SystemOneRequest struct {
-	Model     string                       `json:"model,omitempty"`
-	State     any                          `json:"state"`
-	Questions map[string]SystemOneQuestion `json:"questions"`
+	Model        string                       `json:"model,omitempty"`
+	Instructions string                       `json:"instructions,omitempty"`
+	State        any                          `json:"state"`
+	Questions    map[string]SystemOneQuestion `json:"questions"`
+	// QuestionOrder records the "questions" keys in the order the JSON request listed them (set by UnmarshalJSON).
+	// Go maps drop key order; single-pass bodies use this to match the serving image's request-order prompt.
+	QuestionOrder []string `json:"-"`
 	// Images are data: URIs or http(s) URLs shown to the model ahead of the state, the same "images" field the
 	// serving image's /v1/systemone accepts. Every sub-request (batches and bracket rounds) carries them.
 	Images []string `json:"images,omitempty"`
 	// Media is an alias for Images in the form some Jev clients send: image/* entries are appended to
 	// Images by MergeMedia; any other type is refused.
 	Media []SystemOneMedia `json:"media,omitempty"`
+}
+
+// UnmarshalJSON decodes SystemOneRequest while preserving the request's top-level "questions" key order.
+func (r *SystemOneRequest) UnmarshalJSON(b []byte) error {
+	type alias SystemOneRequest
+	var decoded alias
+	if err := json.Unmarshal(b, &decoded); err != nil {
+		return err
+	}
+	*r = SystemOneRequest(decoded)
+	r.QuestionOrder = fieldKeyOrder(b, "questions")
+	return nil
 }
 
 // SystemOneMedia is one entry of a request's "media" array. Data is a data: URI or raw base64 of MimeType. Other
@@ -520,14 +536,18 @@ type EngineOptions struct {
 	CatchAll             string  // Wide-option catch-all handling: "off" (default), "final", "both" or "verify"; see catchAllKeys
 	NoulMode             string  // How yes/no questions are read: "noul" (default) or "choice" (2-option choice; see noulAsChoice)
 	Labels               string  // Server label set for choice options: "az" (default, 26) or "az_aa"/"az_lower" (52). Wide sets read up to 52 options natively and bracket above that with 52-wide brackets
-	OptionOrder          string  // How options are labelled A, B, C…: "alpha" (default, sorted keys) or "source" (request order)
+	OptionOrder          string  // How options are labelled A, B, C…: "" (source order on single-pass FitsServingImage bodies, alpha on multi-pass/wide), "source" (request order), or "alpha" (sorted keys)
 	PromptLayout         string  // Server prompt layout: "document_first" (default: state first, then questions) or "schema_first"/"" (questions as the system prompt)
 	PriorWeight          float64 // Log-linear fusion weight alpha >= 0 for PriorLogits; 0 disables fusion (cascades should gate on RawNormalizedH)
 	HesitationGate       float64 // Raw normalized entropy threshold tau in [0, 1] used by PriorGateMode (default 0.16)
 	PriorGateMode        string  // Gate schedule for PriorLogits: "confident" (default: fuse when rawNormH < tau), "hesitant" (rawNormH >= tau; recommended for tie-break priors), "proportional" (weight * rawNormH), or "always"
 	ShortlistTopK        int     // Candidate count M <= MaxOptionsPerSlot retained by ShortlistFunc for wide choices (default 0 = off)
-	ShortlistContrastive bool    // Append [distinguishing: ...] sibling token tags on shortlisted wide choices (default false; schema-dependent)
+	ShortlistContrastive bool // Append [distinguishing: ...] sibling token tags on shortlisted wide choices (default false; schema-dependent)
 	ShortlistFunc        ShortlistFunc
+
+	// Internal per-request single-pass prompt fidelity settings populated by ExecuteSystemOne for FitsServingImage bodies.
+	preservePromptFidelity bool
+	requestInstructions    string
 }
 
 // DefaultEngineOptions returns production settings with Wide-Option Tournament + Multi-Slot Batching enabled (T*=1.0).
@@ -582,6 +602,25 @@ func FormatState(state any) string {
 	}
 }
 
+// formatStateRaw renders state identically to the serving image's /v1/systemone handler (jev_state):
+// strings pass through verbatim as plain text (without wrapping in {"state": ...}); structured values
+// serialize as compact JSON with HTML characters unescaped.
+func formatStateRaw(state any) string {
+	if state == nil {
+		return ""
+	}
+	if s, ok := state.(string); ok {
+		return s
+	}
+	var buf bytes.Buffer
+	enc := json.NewEncoder(&buf)
+	enc.SetEscapeHTML(false)
+	if err := enc.Encode(state); err != nil {
+		return fmt.Sprintf("%v", state)
+	}
+	return strings.TrimRight(buf.String(), "\n")
+}
+
 // FormatInstructions converts instructions (string or structured object) into a concise string.
 func FormatInstructions(instr any) string {
 	if instr == nil {
@@ -597,6 +636,39 @@ func FormatInstructions(instr any) string {
 		}
 		return string(b)
 	}
+}
+
+func formatQuestionInstructions(instr any, preserveFidelity bool) string {
+	if preserveFidelity && instr == nil {
+		return ""
+	}
+	return FormatInstructions(instr)
+}
+
+func orderedQuestionKeys(req SystemOneRequest, preserveOrder bool) []string {
+	if preserveOrder && len(req.QuestionOrder) == len(req.Questions) {
+		seen := make(map[string]struct{}, len(req.Questions))
+		out := make([]string, 0, len(req.Questions))
+		for _, k := range req.QuestionOrder {
+			if _, ok := req.Questions[k]; !ok {
+				continue
+			}
+			if _, dup := seen[k]; dup {
+				continue
+			}
+			seen[k] = struct{}{}
+			out = append(out, k)
+		}
+		if len(out) == len(req.Questions) {
+			return out
+		}
+	}
+	keys := make([]string, 0, len(req.Questions))
+	for k := range req.Questions {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	return keys
 }
 
 // ExecuteSystemOne evaluates a Decision Index request against a dgem Client, automatically applying:
@@ -627,10 +699,15 @@ func ExecuteSystemOne(ctx context.Context, cli *client.Client, req SystemOneRequ
 	if err := req.MergeMedia(); err != nil {
 		return nil, err
 	}
-	qKeys := make([]string, 0, len(req.Questions))
+	// For bodies the serving image can answer in a single read (FitsServingImage), match its prompt directly:
+	// keep plain text state as plain text, preserve request question and option order (unless OptionOrder was
+	// explicitly overridden), and omit fabricated wrapper instructions.
+	singlePass := FitsServingImage(req) && len(req.Questions) <= opts.MaxSlotsPerPass
+	qKeys := orderedQuestionKeys(req, singlePass)
 	maxOpts := 0
 	kinds := make(map[string]string, len(req.Questions))
-	for k, q := range req.Questions {
+	for _, k := range qKeys {
+		q := req.Questions[k]
 		kind, err := questionKind(k, q)
 		if err != nil {
 			return nil, err
@@ -650,10 +727,8 @@ func ExecuteSystemOne(ctx context.Context, cli *client.Client, req SystemOneRequ
 			}
 		}
 		kinds[k] = kind
-		qKeys = append(qKeys, k)
 		maxOpts = maxInt(maxOpts, maxInt(len(q.Criteria), len(q.Levels)))
 	}
-	sort.Strings(qKeys)
 
 	// If NaiveLimits mode is enabled, enforce raw 26-option and 10-slot canvas ceilings to demonstrate capacity failure rate.
 	if opts.NaiveLimits {
@@ -668,7 +743,17 @@ func ExecuteSystemOne(ctx context.Context, cli *client.Client, req SystemOneRequ
 	if err := ValidateImages(req.Images); err != nil {
 		return nil, err
 	}
-	stateText := FormatState(req.State)
+	var stateText string
+	if singlePass {
+		stateText = formatStateRaw(req.State)
+		opts.preservePromptFidelity = true
+		opts.requestInstructions = req.Instructions
+		if opts.OptionOrder == "" {
+			opts.OptionOrder = OptionOrderSource
+		}
+	} else {
+		stateText = FormatState(req.State)
+	}
 	st := &serverTime{}
 	ctx = context.WithValue(ctx, serverTimeKey{}, st)
 	answers := make(map[string]SystemOneAnswer, len(qKeys))
@@ -785,7 +870,7 @@ func evaluateStandardBatch(
 			questionsPayload = append(questionsPayload, map[string]any{
 				"id":           qKey,
 				"type":         kindScore,
-				"instructions": FormatInstructions(qSpec.Instructions),
+				"instructions": formatQuestionInstructions(qSpec.Instructions, opts.preservePromptFidelity),
 				"levels":       qSpec.Levels,
 			})
 		} else if isNoulType(qSpec.Type) && opts.NoulMode == "choice" {
@@ -794,7 +879,7 @@ func evaluateStandardBatch(
 			q := map[string]any{
 				"id":           qKey,
 				"type":         "boolean",
-				"instructions": FormatInstructions(qSpec.Instructions),
+				"instructions": formatQuestionInstructions(qSpec.Instructions, opts.preservePromptFidelity),
 			}
 			// Keep the request's true/false descriptions: the structured server renders them next to yes/no.
 			// Dropping them changed the question (e.g. RAGTruth states the claim in `instructions` and defines
@@ -818,17 +903,23 @@ func evaluateStandardBatch(
 			questionsPayload = append(questionsPayload, map[string]any{
 				"id":           qKey,
 				"type":         "choice",
-				"instructions": FormatInstructions(qSpec.Instructions),
+				"instructions": formatQuestionInstructions(qSpec.Instructions, opts.preservePromptFidelity),
 				"options":      optObjs,
 			})
 		}
 	}
 
 	schemaEnvelope := map[string]any{
-		"instructions": "Evaluate each decision question strictly against the provided state and option descriptions.",
-		"samples":      1,
-		"think":        0,
-		"questions":    questionsPayload,
+		"samples":   1,
+		"think":     0,
+		"questions": questionsPayload,
+	}
+	if opts.preservePromptFidelity {
+		if strings.TrimSpace(opts.requestInstructions) != "" {
+			schemaEnvelope["instructions"] = opts.requestInstructions
+		}
+	} else {
+		schemaEnvelope["instructions"] = "Evaluate each decision question strictly against the provided state and option descriptions."
 	}
 	if opts.PromptLayout == "document_first" {
 		schemaEnvelope["layout"] = "document_first"
