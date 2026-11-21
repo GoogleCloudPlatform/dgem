@@ -49,3 +49,73 @@ func TestTemperature(t *testing.T) {
 		t.Fatalf("schema temperature not read: %+v", s)
 	}
 }
+
+func TestApplyTemperatureLosslessDiagLogprobs(t *testing.T) {
+	// 1. Saturated float probabilities (1.0 vs 0.0) recover exact log-odds from Diagnostics.Questions[id].Logprobs.
+	sat := &StructuredDecisionResponse{
+		Answers: map[string]QuestionAnswer{
+			"finding": {
+				Type:          "noul",
+				Label:         "yes",
+				Noul:          1.0,
+				Confidence:    1.0,
+				Probabilities: map[string]float64{"yes": 1.0, "no": 0.0},
+			},
+		},
+		Diagnostics: Diagnostics{
+			Questions: map[string]QuestionDiagnostic{
+				"finding": {Logprobs: map[string]float64{"yes": 0.0, "no": -40.0}},
+			},
+		},
+	}
+	sat.ApplyTemperature(Temperature{All: 10.0})
+	// Exact: 1 / (1 + exp(-4.0)) = 0.98201379 (vs legacy 1e-12 clamp: 1 / (1 + exp(-2.7631)) = 0.94065).
+	wantExact := 1.0 / (1.0 + math.Exp(-4.0))
+	if math.Abs(sat.Answers["finding"].Noul-wantExact) > 1e-6 {
+		t.Fatalf("expected lossless logprob scaling %.6f, got %.6f", wantExact, sat.Answers["finding"].Noul)
+	}
+
+	// 2. Boolean "true"/"false" probability keys map losslessly to "yes"/"no" diagnostic logprob keys.
+	boolKeys := &StructuredDecisionResponse{
+		Answers: map[string]QuestionAnswer{
+			"safe": {
+				Type:          "noul",
+				Label:         "yes",
+				Noul:          1.0,
+				Confidence:    1.0,
+				Probabilities: map[string]float64{"true": 1.0, "false": 0.0},
+			},
+		},
+		Diagnostics: Diagnostics{
+			Questions: map[string]QuestionDiagnostic{
+				"safe": {Logprobs: map[string]float64{"yes": 0.0, "no": -30.0}},
+			},
+		},
+	}
+	boolKeys.ApplyTemperature(Temperature{All: 10.0})
+	wantBool := 1.0 / (1.0 + math.Exp(-3.0))
+	if math.Abs(boolKeys.Answers["safe"].Noul-wantBool) > 1e-6 {
+		t.Fatalf("expected boolean alias logprob scaling %.6f, got %.6f", wantBool, boolKeys.Answers["safe"].Noul)
+	}
+
+	// 3. Partial or non-finite diagnostic logprobs fall back safely to clamped Probabilities.
+	partial := &StructuredDecisionResponse{
+		Answers: map[string]QuestionAnswer{
+			"route": {
+				Type:          "choice",
+				Choice:        "allow",
+				Confidence:    0.9,
+				Probabilities: map[string]float64{"allow": 0.9, "deny": 0.1},
+			},
+		},
+		Diagnostics: Diagnostics{
+			Questions: map[string]QuestionDiagnostic{
+				"route": {Logprobs: map[string]float64{"allow": 0.0}}, // missing "deny"
+			},
+		},
+	}
+	partial.ApplyTemperature(Temperature{All: 2.0})
+	if math.Abs(partial.Answers["route"].Probabilities["allow"]-0.75) > 1e-9 {
+		t.Fatalf("expected fallback probability 0.75, got %.6f", partial.Answers["route"].Probabilities["allow"])
+	}
+}

@@ -100,15 +100,19 @@ then run this in front of it:
 
 import argparse
 import hmac
+import http.client
+import io
 import json
 import math
 import os
 import random
+import socket
 import ssl
 import subprocess
 import threading
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 from concurrent.futures import ThreadPoolExecutor
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -612,14 +616,89 @@ def _wait_for_upstream(max_wait=180):
             time.sleep(1.0)
 
 
-def upstream_chat(body, timeout=600):
+_UPSTREAM_LOCAL = threading.local()
+
+
+def _upstream_post_json(route_path, body, timeout=600):
+    """dgem: reuse per-thread HTTP/1.1 keep-alive connections to vLLM instead of opening a new TCP socket per read."""
     _wait_for_upstream()
-    req = urllib.request.Request(
-        ARGS.upstream.rstrip("/") + "/v1/chat/completions",
-        data=json.dumps(body).encode(),
-        headers={"content-type": "application/json"},
+    base = ARGS.upstream.rstrip("/")
+    parsed = urllib.parse.urlsplit(base)
+    scheme = (parsed.scheme or "http").lower()
+    host = parsed.hostname or "127.0.0.1"
+    port = parsed.port or (443 if scheme == "https" else 80)
+    target_path = (parsed.path.rstrip("/") + route_path) or route_path
+    full_url = base + route_path
+    payload = json.dumps(body).encode()
+    conn_key = (scheme, host, port, float(timeout))
+    retryable = (
+        http.client.RemoteDisconnected,
+        http.client.BadStatusLine,
+        http.client.CannotSendRequest,
+        http.client.ResponseNotReady,
+        BrokenPipeError,
+        ConnectionResetError,
     )
-    return json.load(urllib.request.urlopen(req, timeout=timeout))
+    for attempt in range(2):
+        cached = getattr(_UPSTREAM_LOCAL, "entry", None)
+        if cached is not None and cached[0] == conn_key:
+            conn = cached[1]
+        else:
+            if cached is not None:
+                try:
+                    cached[1].close()
+                except OSError:
+                    pass
+            conn = (
+                http.client.HTTPSConnection(host, port, timeout=timeout)
+                if scheme == "https"
+                else http.client.HTTPConnection(host, port, timeout=timeout)
+            )
+            _UPSTREAM_LOCAL.entry = (conn_key, conn)
+        try:
+            if conn.sock is None:
+                conn.connect()
+                try:
+                    conn.sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+                except OSError:
+                    pass
+            conn.request(
+                "POST",
+                target_path,
+                body=payload,
+                headers={"Content-Type": "application/json", "Connection": "keep-alive"},
+            )
+            resp = conn.getresponse()
+            raw = resp.read()
+            if resp.will_close:
+                conn.close()
+                _UPSTREAM_LOCAL.entry = None
+            if resp.status >= 400:
+                raise urllib.error.HTTPError(
+                    full_url, resp.status, resp.reason, resp.headers, io.BytesIO(raw)
+                )
+            return json.loads(raw)
+        except urllib.error.HTTPError:
+            raise
+        except retryable:
+            try:
+                conn.close()
+            except OSError:
+                pass
+            _UPSTREAM_LOCAL.entry = None
+            if attempt == 1:
+                raise
+        except (OSError, http.client.HTTPException, ValueError):
+            try:
+                conn.close()
+            except OSError:
+                pass
+            _UPSTREAM_LOCAL.entry = None
+            raise
+
+
+def upstream_chat(body, timeout=600):
+    return _upstream_post_json("/v1/chat/completions", body, timeout=timeout)
 
 
 def _health_info():
@@ -651,13 +730,7 @@ def _health_info():
 
 
 def upstream_completions(body, timeout=600):
-    _wait_for_upstream()
-    req = urllib.request.Request(
-        ARGS.upstream.rstrip("/") + "/v1/completions",
-        data=json.dumps(body).encode(),
-        headers={"content-type": "application/json"},
-    )
-    return json.load(urllib.request.urlopen(req, timeout=timeout))
+    return _upstream_post_json("/v1/completions", body, timeout=timeout)
 
 
 def chat_prompt_ids(sys_text, state_text, thinking=False):
@@ -786,8 +859,12 @@ def slot_distribution(top, label_ids):
     floor = min(top.values()) - 5.0
     lp_t = [top.get(i, floor) for i in label_ids]
     mx = max(lp_t)
-    ex = [math.exp(x - mx) for x in lp_t]
-    probs = [e / sum(ex) for e in ex]
+    centered_lp = [x - mx for x in lp_t]
+    ex = [math.exp(x) for x in centered_lp]
+    sum_ex = sum(ex)
+    log_z = math.log(sum_ex)
+    norm_lp = [x - log_z for x in centered_lp]
+    probs = [e / sum_ex for e in ex]
     top_p = [math.exp(v) for v in top.values()]
     # dgem: with constrained reads (the default, vLLM PR #58216) the returned logprobs are normalized over the
     # request's label ids, so the top-k set is the labels: "entropy" equals the entropy of "probs" and "label_mass"
@@ -796,6 +873,7 @@ def slot_distribution(top, label_ids):
     # Responses carry diagnostics.constrained so a reader knows which applies.
     return {
         "probs": probs,
+        "logprobs": norm_lp,
         "label_mass": sum(math.exp(x) for x in lp_t),
         "entropy": -sum(p * math.log(p) for p in top_p if p > 0),
         "argmax_is_label": max(top, key=top.get) in label_ids,
@@ -1208,7 +1286,18 @@ def decide_group(schema, sys_text, state_content, seed, prefix=None, lead=""):
     n = len(reads)
     for qi, q in enumerate(schema["questions"]):
         per = [r[qi]["probs"] for r in reads]
+        per_lp = [r[qi]["logprobs"] for r in reads]
         mean = [sum(p[i] for p in per) / n for i in range(len(q["labels"]))]
+        log_mean_raw = []
+        log_n = math.log(n)
+        for i in range(len(q["labels"])):
+            col_lp = [lp[i] for lp in per_lp]
+            mx_col = max(col_lp)
+            log_mean_raw.append(
+                mx_col + math.log(sum(math.exp(v - mx_col) for v in col_lp)) - log_n
+            )
+        mx_lp = max(log_mean_raw)
+        centered_mean_lp = [x - mx_lp for x in log_mean_raw]
         top = max(range(len(mean)), key=lambda i: mean[i])
         a = {
             "type": q["type"],
@@ -1233,6 +1322,7 @@ def decide_group(schema, sys_text, state_content, seed, prefix=None, lead=""):
         diag_q[q["id"]] = {
             "pos": slots[qi]["pos"],
             "entropy": [r[qi]["entropy"] for r in reads],
+            "logprobs": {c[0]: lp for c, lp in zip(q["choices"], centered_mean_lp)},
             "label_mass": reads[0][qi]["label_mass"],
             "argmax_is_label": reads[0][qi]["argmax_is_label"],
         }
@@ -1499,6 +1589,16 @@ class _Server(ThreadingHTTPServer):
     # request" at 16+ concurrent requests). Excess requests queue on MAX_INFLIGHT instead.
     request_queue_size = 256
     daemon_threads = True
+
+    def get_request(self):
+        # dgem: disable Nagle's algorithm so BaseHTTPRequestHandler's separate header + body writes
+        # on HTTP/1.1 keep-alive connections do not hit the 40 ms Linux delayed-ACK stall.
+        sock, addr = super().get_request()
+        try:
+            sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+        except OSError:
+            pass
+        return sock, addr
 
 
 class Handler(BaseHTTPRequestHandler):

@@ -147,8 +147,38 @@ func ParseSchemaTemperature(schemaJSON string) (Temperature, error) {
 	return t, nil
 }
 
+func lookupDiagLogprob(diagLogprobs map[string]float64, answerType, optionKey string) (float64, bool) {
+	if len(diagLogprobs) == 0 {
+		return 0, false
+	}
+	if v, ok := diagLogprobs[optionKey]; ok {
+		return v, true
+	}
+	if normalizeAnswerType(answerType) == "noul" {
+		switch strings.ToLower(strings.TrimSpace(optionKey)) {
+		case "yes", "true":
+			if v, ok := diagLogprobs["yes"]; ok {
+				return v, true
+			}
+			if v, ok := diagLogprobs["true"]; ok {
+				return v, true
+			}
+		case "no", "false":
+			if v, ok := diagLogprobs["no"]; ok {
+				return v, true
+			}
+			if v, ok := diagLogprobs["false"]; ok {
+				return v, true
+			}
+		}
+	}
+	return 0, false
+}
+
 // ApplyTemperature rescales each answer's probabilities by p_k^(1/T) (renormalised) and recomputes confidence,
-// entropy, the yes probability (noul) and the expected score. The argmax answer does not change.
+// entropy, the yes probability (noul) and the expected score, reading lossless pre-softmax log-probabilities from
+// Diagnostics.Questions[id].Logprobs when present so answers saturated near 1.0 in float64 retain exact precision.
+// The argmax answer does not change.
 func (r *StructuredDecisionResponse) ApplyTemperature(t Temperature) {
 	if r == nil || !t.IsSet() {
 		return
@@ -163,10 +193,31 @@ func (r *StructuredDecisionResponse) ApplyTemperature(t Temperature) {
 			keys = append(keys, k)
 		}
 		sort.Strings(keys)
+		var diagLP map[string]float64
+		if qd, ok := r.Diagnostics.Questions[id]; ok {
+			diagLP = qd.Logprobs
+		}
+		useDiagLP := len(diagLP) > 0
+		baseLP := make([]float64, len(keys))
+		for i, k := range keys {
+			if useDiagLP {
+				if v, ok := lookupDiagLogprob(diagLP, a.Type, k); ok && !math.IsNaN(v) && !math.IsInf(v, 0) {
+					baseLP[i] = v
+					continue
+				}
+				useDiagLP = false
+				break
+			}
+		}
+		if !useDiagLP {
+			for i, k := range keys {
+				baseLP[i] = math.Log(math.Max(a.Probabilities[k], 1e-12))
+			}
+		}
 		lp := make([]float64, len(keys))
 		mx := math.Inf(-1)
-		for i, k := range keys {
-			lp[i] = math.Log(math.Max(a.Probabilities[k], 1e-12)) / T
+		for i := range keys {
+			lp[i] = baseLP[i] / T
 			mx = math.Max(mx, lp[i])
 		}
 		z := 0.0
