@@ -272,6 +272,7 @@ func criterionText(v json.RawMessage) string {
 // SystemOneRequest matches the POST /v1/systemone payload sent by decision_index.engines.http:HttpSystemOne.
 type SystemOneRequest struct {
 	Model        string                       `json:"model,omitempty"`
+	SeedToken    string                       `json:"seed_token,omitempty"`
 	Instructions string                       `json:"instructions,omitempty"`
 	State        any                          `json:"state"`
 	Questions    map[string]SystemOneQuestion `json:"questions"`
@@ -538,6 +539,7 @@ type EngineOptions struct {
 	Labels               string  // Server label set for choice options: "az" (default, 26) or "az_aa"/"az_lower" (52). Wide sets read up to 52 options natively and bracket above that with 52-wide brackets
 	OptionOrder          string  // How options are labelled A, B, C…: "" (source order on single-pass FitsServingImage bodies, alpha on multi-pass/wide), "source" (request order), or "alpha" (sorted keys)
 	PromptLayout         string  // Server prompt layout: "document_first" (default: state first, then questions) or "schema_first"/"" (questions as the system prompt)
+	SeedToken            string  // Default answer-slot seed token when the request doesn't set seed_token: "" (server default), "random", or "fixed"
 	PriorWeight          float64 // Log-linear fusion weight alpha >= 0 for PriorLogits; 0 disables fusion (cascades should gate on RawNormalizedH)
 	HesitationGate       float64 // Raw normalized entropy threshold tau in [0, 1] used by PriorGateMode (default 0.16)
 	PriorGateMode        string  // Gate schedule for PriorLogits: "confident" (default: fuse when rawNormH < tau), "hesitant" (rawNormH >= tau; recommended for tie-break priors), "proportional" (weight * rawNormH), or "always"
@@ -694,6 +696,16 @@ func ExecuteSystemOne(ctx context.Context, cli *client.Client, req SystemOneRequ
 	case "", "confident", "hesitant", "proportional", "always":
 	default:
 		return nil, fmt.Errorf("%w: unsupported prior_gate_mode %q (expected confident, hesitant, proportional, or always)", ErrInvalidRequest, opts.PriorGateMode)
+	}
+	seedToken := strings.ToLower(strings.TrimSpace(req.SeedToken))
+	if seedToken == "" {
+		seedToken = strings.ToLower(strings.TrimSpace(opts.SeedToken))
+	}
+	switch seedToken {
+	case "", "random", "fixed":
+		opts.SeedToken = seedToken
+	default:
+		return nil, fmt.Errorf("%w: seed_token must be \"random\" or \"fixed\" (got %q)", ErrInvalidRequest, seedToken)
 	}
 
 	if err := req.MergeMedia(); err != nil {
@@ -926,6 +938,9 @@ func evaluateStandardBatch(
 	}
 	if wideLabels(opts.Labels) {
 		schemaEnvelope["labels"] = opts.Labels
+	}
+	if opts.SeedToken != "" {
+		schemaEnvelope["seed_token"] = opts.SeedToken
 	}
 	schemaBytes, err := json.Marshal(schemaEnvelope)
 	if err != nil {
@@ -1200,6 +1215,7 @@ func evaluateWideQuestionTournament(
 			PromptLayout:     layout,
 			OptionOrder:      optionOrder,
 			Labels:           labels,
+			SeedToken:        opts.SeedToken,
 			PriorWeight:      opts.PriorWeight,
 			HesitationGate:   opts.HesitationGate,
 			PriorGateMode:    opts.PriorGateMode,
@@ -1239,7 +1255,7 @@ func evaluateWideQuestionTournament(
 			end = len(round1Keys)
 		}
 		subKeys := round1Keys[i:end]
-		subAns, p, err := evaluateStandardBatch(ctx, cli, stateText, images, subKeys, round1Questions, nil, EngineOptions{TemperatureScale: 1.0, PromptLayout: layout, OptionOrder: optionOrder, Labels: labels})
+		subAns, p, err := evaluateStandardBatch(ctx, cli, stateText, images, subKeys, round1Questions, nil, EngineOptions{TemperatureScale: 1.0, PromptLayout: layout, OptionOrder: optionOrder, Labels: labels, SeedToken: opts.SeedToken})
 		if err != nil {
 			return SystemOneAnswer{}, passesUsed + p, err
 		}
@@ -1299,7 +1315,7 @@ func evaluateWideQuestionTournament(
 	}
 	finalQ := map[string]SystemOneQuestion{qKey: subQuestion(qSpec, finalKeys)}
 
-	finalBatch, p, err := evaluateStandardBatch(ctx, cli, stateText, images, []string{qKey}, finalQ, nil, EngineOptions{TemperatureScale: 1.0, PromptLayout: layout, OptionOrder: optionOrder, Labels: labels})
+	finalBatch, p, err := evaluateStandardBatch(ctx, cli, stateText, images, []string{qKey}, finalQ, nil, EngineOptions{TemperatureScale: 1.0, PromptLayout: layout, OptionOrder: optionOrder, Labels: labels, SeedToken: opts.SeedToken})
 	if err != nil {
 		return SystemOneAnswer{}, passesUsed + p, err
 	}
@@ -1316,7 +1332,7 @@ func evaluateWideQuestionTournament(
 		vQ := subQuestion(qSpec, append([]string{best}, catchAll...))
 		vBatch, p2, err := evaluateStandardBatch(ctx, cli, stateText, images, []string{qKey},
 			map[string]SystemOneQuestion{qKey: vQ}, nil,
-			EngineOptions{TemperatureScale: 1.0, PromptLayout: layout, OptionOrder: optionOrder, Labels: labels})
+			EngineOptions{TemperatureScale: 1.0, PromptLayout: layout, OptionOrder: optionOrder, Labels: labels, SeedToken: opts.SeedToken})
 		if err != nil {
 			return SystemOneAnswer{}, passesUsed + p2, err
 		}

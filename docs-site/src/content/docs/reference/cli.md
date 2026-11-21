@@ -59,6 +59,8 @@ All `dgem` subcommands (`decide`, `ask`, `locate`, `template`, `serve`, `systemo
 | **`--cascade-model`** | `DGEM_CASCADE_MODEL` | **`gemini-3.8-flash`** | Default Vertex AI Gemini model for Stage 2 Escalation Cascades (`gemini-3.8-flash` or `gemini-3.5-flash-lite`). |
 | **`--cascade-models`** | `DGEM_CASCADE_MODELS` | **`gemini-3.8-flash,gemini-3.5-flash-lite`** | Comma-separated list of selectable Stage 2 Vertex AI Gemini 3.x models exposed in `GET /api/backend-config` and the Web Studio. |
 | **`--systemone-mode`** | `DGEM_SYSTEMONE_MODE` | `adapter` | Mode for the `/v1/systemone` route: `adapter` (bracket tournaments and multi-slot batching, default) or `passthrough` (direct proxy). |
+| **`--systemone-raw-users`** | `DGEM_SYSTEMONE_RAW_USERS` | none | Comma-separated verified caller identities (`*` for all) whose fitting `/v1/systemone` requests pass through to the serving image unchanged. |
+| **`--seed-token-users`** | `DGEM_SEED_TOKEN_USERS` | none | Comma-separated verified caller identities (`*` for all) whose requests default to `seed_token="fixed"` when unset, on `/v1/systemone` (pass-through and adapter) and `/api/decide`. Explicit `seed_token` values are always respected; global default remains `"random"`. |
 | **`--systemone-temperature`** | `DGEM_SYSTEMONE_TEMP` | `1.0` | Post-hoc slot logit temperature scaling $T^*$ for `/v1/systemone` decisions. |
 | **`-u, --url`** | `DGEM_URL` | `http://127.0.0.1:8080/v1` | Upstream Serverless Cloud Run GPU `/v1` URL used by `cloudrun` routing and `vertex_first` failover. |
 | **`-p, --port`** | `PORT` | `8090` | HTTP listener port (the flag overrides `PORT`). |
@@ -122,7 +124,7 @@ and the container serves the adapter on its port, in front of its own structured
 
 ## 4. HTTP Gateway Endpoints (`/api/decide`, `/v1/systemone`)
 
-`/api/decide` also accepts a prompt layout as JSON `"layout": "document_first" | "schema_first"`, header `X-DGem-Layout` or `?layout=`; the server reports the layout it used in `diagnostics.layout` ([Prompt layout](/dgem/policies/prompt-layout/)). `/v1/systemone` and the deprecated `/v1/chat/completions` pass a `layout` key in the body or schema through unchanged.
+`/api/decide` also accepts a prompt layout as JSON `"layout": "document_first" | "schema_first"`, header `X-DGem-Layout` or `?layout=`; the server reports the layout it used in `diagnostics.layout` ([Prompt layout](/dgem/policies/prompt-layout/)). Both `/api/decide` (JSON `"seed_token"`, header `X-DGem-Seed-Token`, or `?seed_token=`) and `/v1/systemone` (JSON `"seed_token"`) accept `"random"` or `"fixed"` per request for any caller; callers listed in `--seed-token-users` (`DGEM_SEED_TOKEN_USERS`) default to `"fixed"` when unset (recorded as `dgem.seed_token` on the gateway span). `/v1/systemone` and the deprecated `/v1/chat/completions` pass a `layout` key in the body or schema through unchanged.
 
 Every inference endpoint on `dgem serve` (`https://<your-dgem-gateway>`) accepts backend selection via HTTP header `X-DGem-Backend: vertex_first | vertex | cloudrun | local`, query parameter `?backend=vertex_first`, or JSON body field `"backend": "vertex_first"`, and returns the **`X-DGem-Backend-Used: vertex | cloudrun | local`** response header (`"backend_target"` in JSON bodies).
 
