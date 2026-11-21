@@ -791,8 +791,9 @@ func ExecuteSystemOne(ctx context.Context, cli *client.Client, req SystemOneRequ
 		}
 	}
 
-	// 1. Process standard questions (K <= 26) in Multi-Slot Canvas Batches of size opts.MaxSlotsPerPass.
+	// Partition standard questions into Multi-Slot Canvas Batches of size opts.MaxSlotsPerPass.
 	// A question with EvidencePrompt adds a companion <q>_evidence slot on the same canvas, consuming 2 slots.
+	var standardBatches [][]string
 	for i := 0; i < len(standardKeys); {
 		var batchKeys []string
 		slotsUsed := 0
@@ -810,41 +811,56 @@ func ExecuteSystemOne(ctx context.Context, cli *client.Client, req SystemOneRequ
 			slotsUsed += cost
 			i++
 		}
-		multiBatches++
-
-		batchAns, passes, err := evaluateStandardBatch(ctx, cli, stateText, req.Images, batchKeys, req.Questions, kinds, opts)
-		if err != nil {
-			return nil, err
-		}
-		mu.Lock()
-		totalPasses += passes
-		for k, a := range batchAns {
-			answers[k] = a
-		}
-		mu.Unlock()
+		standardBatches = append(standardBatches, batchKeys)
 	}
+	multiBatches = len(standardBatches)
+	wideQs = len(wideKeys)
 
-	// 2. Process wide questions (27 <= K <= 255+) via ShortlistFunc or 2-Stage Bracket Tournament Routing
+	// Dispatch independent standard batches and wide questions concurrently up to opts.MaxConcurrency
+	// (single-task or MaxConcurrency<=1 runs inline without goroutine overhead).
+	tasks := make([]func(context.Context) error, 0, len(standardBatches)+len(wideKeys))
+	for _, batchKeys := range standardBatches {
+		bk := batchKeys
+		tasks = append(tasks, func(tctx context.Context) error {
+			batchAns, passes, err := evaluateStandardBatch(tctx, cli, stateText, req.Images, bk, req.Questions, kinds, opts)
+			if err != nil {
+				return err
+			}
+			mu.Lock()
+			totalPasses += passes
+			for k, a := range batchAns {
+				answers[k] = a
+			}
+			mu.Unlock()
+			return nil
+		})
+	}
 	for _, k := range wideKeys {
-		wideQs++
-		q := req.Questions[k]
-		var (
-			ans    SystemOneAnswer
-			passes int
-			err    error
-		)
-		if opts.ShortlistFunc != nil {
-			ans, passes, err = evaluateWideQuestionShortlist(ctx, cli, stateText, req.Images, k, q, opts)
-		} else {
-			ans, passes, err = evaluateWideQuestionTournament(ctx, cli, stateText, req.Images, k, q, opts)
-		}
-		if err != nil {
-			return nil, err
-		}
-		mu.Lock()
-		totalPasses += passes
-		answers[k] = ans
-		mu.Unlock()
+		wk := k
+		wq := req.Questions[wk]
+		tasks = append(tasks, func(tctx context.Context) error {
+			var (
+				ans    SystemOneAnswer
+				passes int
+				err    error
+			)
+			if opts.ShortlistFunc != nil {
+				ans, passes, err = evaluateWideQuestionShortlist(tctx, cli, stateText, req.Images, wk, wq, opts)
+			} else {
+				ans, passes, err = evaluateWideQuestionTournament(tctx, cli, stateText, req.Images, wk, wq, opts)
+			}
+			if err != nil {
+				return err
+			}
+			mu.Lock()
+			totalPasses += passes
+			answers[wk] = ans
+			mu.Unlock()
+			return nil
+		})
+	}
+	if err := runBounded(ctx, opts.MaxConcurrency, tasks); err != nil {
+		return nil, err
 	}
 
 	return &SystemOneResponse{
@@ -860,6 +876,69 @@ func ExecuteSystemOne(ctx context.Context, cli *client.Client, req SystemOneRequ
 			TemperatureScale: opts.TemperatureScale,
 		},
 	}, nil
+}
+
+// runBounded executes tasks concurrently up to limit (defaulting to inline sequential execution when
+// len(tasks) <= 1 or limit <= 1). On the first error, the derived context is canceled so sibling tasks
+// abort promptly, and all launched goroutines finish before returning.
+func runBounded(ctx context.Context, limit int, tasks []func(context.Context) error) error {
+	if len(tasks) == 0 {
+		return nil
+	}
+	if len(tasks) == 1 || limit <= 1 {
+		for _, fn := range tasks {
+			if err := fn(ctx); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+	runCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+
+	sem := make(chan struct{}, limit)
+	var (
+		wg       sync.WaitGroup
+		errMu    sync.Mutex
+		firstErr error
+	)
+	recordErr := func(err error) {
+		if err == nil {
+			return
+		}
+		errMu.Lock()
+		if firstErr == nil {
+			firstErr = err
+			cancel()
+		}
+		errMu.Unlock()
+	}
+
+	for _, fn := range tasks {
+		select {
+		case sem <- struct{}{}:
+		case <-runCtx.Done():
+			recordErr(runCtx.Err())
+			wg.Wait()
+			return firstErr
+		}
+		if runCtx.Err() != nil {
+			<-sem
+			recordErr(runCtx.Err())
+			break
+		}
+		wg.Add(1)
+		task := fn
+		go func() {
+			defer wg.Done()
+			defer func() { <-sem }()
+			if err := task(runCtx); err != nil {
+				recordErr(err)
+			}
+		}()
+	}
+	wg.Wait()
+	return firstErr
 }
 
 // evaluateStandardBatch runs a single forward pass for up to MaxSlotsPerPass questions where each question has <= 26 options.
@@ -1249,20 +1328,35 @@ func evaluateWideQuestionTournament(
 
 	round1Results := make(map[string]SystemOneAnswer, len(brackets))
 	passesUsed := 0
+	var r1Mu sync.Mutex
+	var r1Tasks []func(context.Context) error
 	for i := 0; i < len(round1Keys); i += MaxSlotsPerPass {
 		end := i + MaxSlotsPerPass
 		if end > len(round1Keys) {
 			end = len(round1Keys)
 		}
 		subKeys := round1Keys[i:end]
-		subAns, p, err := evaluateStandardBatch(ctx, cli, stateText, images, subKeys, round1Questions, nil, EngineOptions{TemperatureScale: 1.0, PromptLayout: layout, OptionOrder: optionOrder, Labels: labels, SeedToken: opts.SeedToken})
-		if err != nil {
-			return SystemOneAnswer{}, passesUsed + p, err
-		}
-		passesUsed += p
-		for k, v := range subAns {
-			round1Results[k] = v
-		}
+		r1Tasks = append(r1Tasks, func(tctx context.Context) error {
+			subAns, p, err := evaluateStandardBatch(tctx, cli, stateText, images, subKeys, round1Questions, nil, EngineOptions{
+				TemperatureScale: 1.0,
+				PromptLayout:     layout,
+				OptionOrder:      optionOrder,
+				Labels:           labels,
+				SeedToken:        opts.SeedToken,
+			})
+			r1Mu.Lock()
+			passesUsed += p
+			if err == nil {
+				for k, v := range subAns {
+					round1Results[k] = v
+				}
+			}
+			r1Mu.Unlock()
+			return err
+		})
+	}
+	if err := runBounded(ctx, opts.MaxConcurrency, r1Tasks); err != nil {
+		return SystemOneAnswer{}, passesUsed, err
 	}
 
 	// Collect top-2 contenders from each bracket for Round-2 Finals (capped at 24 finalists)
