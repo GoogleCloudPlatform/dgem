@@ -29,18 +29,23 @@ import (
 	"sync"
 	"time"
 
-	cloudtrace "github.com/GoogleCloudPlatform/opentelemetry-operations-go/exporter/trace"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
+	"go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracegrpc"
 	"go.opentelemetry.io/otel/propagation"
 	"go.opentelemetry.io/otel/sdk/resource"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 	semconv "go.opentelemetry.io/otel/semconv/v1.26.0"
 	"go.opentelemetry.io/otel/trace"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials/oauth"
 )
 
-const gatewayTracerName = "github.com/GoogleCloudPlatform/dgem/gateway"
+const (
+	gatewayTracerName    = "github.com/GoogleCloudPlatform/dgem/gateway"
+	gcpTelemetryEndpoint = "telemetry.googleapis.com:443"
+)
 
 // TraceSpanRecord represents a serialized OpenTelemetry span for API responses & /api/traces.
 type TraceSpanRecord struct {
@@ -118,8 +123,14 @@ type gatewaySpanProcessor struct {
 
 func (p *gatewaySpanProcessor) OnStart(parent context.Context, s sdktrace.ReadWriteSpan) {}
 
+func isInternalTraceExportSpan(name string) bool {
+	return strings.HasPrefix(name, "google.devtools.cloudtrace") ||
+		strings.HasPrefix(name, "google.telemetry.") ||
+		strings.HasPrefix(name, "opentelemetry.proto.collector.trace")
+}
+
 func (p *gatewaySpanProcessor) OnEnd(s sdktrace.ReadOnlySpan) {
-	if strings.HasPrefix(s.Name(), "google.devtools.cloudtrace") {
+	if isInternalTraceExportSpan(s.Name()) {
 		return
 	}
 	sc := s.SpanContext()
@@ -291,8 +302,36 @@ func spanSeverity(s sdktrace.ReadOnlySpan, attrs map[string]interface{}) (string
 func (p *gatewaySpanProcessor) Shutdown(ctx context.Context) error   { return nil }
 func (p *gatewaySpanProcessor) ForceFlush(ctx context.Context) error { return nil }
 
-// initGatewayTracer initializes the OpenTelemetry TracerProvider with Google Cloud Trace export
-// (when on GCP) and the in-memory + Cloud Logging span processor.
+// newGatewayOTLPTraceExporter constructs a standard OpenTelemetry OTLP/gRPC trace exporter.
+// When OTEL_EXPORTER_OTLP_TRACES_ENDPOINT or OTEL_EXPORTER_OTLP_ENDPOINT is set, standard
+// OTLP environment configuration is honored. Otherwise, when projectID is non-empty, spans
+// are exported to Google Cloud's native OTLP Telemetry API (telemetry.googleapis.com:443)
+// authenticated with Application Default Credentials.
+func newGatewayOTLPTraceExporter(ctx context.Context, projectID string) (sdktrace.SpanExporter, error) {
+	if strings.TrimSpace(os.Getenv("OTEL_EXPORTER_OTLP_TRACES_ENDPOINT")) != "" ||
+		strings.TrimSpace(os.Getenv("OTEL_EXPORTER_OTLP_ENDPOINT")) != "" {
+		return otlptracegrpc.New(ctx)
+	}
+	if projectID == "" {
+		return nil, nil
+	}
+	creds, err := oauth.NewApplicationDefault(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return otlptracegrpc.New(
+		ctx,
+		otlptracegrpc.WithEndpoint(gcpTelemetryEndpoint),
+		otlptracegrpc.WithDialOption(grpc.WithPerRPCCredentials(creds)),
+		otlptracegrpc.WithHeaders(map[string]string{
+			"x-goog-user-project": projectID,
+		}),
+	)
+}
+
+// initGatewayTracer initializes the OpenTelemetry TracerProvider with OTLP trace export
+// (to Google Cloud Telemetry API on GCP or a configured OTLP endpoint) and the in-memory +
+// Cloud Logging span processor.
 func initGatewayTracer(ctx context.Context) func(context.Context) error {
 	gcpProjectID = detectGCPProjectID()
 
@@ -312,10 +351,10 @@ func initGatewayTracer(ctx context.Context) func(context.Context) error {
 		sdktrace.WithSpanProcessor(&gatewaySpanProcessor{projectID: gcpProjectID}),
 	}
 
-	if gcpProjectID != "" {
-		if exporter, err := cloudtrace.New(cloudtrace.WithProjectID(gcpProjectID)); err == nil {
-			opts = append(opts, sdktrace.WithBatcher(exporter))
-		}
+	if exporter, err := newGatewayOTLPTraceExporter(ctx, gcpProjectID); err != nil {
+		fmt.Fprintf(os.Stderr, "[otel] OTLP trace exporter disabled: %v\n", err)
+	} else if exporter != nil {
+		opts = append(opts, sdktrace.WithBatcher(exporter))
 	}
 
 	tp := sdktrace.NewTracerProvider(opts...)

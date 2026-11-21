@@ -62,6 +62,12 @@ resource "google_project_iam_member" "gateway_trace_agent" {
   member  = "serviceAccount:${google_service_account.gateway.email}"
 }
 
+resource "google_project_iam_member" "gateway_telemetry_traces_writer" {
+  project = var.project_id
+  role    = "roles/telemetry.tracesWriter"
+  member  = "serviceAccount:${google_service_account.gateway.email}"
+}
+
 resource "google_project_iam_member" "gateway_vertex_user" {
   project = var.project_id
   role    = "roles/aiplatform.user"

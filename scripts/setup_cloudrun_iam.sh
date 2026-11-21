@@ -128,10 +128,16 @@ if gcloud run services describe "${GPU_SERVICE}" --project="${PROJECT}" --region
 fi
 
 # 4. Attach dgemma-gateway-sa to dgemma-gateway and bind authorized invokers
-echo "-> Granting roles/cloudtrace.agent and roles/aiplatform.user on project ${PROJECT} to ${GATEWAY_SA}..."
+echo "-> Granting roles/cloudtrace.agent, roles/telemetry.tracesWriter, and roles/aiplatform.user on project ${PROJECT} to ${GATEWAY_SA}..."
 gcloud projects add-iam-policy-binding "${PROJECT}" \
   --member="serviceAccount:${GATEWAY_SA}" \
   --role="roles/cloudtrace.agent" \
+  --condition=None \
+  --quiet >/dev/null || true
+
+gcloud projects add-iam-policy-binding "${PROJECT}" \
+  --member="serviceAccount:${GATEWAY_SA}" \
+  --role="roles/telemetry.tracesWriter" \
   --condition=None \
   --quiet >/dev/null || true
 

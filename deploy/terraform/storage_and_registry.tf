@@ -23,6 +23,7 @@ locals {
     "run.googleapis.com",
     "secretmanager.googleapis.com",
     "storage.googleapis.com",
+    "telemetry.googleapis.com",
   ])
 }
 
