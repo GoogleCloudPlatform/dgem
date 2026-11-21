@@ -28,8 +28,9 @@ go vet ./... && go test ./...   # unset DGEM_VERTEX_URL first if it is set in yo
 go -C examples vet ./... && go -C examples test ./...
 python3 -m unittest scripts/matrix/test_matrix.py
 python3 -m unittest deploy/cloudrun/server/test_server_key.py deploy/cloudrun/server/test_media_fields.py \
-  deploy/cloudrun/server/test_upstream_errors.py deploy/cloudrun/server/test_predict_route.py \
-  deploy/cloudrun/server/test_ready_route.py deploy/cloudrun/server/test_label_sets.py
+  deploy/cloudrun/server/test_upstream_errors.py deploy/cloudrun/server/test_upstream_keepalive_and_logprobs.py \
+  deploy/cloudrun/server/test_predict_route.py deploy/cloudrun/server/test_ready_route.py \
+  deploy/cloudrun/server/test_label_sets.py
 ```
 After changing `studio/src/*`: `npm --prefix studio run build && go build -o bin/dgem .`, then
 `rm -rf studio/dist/* && touch studio/dist/.gitkeep` before committing (build output is not tracked).

@@ -311,7 +311,7 @@
      return s
  
  
-@@ -418,46 +575,169 @@
+@@ -418,46 +575,199 @@
      }
  
  
@@ -364,11 +364,56 @@
 +            time.sleep(1.0)
 +
 +
-+_UPSTREAM_LOCAL = threading.local()
++_UPSTREAM_POOL_LOCK = threading.Lock()
++_UPSTREAM_POOL = {}  # (scheme, host, port, timeout) -> LIFO list of idle HTTPConnection
++_UPSTREAM_POOL_MAX = max(MAX_INFLIGHT * 2, 16)
++
++
++def _close_upstream_pool():
++    """dgem: close and clear all idle pooled upstream connections."""
++    with _UPSTREAM_POOL_LOCK:
++        conns = [c for bucket in _UPSTREAM_POOL.values() for c in bucket]
++        _UPSTREAM_POOL.clear()
++    for conn in conns:
++        try:
++            conn.close()
++        except OSError:
++            pass
++
++
++def _checkout_upstream_conn(conn_key, scheme, host, port, timeout, reuse=True):
++    if reuse:
++        with _UPSTREAM_POOL_LOCK:
++            bucket = _UPSTREAM_POOL.get(conn_key)
++            if bucket:
++                return bucket.pop()
++    return (
++        http.client.HTTPSConnection(host, port, timeout=timeout)
++        if scheme == "https"
++        else http.client.HTTPConnection(host, port, timeout=timeout)
+     )
+-    return json.load(urllib.request.urlopen(req, timeout=timeout))
+ 
+ 
+-def upstream_completions(body, timeout=600):
+-    req = urllib.request.Request(
+-        ARGS.upstream.rstrip("/") + "/v1/completions",
+-        data=json.dumps(body).encode(),
+-        headers={"content-type": "application/json"},
++def _return_upstream_conn(conn_key, conn):
++    with _UPSTREAM_POOL_LOCK:
++        bucket = _UPSTREAM_POOL.setdefault(conn_key, [])
++        if len(bucket) < _UPSTREAM_POOL_MAX:
++            bucket.append(conn)
++            return
++    try:
++        conn.close()
++    except OSError:
++        pass
 +
 +
 +def _upstream_post_json(route_path, body, timeout=600):
-+    """dgem: reuse per-thread HTTP/1.1 keep-alive connections to vLLM instead of opening a new TCP socket per read."""
++    """dgem: reuse shared bounded LIFO HTTP/1.1 keep-alive connections to vLLM across handler and read_many threads."""
 +    _wait_for_upstream()
 +    base = ARGS.upstream.rstrip("/")
 +    parsed = urllib.parse.urlsplit(base)
@@ -389,21 +434,10 @@
      )
 -    return json.load(urllib.request.urlopen(req, timeout=timeout))
 +    for attempt in range(2):
-+        cached = getattr(_UPSTREAM_LOCAL, "entry", None)
-+        if cached is not None and cached[0] == conn_key:
-+            conn = cached[1]
-+        else:
-+            if cached is not None:
-+                try:
-+                    cached[1].close()
-+                except OSError:
-+                    pass
-+            conn = (
-+                http.client.HTTPSConnection(host, port, timeout=timeout)
-+                if scheme == "https"
-+                else http.client.HTTPConnection(host, port, timeout=timeout)
-+            )
-+            _UPSTREAM_LOCAL.entry = (conn_key, conn)
++        # Borrow a hot pooled socket on attempt 0; on a stale-socket retry (attempt 1), always dial fresh.
++        conn = _checkout_upstream_conn(
++            conn_key, scheme, host, port, timeout, reuse=(attempt == 0)
++        )
 +        try:
 +            if conn.sock is None:
 +                conn.connect()
@@ -419,9 +453,13 @@
 +            )
 +            resp = conn.getresponse()
 +            raw = resp.read()
-+            if resp.will_close:
-+                conn.close()
-+                _UPSTREAM_LOCAL.entry = None
++            if resp.will_close or resp.status >= 500:
++                try:
++                    conn.close()
++                except OSError:
++                    pass
++            else:
++                _return_upstream_conn(conn_key, conn)
 +            if resp.status >= 400:
 +                raise urllib.error.HTTPError(
 +                    full_url, resp.status, resp.reason, resp.headers, io.BytesIO(raw)
@@ -434,7 +472,6 @@
 +                conn.close()
 +            except OSError:
 +                pass
-+            _UPSTREAM_LOCAL.entry = None
 +            if attempt == 1:
 +                raise
 +        except (OSError, http.client.HTTPException, ValueError):
@@ -442,7 +479,6 @@
 +                conn.close()
 +            except OSError:
 +                pass
-+            _UPSTREAM_LOCAL.entry = None
 +            raise
 +
 +
@@ -476,15 +512,9 @@
 +    elif info.get("phase") == "ready":
 +        info["phase"] = "loading_vllm_siglip"
 +    return info
- 
- 
- def upstream_completions(body, timeout=600):
--    req = urllib.request.Request(
--        ARGS.upstream.rstrip("/") + "/v1/completions",
--        data=json.dumps(body).encode(),
--        headers={"content-type": "application/json"},
--    )
--    return json.load(urllib.request.urlopen(req, timeout=timeout))
++
++
++def upstream_completions(body, timeout=600):
 +    return _upstream_post_json("/v1/completions", body, timeout=timeout)
  
  
@@ -500,7 +530,7 @@
      out = TOK.apply_chat_template(
          messages, tokenize=True, add_generation_prompt=True, enable_thinking=thinking
      )
-@@ -502,10 +782,7 @@
+@@ -502,10 +812,7 @@
      Returns the thought's token ids and a diagnostics dict."""
      body = {
          "model": ARGS.model,
@@ -512,7 +542,7 @@
          "max_tokens": budget,
          "logprobs": True,
          "top_logprobs": 0,
-@@ -538,10 +815,7 @@
+@@ -538,10 +845,7 @@
  ):
      if prefix is not None:
          return one_read_continuation(schema, template, slots, prefix, seed)
@@ -524,7 +554,7 @@
      body = {
          "model": ARGS.model,
          "messages": messages,
-@@ -555,7 +829,9 @@
+@@ -555,7 +859,9 @@
          "return_tokens_as_token_ids": True,
          "chat_template_kwargs": {"enable_thinking": thinking},
          "vllm_xargs": {
@@ -535,7 +565,7 @@
              "diffusion_canvas_length": canvas_width(template),
              "diffusion_max_steps": schema["steps"],
              "diffusion_read_only": True,
-@@ -583,11 +859,21 @@
+@@ -583,11 +889,21 @@
      floor = min(top.values()) - 5.0
      lp_t = [top.get(i, floor) for i in label_ids]
      mx = max(lp_t)
@@ -559,7 +589,7 @@
          "label_mass": sum(math.exp(x) for x in lp_t),
          "entropy": -sum(p * math.log(p) for p in top_p if p > 0),
          "argmax_is_label": max(top, key=top.get) in label_ids,
-@@ -605,7 +891,9 @@
+@@ -605,7 +921,9 @@
          "logprob_token_ids": label_id_union(slots),
          "return_tokens_as_token_ids": True,
          "vllm_xargs": {
@@ -570,7 +600,27 @@
              "diffusion_canvas_length": canvas_width(template),
              "diffusion_max_steps": schema["steps"],
              "diffusion_read_only": True,
-@@ -738,8 +1026,12 @@
+@@ -652,11 +970,14 @@
+         except Exception as e:  # raised again below
+             errors[k] = e
+ 
+-    threads = [threading.Thread(target=run, args=(k,)) for k in range(n)]
+-    for t in threads:
+-        t.start()
+-    for t in threads:
+-        t.join()
++    if n == 1:
++        run(0)
++    else:
++        threads = [threading.Thread(target=run, args=(k,)) for k in range(n)]
++        for t in threads:
++            t.start()
++        for t in threads:
++            t.join()
+     for e in errors:
+         if e is not None:
+             raise e
+@@ -738,8 +1059,12 @@
          for q in schema["questions"]
          if not schema.get("ask") or q["id"] in schema["ask"]
      ]
@@ -584,7 +634,7 @@
      fmt = schema["format"]
      join = FORMATS[fmt][0]
      # More than one read in sequence needs the full question list in every
-@@ -871,6 +1163,10 @@
+@@ -871,6 +1196,10 @@
      one = len(parts) == 1 and not skipped
      diagnostics = {
          "steps": schema["steps"],
@@ -595,7 +645,7 @@
          "stages": stages,
          "skipped": skipped,
          "chunks": chunks,
-@@ -901,6 +1197,7 @@
+@@ -901,6 +1230,7 @@
          or None,
          "questions": diag_q,
          "engine": "vllm",
@@ -603,7 +653,7 @@
      }
      return {"answers": answers, "diagnostics": diagnostics}, sum(
          rows for _, rows in parts
-@@ -989,7 +1286,18 @@
+@@ -989,7 +1319,18 @@
      n = len(reads)
      for qi, q in enumerate(schema["questions"]):
          per = [r[qi]["probs"] for r in reads]
@@ -622,7 +672,7 @@
          top = max(range(len(mean)), key=lambda i: mean[i])
          a = {
              "type": q["type"],
-@@ -1014,6 +1322,7 @@
+@@ -1014,6 +1355,7 @@
          diag_q[q["id"]] = {
              "pos": slots[qi]["pos"],
              "entropy": [r[qi]["entropy"] for r in reads],
@@ -630,7 +680,7 @@
              "label_mass": reads[0][qi]["label_mass"],
              "argmax_is_label": reads[0][qi]["argmax_is_label"],
          }
-@@ -1034,6 +1343,7 @@
+@@ -1034,6 +1376,7 @@
          "answers": answers,
          "diagnostics": {
              "steps": schema["steps"],
@@ -638,7 +688,7 @@
              "samples": {
                  "n": n,
                  "tops": tops,
-@@ -1046,6 +1356,7 @@
+@@ -1046,6 +1389,7 @@
              "prompt_tokens": prompt_tokens,
              "questions": diag_q,
              "engine": "vllm",
@@ -646,7 +696,7 @@
          },
      }, len(template) + 1 + (thought["tokens"] if thought else 0)
  
-@@ -1065,11 +1376,61 @@
+@@ -1065,11 +1409,61 @@
      "chunk_rows",
      "chunk_prompt",
      "sequential",
@@ -708,7 +758,7 @@
      qs = body.get("questions")
      if not isinstance(qs, dict) or not qs:
          raise SchemaError("questions: needs a non-empty map of id -> question")
-@@ -1160,7 +1521,8 @@
+@@ -1160,7 +1554,8 @@
      state = body.get("state")
      if state is None:
          raise SchemaError("state: required")
@@ -718,7 +768,7 @@
      if not image_parts:
          return text
      return list(image_parts) + [{"type": "text", "text": text}]
-@@ -1170,7 +1532,13 @@
+@@ -1170,7 +1565,13 @@
      if a is None:
          return None
      if q["type"] == "noul":
@@ -733,7 +783,7 @@
      if q["type"] == "choice":
          return {
              "type": "choice",
-@@ -1201,21 +1569,71 @@
+@@ -1201,21 +1602,71 @@
      return c if isinstance(c, str) else ""
  
  
@@ -809,7 +859,7 @@
          return self._json(404, {"error": {"message": "unknown route"}})
  
      def _read_request(self):
-@@ -1249,8 +1667,33 @@
+@@ -1249,8 +1700,33 @@
              )
          return body, images
  
@@ -843,7 +893,7 @@
              return self._json(
                  401,
                  {
-@@ -1260,8 +1703,29 @@
+@@ -1260,8 +1736,29 @@
                      }
                  },
              )
@@ -874,7 +924,7 @@
          try:
              req, images = self._read_request()
          except Exception as e:
-@@ -1278,51 +1742,52 @@
+@@ -1278,51 +1775,52 @@
              return self._systemone(req, images)
          if self.path == "/v1/chat/completions":
              return self._chat(req)
@@ -956,7 +1006,7 @@
          except SchemaError as e:
              return self._json(
                  422, {"error": {"message": str(e), "type": "validation_error"}}
-@@ -1362,6 +1827,7 @@
+@@ -1362,6 +1860,7 @@
                  },
                  "diagnostics": body["diagnostics"],
              },
@@ -964,7 +1014,7 @@
          )
  
      def _chat(self, req):
-@@ -1387,6 +1853,7 @@
+@@ -1387,6 +1886,7 @@
              schema_value = json.loads(message_text(msgs[0]))
              schema = parse_schema(schema_value)
              content = msgs[1].get("content", "")
@@ -972,7 +1022,7 @@
              has_image = isinstance(content, list) and any(
                  isinstance(p, dict) and p.get("type") in ("image_url", "image")
                  for p in content
-@@ -1451,9 +1918,18 @@
+@@ -1451,9 +1951,18 @@
                      "total_tokens": completion_tokens,
                  },
              },
@@ -991,7 +1041,7 @@
  def self_signed(cert_dir):
      """Paths of a self-signed certificate and key in cert_dir, made with
      openssl on first use."""
-@@ -1486,15 +1962,25 @@
+@@ -1486,15 +1995,25 @@
  def serve_tls(host, port, cert_dir):
      cert, key = self_signed(cert_dir)
      ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
@@ -1019,7 +1069,7 @@
      p = argparse.ArgumentParser()
      p.add_argument("--upstream", default="http://127.0.0.1:8010")
      p.add_argument("--model", default="dgemma")
-@@ -1507,6 +1993,18 @@
+@@ -1507,6 +2026,18 @@
          help="request widths round up to a multiple of this",
      )
      p.add_argument(
@@ -1038,7 +1088,7 @@
          "--no-constrained",
          dest="constrained",
          action="store_false",
-@@ -1523,6 +2021,8 @@
+@@ -1523,6 +2054,8 @@
          help="directory for the self-signed certificate",
      )
      ARGS = p.parse_args()
@@ -1047,7 +1097,7 @@
      CANVAS_LEN = ARGS.canvas
      CANVAS_STEP = ARGS.canvas_step
      init_tokenizer(AutoTokenizer.from_pretrained(ARGS.tokenizer))
-@@ -1537,7 +2037,8 @@
+@@ -1537,7 +2070,8 @@
          f"(canvas {CANVAS_LEN})",
          flush=True,
      )

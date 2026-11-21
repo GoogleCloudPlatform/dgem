@@ -113,7 +113,7 @@ class UpstreamKeepAliveAndLogprobsTest(unittest.TestCase):
         threading.Thread(target=self.upstream.serve_forever, daemon=True).start()
         self.addCleanup(self.upstream.server_close)
         self.addCleanup(self.upstream.shutdown)
-        self.addCleanup(self._close_cached_upstream_conn)
+        self.addCleanup(self.mod._close_upstream_pool)
         host, port = self.upstream.server_address
         self.mod.ARGS = types.SimpleNamespace(
             upstream=f"http://{host}:{port}",
@@ -122,14 +122,9 @@ class UpstreamKeepAliveAndLogprobsTest(unittest.TestCase):
         )
         self.mod._upstream_ready = True
 
-    def _close_cached_upstream_conn(self):
-        cached = getattr(self.mod._UPSTREAM_LOCAL, "entry", None)
-        if cached is not None:
-            try:
-                cached[1].close()
-            except OSError:
-                pass
-            self.mod._UPSTREAM_LOCAL.entry = None
+    def _pooled_conns(self):
+        with self.mod._UPSTREAM_POOL_LOCK:
+            return [c for bucket in self.mod._UPSTREAM_POOL.values() for c in bucket]
 
     def test_keepalive_reuses_single_socket_sequentially_and_reconnects(self):
         for _ in range(12):
@@ -137,7 +132,9 @@ class UpstreamKeepAliveAndLogprobsTest(unittest.TestCase):
             self.assertEqual(response["choices"][0]["echo_model"], "dgemma")
         self.assertEqual(self.upstream.requests_served, 12)
         self.assertEqual(self.upstream.accepted_connections, 1)
-        cached_sock = self.mod._UPSTREAM_LOCAL.entry[1].sock
+        pooled = self._pooled_conns()
+        self.assertEqual(len(pooled), 1)
+        cached_sock = pooled[0].sock
         self.assertNotEqual(cached_sock.getsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY), 0)
 
         # Verify _Server.get_request sets TCP_NODELAY on accepted HTTP/1.1 client connections.
@@ -165,6 +162,71 @@ class UpstreamKeepAliveAndLogprobsTest(unittest.TestCase):
         self.assertEqual(self.upstream.requests_served, 14)
         self.assertEqual(self.upstream.accepted_connections, 2)
 
+    def test_keepalive_reuses_pooled_sockets_across_ephemeral_threads_and_read_many(self):
+        # Simulate ThreadingHTTPServer / worker threads: 12 sequential requests across 12 fresh threads
+        # must share a single pooled TCP connection rather than opening 12 sockets.
+        errors = []
+
+        def worker():
+            try:
+                reply = self.mod.upstream_chat({"model": "dgemma"})
+                self.assertEqual(reply["choices"][0]["echo_model"], "dgemma")
+            except Exception as exc:
+                errors.append(exc)
+
+        for _ in range(12):
+            t = threading.Thread(target=worker)
+            t.start()
+            t.join(timeout=5.0)
+        self.assertEqual(errors, [])
+        self.assertEqual(self.upstream.requests_served, 12)
+        self.assertEqual(self.upstream.accepted_connections, 1)
+
+        # Verify read_many (n=1 fast path and n=4 multi-sample threads) reuses pooled connections.
+        self.mod.one_read = lambda *args, **kwargs: (
+            self.mod.upstream_chat({"model": "dgemma"}),
+            {"prompt_tokens": 10},
+        )
+        for _ in range(4):
+            self.mod.read_many({}, [], [], "sys", "state", 1, 1)
+        self.assertEqual(self.upstream.requests_served, 16)
+        self.assertEqual(self.upstream.accepted_connections, 1)
+
+        for _ in range(4):
+            self.mod.read_many({}, [], [], "sys", "state", 1, 4)
+        self.assertEqual(self.upstream.requests_served, 32)
+        self.assertLessEqual(self.upstream.accepted_connections, 4)
+
+    def test_retry_after_stale_pooled_socket_dials_fresh_even_with_multiple_stale_entries(self):
+        host, port = self.upstream.server_address
+        conn_key = ("http", host, port, 600.0)
+        # Put two already-broken connections in the pool; attempt 0 hits stale entry #1,
+        # and attempt 1 must dial a fresh socket rather than popping stale entry #2.
+        class _DeadConn(http.client.HTTPConnection):
+            def __init__(self, *args, **kwargs):
+                super().__init__(*args, **kwargs)
+                self.sock = object()
+
+            def close(self):
+                self.sock = None
+
+            def request(self, *args, **kwargs):
+                raise http.client.RemoteDisconnected("peer closed idle keep-alive socket")
+
+        stale_a = _DeadConn(host, port, timeout=600.0)
+        stale_b = _DeadConn(host, port, timeout=600.0)
+        with self.mod._UPSTREAM_POOL_LOCK:
+            self.mod._UPSTREAM_POOL[conn_key] = [stale_a, stale_b]
+        reply = self.mod.upstream_chat({"model": "dgemma"})
+        self.assertEqual(reply["choices"][0]["echo_model"], "dgemma")
+        self.assertEqual(self.upstream.accepted_connections, 1)
+        # Attempt 0 popped stale_b, attempt 1 dialed a fresh socket and returned it on top of stale_a.
+        with self.mod._UPSTREAM_POOL_LOCK:
+            bucket = list(self.mod._UPSTREAM_POOL[conn_key])
+        self.assertEqual(len(bucket), 2)
+        self.assertIs(bucket[0], stale_a)
+        self.assertIsNot(bucket[1], stale_b)
+
     def test_upstream_http_errors_raise_urllib_httperror(self):
         self.upstream.next_status = 400
         with self.assertRaises(urllib.error.HTTPError) as ctx400:
@@ -176,12 +238,14 @@ class UpstreamKeepAliveAndLogprobsTest(unittest.TestCase):
         with self.assertRaises(urllib.error.HTTPError) as ctx503:
             self.mod.upstream_completions({"model": "dgemma"})
         self.assertEqual(ctx503.exception.code, 503)
+        # 5xx responses must not return the upstream socket to the pool.
+        self.assertEqual(len(self._pooled_conns()), 0)
 
-    def test_timeout_evicts_half_used_connection_from_thread_local(self):
+    def test_timeout_evicts_half_used_connection_from_pool(self):
         self.upstream.delay_next_s = 0.20
         with self.assertRaises(TimeoutError):
             self.mod.upstream_chat({"model": "dgemma"}, timeout=0.04)
-        self.assertIsNone(self.mod._UPSTREAM_LOCAL.entry)
+        self.assertEqual(len(self._pooled_conns()), 0)
 
         # Subsequent call gets a fresh connection without burning a retry on CannotSendRequest.
         recovered = self.mod.upstream_chat({"model": "dgemma"}, timeout=2.0)

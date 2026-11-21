@@ -616,11 +616,50 @@ def _wait_for_upstream(max_wait=180):
             time.sleep(1.0)
 
 
-_UPSTREAM_LOCAL = threading.local()
+_UPSTREAM_POOL_LOCK = threading.Lock()
+_UPSTREAM_POOL = {}  # (scheme, host, port, timeout) -> LIFO list of idle HTTPConnection
+_UPSTREAM_POOL_MAX = max(MAX_INFLIGHT * 2, 16)
+
+
+def _close_upstream_pool():
+    """dgem: close and clear all idle pooled upstream connections."""
+    with _UPSTREAM_POOL_LOCK:
+        conns = [c for bucket in _UPSTREAM_POOL.values() for c in bucket]
+        _UPSTREAM_POOL.clear()
+    for conn in conns:
+        try:
+            conn.close()
+        except OSError:
+            pass
+
+
+def _checkout_upstream_conn(conn_key, scheme, host, port, timeout, reuse=True):
+    if reuse:
+        with _UPSTREAM_POOL_LOCK:
+            bucket = _UPSTREAM_POOL.get(conn_key)
+            if bucket:
+                return bucket.pop()
+    return (
+        http.client.HTTPSConnection(host, port, timeout=timeout)
+        if scheme == "https"
+        else http.client.HTTPConnection(host, port, timeout=timeout)
+    )
+
+
+def _return_upstream_conn(conn_key, conn):
+    with _UPSTREAM_POOL_LOCK:
+        bucket = _UPSTREAM_POOL.setdefault(conn_key, [])
+        if len(bucket) < _UPSTREAM_POOL_MAX:
+            bucket.append(conn)
+            return
+    try:
+        conn.close()
+    except OSError:
+        pass
 
 
 def _upstream_post_json(route_path, body, timeout=600):
-    """dgem: reuse per-thread HTTP/1.1 keep-alive connections to vLLM instead of opening a new TCP socket per read."""
+    """dgem: reuse shared bounded LIFO HTTP/1.1 keep-alive connections to vLLM across handler and read_many threads."""
     _wait_for_upstream()
     base = ARGS.upstream.rstrip("/")
     parsed = urllib.parse.urlsplit(base)
@@ -640,21 +679,10 @@ def _upstream_post_json(route_path, body, timeout=600):
         ConnectionResetError,
     )
     for attempt in range(2):
-        cached = getattr(_UPSTREAM_LOCAL, "entry", None)
-        if cached is not None and cached[0] == conn_key:
-            conn = cached[1]
-        else:
-            if cached is not None:
-                try:
-                    cached[1].close()
-                except OSError:
-                    pass
-            conn = (
-                http.client.HTTPSConnection(host, port, timeout=timeout)
-                if scheme == "https"
-                else http.client.HTTPConnection(host, port, timeout=timeout)
-            )
-            _UPSTREAM_LOCAL.entry = (conn_key, conn)
+        # Borrow a hot pooled socket on attempt 0; on a stale-socket retry (attempt 1), always dial fresh.
+        conn = _checkout_upstream_conn(
+            conn_key, scheme, host, port, timeout, reuse=(attempt == 0)
+        )
         try:
             if conn.sock is None:
                 conn.connect()
@@ -670,9 +698,13 @@ def _upstream_post_json(route_path, body, timeout=600):
             )
             resp = conn.getresponse()
             raw = resp.read()
-            if resp.will_close:
-                conn.close()
-                _UPSTREAM_LOCAL.entry = None
+            if resp.will_close or resp.status >= 500:
+                try:
+                    conn.close()
+                except OSError:
+                    pass
+            else:
+                _return_upstream_conn(conn_key, conn)
             if resp.status >= 400:
                 raise urllib.error.HTTPError(
                     full_url, resp.status, resp.reason, resp.headers, io.BytesIO(raw)
@@ -685,7 +717,6 @@ def _upstream_post_json(route_path, body, timeout=600):
                 conn.close()
             except OSError:
                 pass
-            _UPSTREAM_LOCAL.entry = None
             if attempt == 1:
                 raise
         except (OSError, http.client.HTTPException, ValueError):
@@ -693,7 +724,6 @@ def _upstream_post_json(route_path, body, timeout=600):
                 conn.close()
             except OSError:
                 pass
-            _UPSTREAM_LOCAL.entry = None
             raise
 
 
@@ -940,11 +970,14 @@ def read_many(
         except Exception as e:  # raised again below
             errors[k] = e
 
-    threads = [threading.Thread(target=run, args=(k,)) for k in range(n)]
-    for t in threads:
-        t.start()
-    for t in threads:
-        t.join()
+    if n == 1:
+        run(0)
+    else:
+        threads = [threading.Thread(target=run, args=(k,)) for k in range(n)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
     for e in errors:
         if e is not None:
             raise e
