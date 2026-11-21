@@ -25,7 +25,23 @@ if [[ -z "$PROJECT_ID" ]]; then
   exit 1
 fi
 REGION="${GCP_REGION:-us-central1}"
-ENDPOINT_DISPLAY_NAME="${VERTEX_ENDPOINT_NAME:-dgemma-dedicated-g4}"  # the L4 profile used dgemma-dedicated
+if [[ -n "${VERTEX_ENDPOINT_NAME:-}" ]]; then
+  ENDPOINT_DISPLAY_NAME="${VERTEX_ENDPOINT_NAME}"
+elif [[ -n "${VERTEX_PROFILE:-}" ]]; then
+  case "${VERTEX_PROFILE}" in
+    g4-rtxpro6000) ENDPOINT_DISPLAY_NAME="dgemma-dedicated-g4" ;;
+    h100)          ENDPOINT_DISPLAY_NAME="dgemma-dedicated-h100" ;;
+    a100)          ENDPOINT_DISPLAY_NAME="dgemma-dedicated-a100" ;;
+    l4)            ENDPOINT_DISPLAY_NAME="dgemma-dedicated" ;;
+    *)
+      echo "Error: Unknown VERTEX_PROFILE=${VERTEX_PROFILE} (use g4-rtxpro6000 | h100 | a100 | l4)." >&2
+      exit 1
+      ;;
+  esac
+else
+  echo "Error: Set VERTEX_ENDPOINT_NAME=<display-name-or-id> or VERTEX_PROFILE=<g4-rtxpro6000|h100|a100|l4>." >&2
+  exit 1
+fi
 API_BASE="https://${REGION}-aiplatform.googleapis.com/v1beta1"
 TOKEN="$(gcloud auth print-access-token)"
 

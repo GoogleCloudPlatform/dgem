@@ -61,11 +61,24 @@ The default profile (`VERTEX_PROFILE=g4-rtxpro6000`) configures:
 
 | Setting | Value |
 | :--- | :--- |
-| Machine | `g4-standard-48` + 1× `NVIDIA_RTX_PRO_6000` |
+| Machine | `g4-standard-48` + 1× `NVIDIA_RTX_PRO_6000` (~96 GB VRAM) |
 | Replicas | min 1 (`VERTEX_MIN_REPLICAS`), max 2 (`VERTEX_MAX_REPLICAS`), autoscale at 70% GPU duty cycle |
-| Engine | `KV_CACHE_GB=12`, `MAX_SEQS=32`, `MAX_INFLIGHT=8`, `DEFAULT_SAMPLES=1`, vision on |
+| Engine | `KV_CACHE_GB=12`, `MAX_SEQS=32`, `MAX_MODEL_LEN=8192`, `MAX_INFLIGHT=8`, `DEFAULT_SAMPLES=1`, `ENFORCE_EAGER=1`, vision on |
 | Endpoint | dedicated DNS, display name `dgemma-dedicated-g4` (`VERTEX_ENDPOINT_NAME`; reused if it exists) |
 | Startup | `healthRoute: "/ready"` (`503` until vLLM serves, so crash-looping engines fail deploy instead of taking traffic) |
+
+Available `VERTEX_PROFILE` values (every `VERTEX_*` and engine env var still overrides the profile):
+
+| Profile | Machine & GPU | Vision (`DISABLE_MM`) | KV / Context / Max Replicas | Notes |
+| :--- | :--- | :--- | :--- | :--- |
+| `g4-rtxpro6000` *(default)* | `g4-standard-48` + 1× `NVIDIA_RTX_PRO_6000` (~96 GB) | on (`0`) | 12 GB / 8192 / 2 | Native FP4 on Blackwell; fastest and lowest cost per decision |
+| `h100` | `a3-highgpu-1g` + 1× `NVIDIA_H100_80GB` | on (`0`) | 12 GB / 8192 / 2 | NVFP4 runs via weight-only Marlin fallback; set `ENFORCE_EAGER=0` or stage BF16/FP8 weights for lower latency |
+| `a100` | `a2-ultragpu-1g` + 1× `NVIDIA_A100_80GB` | on (`0`) | 12 GB / 8192 / 2 | Sets `EXTRA_ARGS="--kv-cache-dtype bfloat16"` automatically (FP8 KV cache requires SM89+) |
+| `l4` | `g2-standard-16` + 1× `NVIDIA_L4` (24 GB) | off (`1`) | 2 GB / 4096 / 1 | Text-only; keep `ENFORCE_EAGER=1` (CUDA graphs OOM at 2 GB KV cache) |
+
+Set `ENFORCE_EAGER=0` to enable CUDA graphs + `torch.compile` (lower server latency and higher throughput at the cost of
+~1 min extra startup and loss of fixed-seed reproducibility on NVFP4; see
+[Latency and capacity](../operate/latency-capacity.md)). Pass `EXTRA_ARGS` to forward additional flags to vLLM.
 
 The script prints the endpoint ID and the invoke URLs:
 
@@ -158,7 +171,9 @@ ROUTE_MODE=predict ./scripts/deploy_vertex_endpoint.sh   # predictRoute /predict
 ## 6. Tear down
 
 ```bash
-GCP_PROJECT=<PROJECT> make vertex-teardown      # undeploys models and deletes the dgemma-dedicated-g4 endpoint
+GCP_PROJECT=<PROJECT> VERTEX_PROFILE=g4-rtxpro6000 make vertex-teardown
+# or pass an explicit endpoint display name or ID:
+GCP_PROJECT=<PROJECT> VERTEX_ENDPOINT_NAME=<ENDPOINT_NAME_OR_ID> make vertex-teardown
 ```
 
 A deployed replica bills per hour whether or not it serves traffic; tear down endpoints you don't need, and keep a
