@@ -93,3 +93,51 @@ func TestGetTraceSpansByTraceIDHierarchicalWaterfall(t *testing.T) {
 			spans[4].OffsetMs, spans[5].OffsetMs, spans[6].OffsetMs)
 	}
 }
+
+func TestIsInternalTraceExportSpan(t *testing.T) {
+	tests := []struct {
+		name string
+		want bool
+	}{
+		{name: "google.devtools.cloudtrace.v2.TraceService/BatchWriteSpans", want: true},
+		{name: "google.telemetry.v1.Telemetry/ImportTraces", want: true},
+		{name: "opentelemetry.proto.collector.trace.v1.TraceService/Export", want: true},
+		{name: "dgem.gateway.decide", want: false},
+		{name: "dgem.gpu.forward_pass", want: false},
+	}
+	for _, tc := range tests {
+		if got := isInternalTraceExportSpan(tc.name); got != tc.want {
+			t.Errorf("isInternalTraceExportSpan(%q) = %v, want %v", tc.name, got, tc.want)
+		}
+	}
+}
+
+func TestNewGatewayOTLPTraceExporter(t *testing.T) {
+	t.Run("local without project or endpoint returns nil", func(t *testing.T) {
+		t.Setenv("OTEL_EXPORTER_OTLP_ENDPOINT", "")
+		t.Setenv("OTEL_EXPORTER_OTLP_TRACES_ENDPOINT", "")
+		exp, err := newGatewayOTLPTraceExporter(context.Background(), "")
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if exp != nil {
+			_ = exp.Shutdown(context.Background())
+			t.Fatalf("expected nil exporter without project or OTLP endpoint, got %T", exp)
+		}
+	})
+
+	t.Run("custom OTLP endpoint honors env vars", func(t *testing.T) {
+		t.Setenv("OTEL_EXPORTER_OTLP_ENDPOINT", "http://127.0.0.1:4317")
+		t.Setenv("OTEL_EXPORTER_OTLP_INSECURE", "true")
+		exp, err := newGatewayOTLPTraceExporter(context.Background(), "")
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if exp == nil {
+			t.Fatalf("expected non-nil OTLP exporter when OTEL_EXPORTER_OTLP_ENDPOINT is set")
+		}
+		if err := exp.Shutdown(context.Background()); err != nil {
+			t.Fatalf("exporter shutdown error: %v", err)
+		}
+	})
+}
