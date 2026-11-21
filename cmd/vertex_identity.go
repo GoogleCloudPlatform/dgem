@@ -88,7 +88,7 @@ func parseVertexEndpointIdentity(raw string) (vertexIdentity, error) {
 
 	segs := strings.Split(strings.TrimPrefix(u.Path, "/"), "/")
 	if len(segs) < 7 || !strings.HasPrefix(segs[0], "v1") || segs[1] != "projects" || segs[3] != "locations" || segs[5] != "endpoints" {
-		return id, fmt.Errorf("path must be /v1/projects/<project>/locations/<region>/endpoints/<id>/...")
+		return id, fmt.Errorf("path must match /v1/projects/<project>/locations/<region>/endpoints/<id>/<method>")
 	}
 	for _, s := range segs {
 		if s == "" || s == "." || s == ".." {
@@ -108,7 +108,7 @@ func parseVertexEndpointIdentity(raw string) (vertexIdentity, error) {
 	case method != "" && len(tail) == 0:
 	case method == "" && len(tail) >= 1 && tail[0] == "invoke":
 	default:
-		return id, fmt.Errorf("path must end in :rawPredict / :predict or continue with /invoke/...")
+		return id, fmt.Errorf("path must end in :rawPredict / :predict or continue with /invoke/<route>")
 	}
 	for _, s := range tail {
 		if !vertexSegmentRe.MatchString(s) {

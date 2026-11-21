@@ -602,8 +602,8 @@ func TestNormalizeCosinePriorLogits_ProbabilisticCalibrationAndFusion(t *testing
 	var (
 		rawCosCorrect, normLogitCorrect int
 		rawCosNLL, normLogitNLL         float64
-		rawErrScores, normRawErrScores  []float64
-		rawIsErr, normIsErr             []bool
+		normRawErrScores                []float64
+		normIsErr                       []bool
 	)
 
 	shortlistFn := PriorLogitsShortlist(topM)
@@ -694,8 +694,6 @@ func TestNormalizeCosinePriorLogits_ProbabilisticCalibrationAndFusion(t *testing
 		rawCosNLL += -math.Log(pGoldRaw)
 		normLogitNLL += -math.Log(pGoldNorm)
 
-		rawErrScores = append(rawErrScores, rNormH1)
-		rawIsErr = append(rawIsErr, winRawCos != goldKey)
 		normRawErrScores = append(normRawErrScores, rNormH2)
 		normIsErr = append(normIsErr, winNorm != goldKey)
 	}

@@ -140,10 +140,7 @@ func TestOptionOrderSourceBrackets(t *testing.T) {
 	if len(got) != 3 { // two brackets of 15, then the final
 		t.Fatalf("upstream questions %d: %v", len(got), got)
 	}
-	var round1 [][]string
-	for _, g := range got[:2] {
-		round1 = append(round1, g)
-	}
+	round1 := append([][]string(nil), got[:2]...)
 	sort.Slice(round1, func(i, j int) bool { return round1[i][0] == keys[0] })
 	if !reflect.DeepEqual(round1[0], keys[:15]) || !reflect.DeepEqual(round1[1], keys[15:]) {
 		t.Fatalf("brackets %v, want request-order halves", round1)
