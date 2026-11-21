@@ -95,8 +95,8 @@ func postSystemOne(t *testing.T, srvURL, body string, order string) SystemOneRes
 	return resp
 }
 
-// TestOptionOrderSourceEndToEnd: with "source" the upstream sees options in the request's order; with the default
-// "alpha" it sees them sorted (unchanged behaviour).
+// TestOptionOrderSourceEndToEnd: with "source" (or unset "" on a single-pass FitsServingImage body) the upstream
+// sees options in the request's order; with explicit "alpha" it sees them sorted.
 func TestOptionOrderSourceEndToEnd(t *testing.T) {
 	body := `{"state": "x", "questions": {"q": {"type": "choice", "instructions": "pick",
 		"criteria": {"zebra": "z", "apple": "a", "mango": "m", "kiwi": "k"}}}}`
@@ -107,7 +107,7 @@ func TestOptionOrderSourceEndToEnd(t *testing.T) {
 	}{
 		{OptionOrderAlpha, []string{"apple", "kiwi", "mango", "zebra"}, "apple"},
 		{OptionOrderSource, []string{"zebra", "apple", "mango", "kiwi"}, "zebra"},
-		{"", []string{"apple", "kiwi", "mango", "zebra"}, "apple"},
+		{"", []string{"zebra", "apple", "mango", "kiwi"}, "zebra"},
 	} {
 		srv, seen := recordingUpstream(t)
 		resp := postSystemOne(t, srv.URL, body, tc.order)
