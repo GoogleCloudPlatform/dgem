@@ -596,10 +596,6 @@ func loadCalibrationCases(path, categoryFilter, tierFilter string, limit int) ([
 	return cases, scanner.Err()
 }
 
-func evaluateCalibrationCase(ctx context.Context, c *client.Client, tc CalibrationCase, samplesPolicy string) CalibrationCaseResult {
-	return evaluateCalibrationCaseWithThink(ctx, c, tc, samplesPolicy, 0, nil)
-}
-
 func evaluateCalibrationCaseWithThink(ctx context.Context, c *client.Client, tc CalibrationCase, samplesPolicy string, thinkTokens int, pass1Prior *CalibrationCaseResult) CalibrationCaseResult {
 	res := CalibrationCaseResult{
 		ID:       tc.ID,
@@ -1240,7 +1236,7 @@ func printCalibrationSummary(report CalibrationReport, outputPath string) {
 		"CATEGORY", "CASES", "RAW ACC", "CHANCE-CORR", "CONF P(y)", "BRIER", "ENTROPY H", "NORM H~", "LATENCY")
 	fmt.Println(styleMuted.Render("  --------------------------------------------------------------------------------------------------------"))
 	for _, cat := range report.Categories {
-		accStr := fmt.Sprintf("%.1f%%", cat.AccuracyPct)
+		var accStr string
 		if cat.AccuracyPct >= 85.0 {
 			accStr = stylePass.Render(fmt.Sprintf("%6.1f%%", cat.AccuracyPct))
 		} else if cat.AccuracyPct >= 65.0 {

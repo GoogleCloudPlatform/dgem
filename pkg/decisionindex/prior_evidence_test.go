@@ -546,7 +546,7 @@ func TestFusePriorWithGateMode_ProbabilisticAdversarialAndLabelShift(t *testing.
 	// predicted wrong class receives reinforcement), depressing post-fusion normalized_entropy on errors,
 	// whereas hesitant gate leaves rawNormH < 0.16 untouched and RawNormalizedH stays invariant across all modes.
 	var (
-		confPostH, hesPostH, propPostH, rawPreH          []float64
+		confPostH, rawPreH                               []float64
 		confIsErr, hesIsErr, propIsErr, rawBaselineIsErr []bool
 	)
 	for trial := 0; trial < numTrials; trial++ {
@@ -578,8 +578,8 @@ func TestFusePriorWithGateMode_ProbabilisticAdversarialAndLabelShift(t *testing.
 
 		_, baseWin, _, _, _, rNormBase, _ := FusePriorWithGateMode(probs, nil, optKeys, 1.0, 0, 0.16, "confident")
 		_, confWin, _, confNormH, _, rNormConf, _ := FusePriorWithGateMode(probs, advPrior, optKeys, 1.0, 0.45, 0.16, "confident")
-		_, hesWin, _, hesNormH, _, rNormHes, _ := FusePriorWithGateMode(probs, advPrior, optKeys, 1.0, 0.35, 0.16, "hesitant")
-		_, propWin, _, propNormH, _, rNormProp, _ := FusePriorWithGateMode(probs, advPrior, optKeys, 1.0, 0.35, 0.16, "proportional")
+		_, hesWin, _, _, _, rNormHes, _ := FusePriorWithGateMode(probs, advPrior, optKeys, 1.0, 0.35, 0.16, "hesitant")
+		_, propWin, _, _, _, rNormProp, _ := FusePriorWithGateMode(probs, advPrior, optKeys, 1.0, 0.35, 0.16, "proportional")
 
 		if math.Abs(rNormBase-rNormConf) > 1e-12 || math.Abs(rNormBase-rNormHes) > 1e-12 || math.Abs(rNormBase-rNormProp) > 1e-12 {
 			t.Fatalf("trial %d: RawNormalizedH drifted across gate modes", trial)
@@ -589,9 +589,7 @@ func TestFusePriorWithGateMode_ProbabilisticAdversarialAndLabelShift(t *testing.
 		rawBaselineIsErr = append(rawBaselineIsErr, baseWin != gold)
 		confPostH = append(confPostH, confNormH)
 		confIsErr = append(confIsErr, confWin != gold)
-		hesPostH = append(hesPostH, hesNormH)
 		hesIsErr = append(hesIsErr, hesWin != gold)
-		propPostH = append(propPostH, propNormH)
 		propIsErr = append(propIsErr, propWin != gold)
 	}
 

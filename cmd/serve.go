@@ -1214,10 +1214,10 @@ func resolveBackendTargetFromParams(ctx context.Context, requestedMode, requeste
 			)
 		}
 		if vStatus.State == "quiesced" {
-			return "vertex", normURL, fmt.Errorf("Vertex AI Dedicated Endpoint '%s' (%s) is currently quiesced at 0 GPU replicas ($0.00/hr zero-idle-cost state). Switch to 'Vertex First (Auto-Failover)' or 'Cloud Run GPU', or click 'Provision Vertex GPU' in the Backend Target menu.", vStatus.DisplayName, vStatus.EndpointID)
+			return "vertex", normURL, fmt.Errorf("vertex AI dedicated endpoint '%s' (%s) is currently quiesced at 0 GPU replicas ($0.00/hr zero-idle-cost state); switch to 'Vertex First (Auto-Failover)' or 'Cloud Run GPU', or click 'Provision Vertex GPU' in the Backend Target menu", vStatus.DisplayName, vStatus.EndpointID)
 		}
 		if vStatus.State == "deploying" {
-			return "vertex", normURL, fmt.Errorf("Vertex AI Dedicated Endpoint '%s' (%s) is currently provisioning a GPU replica. Switch to 'Vertex First (Auto-Failover)' or 'Cloud Run GPU' while Vertex AI finishes deploying.", vStatus.DisplayName, vStatus.EndpointID)
+			return "vertex", normURL, fmt.Errorf("vertex AI dedicated endpoint '%s' (%s) is currently provisioning a GPU replica; switch to 'Vertex First (Auto-Failover)' or 'Cloud Run GPU' while Vertex AI finishes deploying", vStatus.DisplayName, vStatus.EndpointID)
 		}
 		return "vertex", normURL, nil
 	}
@@ -1457,8 +1457,8 @@ func runServe(cmd *cobra.Command, args []string) error {
 	client.ImageHTTPClient = imageFetchClient // pkg/client fetches (if any) also connect to public addresses only
 	client.SendGatewayKey = false             // never forward a caller key (DGEM_GATEWAY_KEY) to the serving image
 	if envPort := os.Getenv("PORT"); envPort != "" && !cmd.Flags().Changed("port") {
-		if p, err := fmt.Sscanf(envPort, "%d", &servePort); err == nil && p == 1 {
-			// parsed from PORT
+		if p, err := strconv.Atoi(envPort); err == nil {
+			servePort = p
 		}
 	}
 	if envUpstream := os.Getenv("UPSTREAM_DGEMMA_URL"); envUpstream != "" && !cmd.Flags().Changed("url") {
