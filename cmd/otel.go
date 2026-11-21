@@ -351,7 +351,9 @@ func initGatewayTracer(ctx context.Context) func(context.Context) error {
 		sdktrace.WithSpanProcessor(&gatewaySpanProcessor{projectID: gcpProjectID}),
 	}
 
-	if exporter, err := newGatewayOTLPTraceExporter(ctx, gcpProjectID); err == nil && exporter != nil {
+	if exporter, err := newGatewayOTLPTraceExporter(ctx, gcpProjectID); err != nil {
+		fmt.Fprintf(os.Stderr, "[otel] OTLP trace exporter disabled: %v\n", err)
+	} else if exporter != nil {
 		opts = append(opts, sdktrace.WithBatcher(exporter))
 	}
 
