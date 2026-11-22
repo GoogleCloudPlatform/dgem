@@ -17,6 +17,8 @@ package permutation
 import (
 	"math"
 	"testing"
+
+	"github.com/GoogleCloudPlatform/dgem/pkg/client"
 )
 
 func TestBALDDecompositionAndPriorDeBiasing(t *testing.T) {
@@ -57,5 +59,100 @@ func TestBALDDecompositionAndPriorDeBiasing(t *testing.T) {
 	deb, debWinner := ApplyPriorDeBiasing(raw, opts, np, 0.85)
 	if debWinner != "true_answer_in_slot_B" {
 		t.Errorf("expected ApplyPriorDeBiasing to recover true_answer_in_slot_B, got %s (probs=%v)", debWinner, deb)
+	}
+}
+
+func TestPostProcessDecisionResponseRefreshesDiagnosticsLogprobsForApplyTemperature(t *testing.T) {
+	// 1. Null-prior debiasing flips primacy-biased Slot-0 winner ("opt_A" -> "opt_B").
+	// Subsequent ApplyTemperature must scale the debiased distribution rather than reverting to stale single-pass Logprobs.
+	slotOpts := map[string][]OptionItem{
+		"route": {
+			{Name: "opt_A"},
+			{Name: "opt_B"},
+		},
+	}
+	resp := &client.StructuredDecisionResponse{
+		Answers: map[string]client.QuestionAnswer{
+			"route": {
+				Type:          "choice",
+				Label:         "opt_A",
+				Choice:        "opt_A",
+				Confidence:    0.54,
+				Probabilities: map[string]float64{"opt_A": 0.54, "opt_B": 0.46},
+			},
+		},
+		Diagnostics: client.Diagnostics{
+			Questions: map[string]client.QuestionDiagnostic{
+				"route": {
+					ArgmaxIsLabel: true,
+					ArgmaxToken:   "opt_A",
+					Entropy:       0.69,
+					LabelMass:     0.54,
+					Logprobs:      map[string]float64{"opt_A": 0.0, "opt_B": math.Log(0.46 / 0.54)},
+				},
+			},
+		},
+	}
+
+	PostProcessDecisionResponse(resp, slotOpts, false, true, 0.90)
+	debiasedA := resp.Answers["route"].Probabilities["opt_A"]
+	debiasedB := resp.Answers["route"].Probabilities["opt_B"]
+	if resp.Answers["route"].Choice != "opt_B" || debiasedB <= debiasedA {
+		t.Fatalf("expected null-prior debiasing to flip winner to opt_B, got %+v", resp.Answers["route"])
+	}
+
+	resp.ApplyTemperature(client.Temperature{All: 1.5})
+	z := math.Pow(debiasedA, 1.0/1.5) + math.Pow(debiasedB, 1.0/1.5)
+	wantB := math.Pow(debiasedB, 1.0/1.5) / z
+	got := resp.Answers["route"]
+	if got.Probabilities["opt_B"] <= got.Probabilities["opt_A"] {
+		t.Fatalf("ApplyTemperature reverted debiased winner order using stale Diagnostics.Logprobs: %+v", got)
+	}
+	if math.Abs(got.Probabilities["opt_B"]-wantB) > 1e-9 || math.Abs(got.Confidence-wantB) > 1e-9 {
+		t.Fatalf("expected tempered debiased opt_B=%.9f, got prob=%.9f conf=%.9f", wantB, got.Probabilities["opt_B"], got.Confidence)
+	}
+
+	// 2. Dual-mirror interior winner flip ("opt_A" -> "opt_B") cleans up mirror diagnostics and preserves debiased order under ApplyTemperature.
+	mirrorOpts := map[string][]OptionItem{
+		"team": {
+			{Name: "opt_A"},
+			{Name: "opt_B"},
+			{Name: "opt_C"},
+		},
+	}
+	mirrorResp := &client.StructuredDecisionResponse{
+		Answers: map[string]client.QuestionAnswer{
+			"team": {
+				Type:          "choice",
+				Choice:        "opt_A",
+				Confidence:    0.55,
+				Probabilities: map[string]float64{"opt_A": 0.55, "opt_B": 0.40, "opt_C": 0.05},
+			},
+			"team" + MirrorSlotSuffix: {
+				Type:          "choice",
+				Choice:        "item_2", // reversed interior slot -> opt_B
+				Confidence:    0.90,
+				Probabilities: map[string]float64{"item_1": 0.08, "item_2": 0.90, "item_3": 0.02},
+			},
+		},
+		Diagnostics: client.Diagnostics{
+			Questions: map[string]client.QuestionDiagnostic{
+				"team":                    {Logprobs: map[string]float64{"opt_A": 0.0, "opt_B": -0.32, "opt_C": -2.40}},
+				"team" + MirrorSlotSuffix: {Logprobs: map[string]float64{"item_1": -2.42, "item_2": 0.0, "item_3": -3.81}},
+			},
+		},
+	}
+	PostProcessDecisionResponse(mirrorResp, mirrorOpts, true, false, 0.50)
+	if mirrorResp.Answers["team"].Choice != "opt_B" {
+		t.Fatalf("expected dual-mirror interior flip to opt_B, got %+v", mirrorResp.Answers["team"])
+	}
+	if _, stillHasMirrorDiag := mirrorResp.Diagnostics.Questions["team"+MirrorSlotSuffix]; stillHasMirrorDiag {
+		t.Fatalf("expected mirror diagnostic slot %s to be cleaned up", "team"+MirrorSlotSuffix)
+	}
+	mirrorResp.ApplyTemperature(client.Temperature{All: 2.0})
+	afterMirrorTemp := mirrorResp.Answers["team"]
+	if afterMirrorTemp.Probabilities["opt_B"] <= afterMirrorTemp.Probabilities["opt_A"] ||
+		afterMirrorTemp.Probabilities["opt_B"] <= afterMirrorTemp.Probabilities["opt_C"] {
+		t.Fatalf("expected opt_B to remain strict argmax after ApplyTemperature, got %+v", afterMirrorTemp)
 	}
 }

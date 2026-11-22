@@ -1245,6 +1245,21 @@ func PostProcessDecisionResponseDetailed(
 			qaFwd.Noul = finalProbs[optKeys[0]]
 		}
 		resp.Answers[qID] = qaFwd
+		if resp.Diagnostics.Questions != nil {
+			qd := resp.Diagnostics.Questions[qID]
+			qd.Entropy = h
+			qd.ArgmaxToken = winner
+			qd.LabelMass = bestP
+			refreshedLP := make(map[string]float64, len(finalProbs))
+			for k, p := range finalProbs {
+				refreshedLP[k] = math.Log(math.Max(p, 1e-12))
+			}
+			qd.Logprobs = refreshedLP
+			resp.Diagnostics.Questions[qID] = qd
+			if det.HasMirror {
+				delete(resp.Diagnostics.Questions, revID)
+			}
+		}
 		details[qID] = det
 	}
 	return details

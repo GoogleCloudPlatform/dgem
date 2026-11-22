@@ -37,12 +37,29 @@ func applyPolicyTemperature(resp *client.StructuredDecisionResponse, schemaJSON 
 	if resp == nil || !t.IsSet() {
 		return nil, maxAnswerEntropy(resp), nil
 	}
+	if scoreLevels := client.ParseSchemaScoreLevels(schemaJSON); len(scoreLevels) > 0 {
+		for id, a := range resp.Answers {
+			if len(a.Levels) == 0 && len(a.Legend) == 0 {
+				if lvls, ok := scoreLevels[id]; ok {
+					a.Levels = lvls
+					resp.Answers[id] = a
+				}
+			}
+		}
+	}
 	escalated := map[string]client.QuestionAnswer{}
+	escalatedDiag := map[string]client.QuestionDiagnostic{}
+	escalatedHadDiag := map[string]bool{}
 	if cascade != nil {
 		for id, s := range cascade.Slots {
 			if s.Escalated {
 				if a, ok := resp.Answers[id]; ok {
 					escalated[id] = a
+					if resp.Diagnostics.Questions != nil {
+						qd, had := resp.Diagnostics.Questions[id]
+						escalatedDiag[id] = qd
+						escalatedHadDiag[id] = had
+					}
 				}
 			}
 		}
@@ -50,6 +67,13 @@ func applyPolicyTemperature(resp *client.StructuredDecisionResponse, schemaJSON 
 	resp.ApplyTemperature(t)
 	for id, a := range escalated {
 		resp.Answers[id] = a
+		if resp.Diagnostics.Questions != nil {
+			if escalatedHadDiag[id] {
+				resp.Diagnostics.Questions[id] = escalatedDiag[id]
+			} else {
+				delete(resp.Diagnostics.Questions, id)
+			}
+		}
 	}
 	return &t, maxAnswerEntropy(resp), nil
 }

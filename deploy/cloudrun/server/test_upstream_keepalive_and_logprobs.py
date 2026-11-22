@@ -42,6 +42,7 @@ class _CountingUpstreamServer(ThreadingHTTPServer):
         self.requests_served = 0
         self.force_close_next = False
         self.next_status = 200
+        self.next_raw_body = None
         self.delay_next_s = 0.0
         self.lock = threading.Lock()
 
@@ -79,8 +80,10 @@ class _UpstreamHandler(BaseHTTPRequestHandler):
         with self.server.lock:
             self.server.requests_served += 1
             status = self.server.next_status
+            raw_override = self.server.next_raw_body
             force_close = self.server.force_close_next
             delay_s = self.server.delay_next_s
+            self.server.next_raw_body = None
             self.server.force_close_next = False
             self.server.delay_next_s = 0.0
         if delay_s > 0.0:
@@ -93,7 +96,11 @@ class _UpstreamHandler(BaseHTTPRequestHandler):
             self.end_headers()
             self.wfile.write(err_bytes)
             return
-        reply = json.dumps({"choices": [{"index": 0, "echo_model": request_body.get("model")}]}).encode("utf-8")
+        reply = (
+            raw_override
+            if raw_override is not None
+            else json.dumps({"choices": [{"index": 0, "echo_model": request_body.get("model")}]}).encode("utf-8")
+        )
         self.send_response(200)
         self.send_header("Content-Type", "application/json")
         self.send_header("Content-Length", str(len(reply)))
@@ -250,6 +257,39 @@ class UpstreamKeepAliveAndLogprobsTest(unittest.TestCase):
         # Subsequent call gets a fresh connection without burning a retry on CannotSendRequest.
         recovered = self.mod.upstream_chat({"model": "dgemma"}, timeout=2.0)
         self.assertEqual(recovered["choices"][0]["echo_model"], "dgemma")
+
+    def test_malformed_json_200_evicts_socket_without_poisoning_pool(self):
+        first = self.mod.upstream_chat({"model": "dgemma"})
+        self.assertEqual(first["choices"][0]["echo_model"], "dgemma")
+        self.assertEqual(self.upstream.accepted_connections, 1)
+        self.assertEqual(len(self._pooled_conns()), 1)
+
+        self.upstream.next_raw_body = b"{bad-json"
+        with self.assertRaises(ValueError):
+            self.mod.upstream_chat({"model": "dgemma"})
+
+        pooled_after_bad = self._pooled_conns()
+        self.assertEqual(pooled_after_bad, [])
+        self.assertEqual(self.upstream.requests_served, 2)
+
+        # Verify _return_upstream_conn ignores closed connections and _checkout_upstream_conn skips sock=None entries.
+        host, port = self.upstream.server_address
+        conn_key = ("http", host, port, 600.0)
+        closed_conn = http.client.HTTPConnection(host, port, timeout=600.0)
+        self.mod._return_upstream_conn(conn_key, closed_conn)
+        self.assertEqual(self._pooled_conns(), [])
+
+        poisoned_conn = http.client.HTTPConnection(host, port, timeout=600.0)
+        with self.mod._UPSTREAM_POOL_LOCK:
+            self.mod._UPSTREAM_POOL[conn_key] = [poisoned_conn]
+
+        recovered = self.mod.upstream_chat({"model": "dgemma"})
+        self.assertEqual(recovered["choices"][0]["echo_model"], "dgemma")
+        self.assertEqual(self.upstream.requests_served, 3)
+        self.assertEqual(self.upstream.accepted_connections, 2)
+        pooled_after_recovery = self._pooled_conns()
+        self.assertEqual(len(pooled_after_recovery), 1)
+        self.assertIsNotNone(pooled_after_recovery[0].sock)
 
     def test_slot_distribution_preserves_extreme_logprobs_across_single_and_multi_sample_reads(self):
         # At gap = 45 nats, linear probability saturates to 1.0 in float64,

@@ -637,8 +637,10 @@ def _checkout_upstream_conn(conn_key, scheme, host, port, timeout, reuse=True):
     if reuse:
         with _UPSTREAM_POOL_LOCK:
             bucket = _UPSTREAM_POOL.get(conn_key)
-            if bucket:
-                return bucket.pop()
+            while bucket:
+                candidate = bucket.pop()
+                if getattr(candidate, "sock", None) is not None:
+                    return candidate
     return (
         http.client.HTTPSConnection(host, port, timeout=timeout)
         if scheme == "https"
@@ -648,6 +650,8 @@ def _checkout_upstream_conn(conn_key, scheme, host, port, timeout, reuse=True):
 
 def _return_upstream_conn(conn_key, conn):
     with _UPSTREAM_POOL_LOCK:
+        if getattr(conn, "sock", None) is None:
+            return
         bucket = _UPSTREAM_POOL.setdefault(conn_key, [])
         if len(bucket) < _UPSTREAM_POOL_MAX:
             bucket.append(conn)
@@ -696,20 +700,32 @@ def _upstream_post_json(route_path, body, timeout=600):
                 body=payload,
                 headers={"Content-Type": "application/json", "Connection": "keep-alive"},
             )
-            resp = conn.getresponse()
-            raw = resp.read()
-            if resp.will_close or resp.status >= 500:
+            response = conn.getresponse()
+            raw = response.read()
+            if response.status >= 400:
+                if response.will_close or response.status >= 500:
+                    try:
+                        conn.close()
+                    except OSError:
+                        pass
+                else:
+                    _return_upstream_conn(conn_key, conn)
+                raise urllib.error.HTTPError(
+                    full_url,
+                    response.status,
+                    response.reason,
+                    response.headers,
+                    io.BytesIO(raw),
+                )
+            parsed_json = json.loads(raw)
+            if response.will_close:
                 try:
                     conn.close()
                 except OSError:
                     pass
             else:
                 _return_upstream_conn(conn_key, conn)
-            if resp.status >= 400:
-                raise urllib.error.HTTPError(
-                    full_url, resp.status, resp.reason, resp.headers, io.BytesIO(raw)
-                )
-            return json.loads(raw)
+            return parsed_json
         except urllib.error.HTTPError:
             raise
         except retryable:

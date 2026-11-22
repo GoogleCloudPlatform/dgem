@@ -652,33 +652,153 @@ func ExecuteStage2GeminiCascadeWithImages(
 		tel.Explanation = resSlot.Explanation
 		summary.Slots[qID] = tel
 
-		// Update resp.Answers[qID] so the caller receives the Stage-2 resolved decision
-		qa := resp.Answers[qID]
-		qa.Confidence = conf
-		switch strings.ToLower(qa.Type) {
-		case "boolean", "bool", "noul":
-			isYes := decisionVal == "yes" || decisionVal == "true"
-			qa.Label = decisionVal
-			qa.Choice = decisionVal
-			if isYes {
-				qa.Noul = conf
-			} else {
-				qa.Noul = 1.0 - conf
-			}
-		case "choice":
-			qa.Choice = decisionVal
-			qa.Label = decisionVal
-		default:
-			qa.Level = decisionVal
-			qa.Label = decisionVal
-			if f, err := strconv.ParseFloat(decisionVal, 64); err == nil {
-				qa.Score = f
-			}
-		}
-		resp.Answers[qID] = qa
+		// Update resp.Answers[qID] and Diagnostics.Questions[qID] so downstream callers see the Stage-2 decision
+		applyStage2SlotDecision(resp, qID, decisionVal, conf)
 	}
 
 	return summary
+}
+
+func applyStage2SlotDecision(resp *client.StructuredDecisionResponse, qID, decisionVal string, conf float64) {
+	if resp == nil {
+		return
+	}
+	qa := resp.Answers[qID]
+	qa.Confidence = conf
+	probsAligned := false
+	switch strings.ToLower(qa.Type) {
+	case "boolean", "bool", "noul":
+		isYes := decisionVal == "yes" || decisionVal == "true"
+		qa.Label = decisionVal
+		qa.Choice = decisionVal
+		if isYes {
+			qa.Noul = conf
+		} else {
+			qa.Noul = 1.0 - conf
+		}
+		if len(qa.Probabilities) > 0 {
+			updatedProbs := make(map[string]float64, len(qa.Probabilities))
+			if _, hasTrue := qa.Probabilities["true"]; hasTrue {
+				updatedProbs["true"] = qa.Noul
+				updatedProbs["false"] = 1.0 - qa.Noul
+			} else {
+				updatedProbs["yes"] = qa.Noul
+				updatedProbs["no"] = 1.0 - qa.Noul
+			}
+			qa.Probabilities = updatedProbs
+			qa.Entropy = client.ProbabilityEntropy(updatedProbs)
+			probsAligned = true
+		}
+	case "choice":
+		qa.Choice = decisionVal
+		qa.Label = decisionVal
+		if len(qa.Probabilities) > 0 {
+			if updatedProbs, ok := buildCascadedProbabilities(qa.Probabilities, qa.Legend, decisionVal, conf); ok {
+				qa.Probabilities = updatedProbs
+				qa.Entropy = client.ProbabilityEntropy(updatedProbs)
+				probsAligned = true
+			}
+		}
+	default:
+		qa.Level = decisionVal
+		qa.Label = decisionVal
+		if len(qa.Probabilities) > 0 {
+			if updatedProbs, ok := buildCascadedProbabilities(qa.Probabilities, qa.Legend, decisionVal, conf); ok {
+				qa.Probabilities = updatedProbs
+				qa.Entropy = client.ProbabilityEntropy(updatedProbs)
+				probsAligned = true
+			}
+		}
+		if probsAligned {
+			if scoreVal, ok := client.ScoreValueForAnswer(qa); ok {
+				qa.Score = scoreVal
+			} else if f, err := strconv.ParseFloat(decisionVal, 64); err == nil {
+				qa.Score = f
+			}
+		} else if f, err := strconv.ParseFloat(decisionVal, 64); err == nil {
+			qa.Score = f
+		}
+	}
+	resp.Answers[qID] = qa
+	if resp.Diagnostics.Questions != nil {
+		if qd, hadDiag := resp.Diagnostics.Questions[qID]; hadDiag {
+			qd.Entropy = qa.Entropy
+			qd.ArgmaxToken = decisionVal
+			qd.LabelMass = conf
+			if probsAligned && len(qa.Probabilities) > 0 {
+				refreshedLP := make(map[string]float64, len(qa.Probabilities))
+				for k, p := range qa.Probabilities {
+					lpKey := k
+					if len(qa.Legend) > 0 {
+						if lvlName := qa.Legend[k]; lvlName != "" {
+							lpKey = lvlName
+						}
+					}
+					refreshedLP[lpKey] = math.Log(math.Max(p, 1e-12))
+				}
+				qd.Logprobs = refreshedLP
+			} else {
+				qd.Logprobs = nil
+			}
+			resp.Diagnostics.Questions[qID] = qd
+		}
+	}
+}
+
+func buildCascadedProbabilities(origProbs map[string]float64, legend map[string]string, decisionVal string, conf float64) (map[string]float64, bool) {
+	if len(origProbs) == 0 {
+		return nil, false
+	}
+	winKey := ""
+	if _, ok := origProbs[decisionVal]; ok {
+		winKey = decisionVal
+	}
+	if winKey == "" && len(legend) > 0 {
+		for k, lvlName := range legend {
+			if strings.EqualFold(strings.TrimSpace(lvlName), decisionVal) {
+				if _, ok := origProbs[k]; ok {
+					winKey = k
+					break
+				}
+			}
+		}
+	}
+	if winKey == "" {
+		for k := range origProbs {
+			if strings.EqualFold(strings.TrimSpace(k), decisionVal) {
+				winKey = k
+				break
+			}
+		}
+	}
+	if winKey == "" {
+		return nil, false
+	}
+	updated := make(map[string]float64, len(origProbs))
+	updated[winKey] = conf
+	if len(origProbs) == 1 {
+		updated[winKey] = 1.0
+		return updated, true
+	}
+	rem := math.Max(0.0, 1.0-conf)
+	otherSum := 0.0
+	for k, p := range origProbs {
+		if k != winKey && p > 0 {
+			otherSum += p
+		}
+	}
+	otherCount := float64(len(origProbs) - 1)
+	for k, p := range origProbs {
+		if k == winKey {
+			continue
+		}
+		if otherSum > 0 {
+			updated[k] = rem * (math.Max(p, 0.0) / otherSum)
+		} else {
+			updated[k] = rem / otherCount
+		}
+	}
+	return updated, true
 }
 
 // generateContentWithRetry retries transient Vertex AI errors (HTTP 429/500/503) up to 3 attempts with
