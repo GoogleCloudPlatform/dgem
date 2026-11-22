@@ -15,6 +15,7 @@
 package client
 
 import (
+	"bytes"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
@@ -138,16 +139,73 @@ type QuestionAnswer struct {
 	Probabilities map[string]float64 `json:"probabilities"`
 
 	// Type-specific values:
-	Choice string  `json:"choice,omitempty"` // For choice type
-	Score  float64 `json:"score,omitempty"`  // For score type
-	Level  string  `json:"level,omitempty"`  // For score type
-	Noul   float64 `json:"noul,omitempty"`   // For boolean/noul type (probability of true/yes)
+	Choice string            `json:"choice,omitempty"` // For choice type
+	Score  float64           `json:"score,omitempty"`  // For score type
+	Level  string            `json:"level,omitempty"`  // For score type
+	Legend map[string]string `json:"legend,omitempty"` // For /v1/systemone score type ("0": levelName, ...)
+	Levels []string          `json:"-"`                // Ordered option/level keys from wire JSON or policy schema
+	Noul   float64           `json:"noul,omitempty"`   // For boolean/noul type (probability of true/yes)
 
 	// Optional prior-fusion and co-denoised evidence telemetry:
 	PriorLogits map[string]float64 `json:"prior_logits,omitempty"`
 	PriorFused  bool               `json:"prior_fused,omitempty"`
 	RawEntropy  float64            `json:"raw_entropy,omitempty"`
 	Evidence    string             `json:"evidence,omitempty"`
+}
+
+// UnmarshalJSON decodes QuestionAnswer while preserving the wire key order of "probabilities" in Levels
+// so ordinal score expectations stay aligned with the server's ordered levels across Go map iteration.
+func (qa *QuestionAnswer) UnmarshalJSON(b []byte) error {
+	type Alias QuestionAnswer
+	var aux Alias
+	if err := json.Unmarshal(b, &aux); err != nil {
+		return err
+	}
+	*qa = QuestionAnswer(aux)
+	qa.Levels = jsonObjectKeyOrder(b, "probabilities")
+	return nil
+}
+
+func jsonObjectKeyOrder(raw []byte, fieldName string) []string {
+	dec := json.NewDecoder(bytes.NewReader(raw))
+	if tok, err := dec.Token(); err != nil || tok != json.Delim('{') {
+		return nil
+	}
+	for dec.More() {
+		keyTok, err := dec.Token()
+		if err != nil {
+			return nil
+		}
+		if key, _ := keyTok.(string); key != fieldName {
+			var skip json.RawMessage
+			if err := dec.Decode(&skip); err != nil {
+				return nil
+			}
+			continue
+		}
+		if tok, err := dec.Token(); err != nil || tok != json.Delim('{') {
+			return nil
+		}
+		var keys []string
+		seen := make(map[string]bool)
+		for dec.More() {
+			innerTok, err := dec.Token()
+			if err != nil {
+				return nil
+			}
+			innerKey, _ := innerTok.(string)
+			var skip json.RawMessage
+			if err := dec.Decode(&skip); err != nil {
+				return nil
+			}
+			if !seen[innerKey] {
+				seen[innerKey] = true
+				keys = append(keys, innerKey)
+			}
+		}
+		return keys
+	}
+	return nil
 }
 
 // DisplayType returns a human-friendly type name, replacing "noul" with "boolean".

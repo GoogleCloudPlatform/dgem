@@ -111,7 +111,7 @@ Sampler-distillation post-training sharpens single-step slot distributions, so r
 
 **What you do:** fit one `"temperature"` value per policy on held-out decisions ([Calibrate your policy](calibrate-your-policy.md)). Temperature scaling rescales log-probabilities by $1 / T$ without changing which option wins, aligning reported confidence with empirical accuracy.
 
-Separate intra-model multi-sampling from Stage 2 escalation: setting `"samples": "auto"` spends extra diffusion noise draws on the *same* `dgem` checkpoint (and adds a second sequential round-trip), whereas `cascade_mode: "entropy"` hands calibrated high-hesitation cases to a larger Stage 2 model (`gemini-3.8-flash`) or human reviewer.
+Separate intra-model multi-sampling from Stage 2 escalation: setting `"samples": "auto"` spends extra diffusion noise draws on the *same* `dgem` checkpoint (and adds a second sequential round-trip), whereas `cascade_mode: "entropy"` gates on raw Stage 1 hesitation before policy temperature scaling calibrates the returned confidences of unescalated answers, handing high-hesitation cases to a larger Stage 2 model (`gemini-3.8-flash`) or human reviewer.
 
 ### 4.5 Results judged against measured noise
 

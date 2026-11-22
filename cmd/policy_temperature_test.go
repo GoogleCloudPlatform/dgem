@@ -54,4 +54,50 @@ func TestApplyPolicyTemperature(t *testing.T) {
 	if got, err := mcpTemperature(0, map[string]float64{"boolean": 3}); err != nil || got.For("noul") != 3 {
 		t.Fatalf("mcp by-type: %+v %v", got, err)
 	}
+
+	// Stage-2 cascade decision refreshes Diagnostics.Questions[qID].Logprobs so a subsequent direct ApplyTemperature
+	// does not overwrite the cascaded verdict with stale Stage-1 single-pass logprobs.
+	cascaded := &client.StructuredDecisionResponse{
+		Answers: map[string]client.QuestionAnswer{
+			"urgent": {
+				Type:          "noul",
+				Label:         "yes",
+				Noul:          0.52,
+				Confidence:    0.52,
+				Probabilities: map[string]float64{"yes": 0.52, "no": 0.48},
+			},
+			"mood": {
+				Type:          "score",
+				Label:         "1",
+				Level:         "calm",
+				Score:         1.4,
+				Confidence:    0.7,
+				Probabilities: map[string]float64{"calm": 0.7, "annoyed": 0.2, "furious": 0.1},
+			},
+		},
+		Diagnostics: client.Diagnostics{
+			Questions: map[string]client.QuestionDiagnostic{
+				"urgent": {Logprobs: map[string]float64{"yes": 0.0, "no": math.Log(0.48 / 0.52)}},
+			},
+		},
+	}
+	applyStage2SlotDecision(cascaded, "urgent", "no", 0.94)
+	if cascaded.Answers["urgent"].Probabilities["no"] != 0.94 {
+		t.Fatalf("expected Stage-2 updated probability 0.94, got %+v", cascaded.Answers["urgent"])
+	}
+	cascaded.ApplyTemperature(client.Temperature{ByType: map[string]float64{"noul": 2.0}})
+	if cascaded.Answers["urgent"].Probabilities["no"] <= cascaded.Answers["urgent"].Probabilities["yes"] {
+		t.Fatalf("ApplyTemperature reverted Stage-2 decision using stale Diagnostics.Logprobs: %+v", cascaded.Answers["urgent"])
+	}
+
+	// Schema score levels hydrate named score ordering during applyPolicyTemperature.
+	scoreSchema := `{"questions":[{"id":"mood","type":"score","levels":["calm","annoyed","furious"]}],"temperature":{"score":2}}`
+	if _, _, err := applyPolicyTemperature(cascaded, scoreSchema, nil, nil); err != nil {
+		t.Fatalf("applyPolicyTemperature on named score failed: %v", err)
+	}
+	gotMood := cascaded.Answers["mood"]
+	wantMoodScore := 1.0*gotMood.Probabilities["calm"] + 2.0*gotMood.Probabilities["annoyed"] + 3.0*gotMood.Probabilities["furious"]
+	if math.Abs(gotMood.Score-wantMoodScore) > 1e-9 {
+		t.Fatalf("expected hydrated named score %.8f, got %.8f", wantMoodScore, gotMood.Score)
+	}
 }
