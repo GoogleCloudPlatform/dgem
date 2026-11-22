@@ -102,6 +102,7 @@ jobs:
           python -m unittest -v scripts/test_docs_link_check.py
           python -m unittest -v deploy/terraform/test_terraform_config.py
           python -m unittest -v examples/agy-safety-gate/test_dgem_gate.py
+          python -m unittest -v examples/python-adk-guard/test_adk_guard.py
 
   build-studio:
     name: Build Decision Studio (Lit + TypeScript)

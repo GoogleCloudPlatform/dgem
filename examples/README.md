@@ -2,7 +2,7 @@
 
 Standalone, runnable Go and Python examples showing how to embed **DiffusionGemma (`dgem`)** and its executable `.json.tmpl` decision policies (`templates/`) into applications and agent frameworks.
 
-Go examples share a single module (`examples/go.mod`, using `replace github.com/GoogleCloudPlatform/dgem => ..`) so extra framework dependencies are not added to the core `dgem` CLI binary, while Python examples (`agy-safety-gate/`) use the Python standard library only.
+Go examples share a single module (`examples/go.mod`, using `replace github.com/GoogleCloudPlatform/dgem => ..`) so extra framework dependencies are not added to the core `dgem` CLI binary, while Python examples (`agy-safety-gate/` and `python-adk-guard/`) use the Python standard library only.
 
 ## Available Examples
 
@@ -14,6 +14,7 @@ Go examples share a single module (`examples/go.mod`, using `replace github.com/
 | **[`genkit-bulk-synth/`](genkit-bulk-synth/)** | **[Genkit Go `v1.14.0`](https://github.com/genkit-ai/genkit/releases/tag/go%2Fv1.14.0)** (`plugins/googlegenai`, `plugins/systemone/exp`) | `templates/github_spam_triage.json.tmpl`<br/>`templates/contract_audit.json.tmpl`<br/>`templates/security_incident.json.tmpl`<br/>`templates/rai/response_safety_grader.json.tmpl` | **2-Stage Synthesize (`vertexai/gemini-3.8-flash`) $\to$ Bulk Decide (`dgem`)** pipeline across `-preset github_spam_triage`, `contract_audit`, `secops_incident`, and `rai_redteam_grader`: synthesizes labelled test batches (or runs curated offline batches via `-curated`), fans them out across a worker pool against `dgem`, and reports `min`/`p50`/`p95`/`max` latency, cold-vs-warm KV cache speedup, per-slot accuracy, and Hesitation-gated accuracy (`Clear <16%` vs. `Unsure >=16%`). |
 | **[`genkit-context-pruning/`](genkit-context-pruning/)** | **[Genkit Go `v1.14.0`](https://github.com/genkit-ai/genkit/releases/tag/go%2Fv1.14.0)** (`plugins/systemone/exp`) | `templates/agent_context_pruning.json.tmpl` | **Single-Pass 8-Slot Trajectory Context Pruning**: scores up to 8 candidate trajectory blocks (`b0`..`b7`) across `full` / `stub` / `drop` in one `dgem` pass and solves the exact Pareto-filtered Multiple-Choice Knapsack under a hard `TokenBudget` and `Pinned` block constraints. |
 | **[`agy-safety-gate/`](agy-safety-gate/)** | **[Google Antigravity](https://antigravity.google/)** (`agy` CLI [`PreToolUse` Hooks](https://antigravity.google/docs/hooks/) & Python SDK [`lifecycle`](https://antigravity.google/docs/sdk/lifecycle/) / [`policies`](https://antigravity.google/docs/sdk/policies/)) | `templates/tool_safety_gate.json.tmpl`<br/>`templates/calibration/agent_step_drift.json.tmpl` | Configurable `PreToolUse` safety gate (`auto_approve` / `ask` / `deny`) for `agy` CLI (`.agents/hooks.json`) and the `google.antigravity` Python SDK (`@hooks.pre_tool_call_decide` & `policy.ask_user` handler). Evaluates 2 orthogonal slots (`action_hazard` + `intent_origin`) in 1 pass with `use`-vs-`mention` awareness, `<untrusted_data>` prompt-injection quarantine, and **Hesitation %** ($H / \ln K < 16\%$) Stage 2 Gemini escalation. |
+| **[`python-adk-guard/`](python-adk-guard/)** | **Google ADK**, **LangGraph**, & **Gemini CLI** (`before_tool_callback`, `MCPToolset`, `BeforeTool` hooks) | `templates/tool_safety_gate.json.tmpl`<br/>`templates/agent_context_pruning.json.tmpl` | Compact async-safe Python recipe (`asyncio.to_thread` non-blocking inside `Runner.run_async` / `ainvoke`) combining `dgem mcp --remote` `MCPToolset` wiring, `<1 ms` Stage-0 static allow/deny pre-filtering, server-side `POST /api/decide` normalized hesitation cascade (`0.16`), Vertex `/invoke/*` readiness routing, tool-pair-preserving context grouping, and a Gemini CLI `BeforeTool` command hook. |
 | **[`dgemgenkit/`](dgemgenkit/)** | Shared helper package | Any `templates/*.json.tmpl` | `EndpointConfig`, `NewSystemOnePlugin`, `DecideWithTemplate` & `StartInProcessSystemOneAdapter`: connects Genkit's `systemonex.SystemOne` plugin directly to a `dgem serve` gateway / remote `/v1/systemone` endpoint (`DGEM_GATEWAY_URL`) or via an in-process adapter (`DGEM_URL`), executes multi-stage conditional DAG policies (`depends_on` / `ask_if`, `Passes`, `Skipped`), and provides post-hoc calibration helpers (`ApplyTemperature`, `RawHesitation`, `CalibratedProb`, `ExceedsThreshold`, `CalibratedHesitation`). |
 
 ## Endpoint Configuration (`dgemgenkit.EndpointConfig`)
@@ -38,6 +39,7 @@ All examples share `dgemgenkit.EndpointConfigFromEnv()` and `dgemgenkit.BindEndp
 cd examples
 go test -v ./...
 python3 -m unittest -v agy-safety-gate/test_dgem_gate.py
+python3 -m unittest -v python-adk-guard/test_adk_guard.py
 ```
 
 ### 2. Run Live Against Local Apple Silicon (`diffgemma`) or a Gateway
