@@ -1,0 +1,48 @@
+{
+  "examples": [
+    {
+      "name": "typical",
+      "unambiguous": true,
+      "variables": {
+        "repo_rules": "R1: Never allocate per-request http.Client instances inside request handlers; share the pooled transport.\nR2: Unauthenticated /health responses must report liveness and version only; never expose upstream URLs or auth configuration.\nR3: Never forward caller API keys to upstream serving backends.\nR4: Use placeholders only (<PROJECT>, <REGION>) in docs; never commit real project IDs.\nR5: New decision options in CLI must also be exposed in gateway, MCP, and Studio.\nR6: Never commit build artifacts under studio/dist/.",
+        "change_summary": "Add upstream URL to GET /health response for easier debugging.",
+        "proposed_diff": "@@ -112,6 +112,7 @@ func healthHandler(w http.ResponseWriter, r *http.Request) {\n \tresp := map[string]any{\n \t\t\"status\": \"ok\",\n \t\t\"version\": version,\n+\t\t\"upstream_url\": serveUpstreamURL,\n \t}\n \twriteJSON(w, http.StatusOK, resp)\n }",
+        "seed_token": "fixed",
+        "samples": 1
+      },
+      "expected_answers": {
+        "violates_rule": "yes",
+        "primary_rule": "R2"
+      }
+    },
+    {
+      "name": "edge",
+      "unambiguous": true,
+      "variables": {
+        "repo_rules": "R1: Never allocate per-request http.Client instances inside request handlers; share the pooled transport.\nR2: Unauthenticated /health responses must report liveness and version only; never expose upstream URLs or auth configuration.",
+        "change_summary": "Add regression test asserting GET /health does not leak upstream_url.",
+        "proposed_diff": "@@ -45,0 +46,7 @@ func TestHealthOmitsUpstreamURL(t *testing.T) {\n+\trec := httptest.NewRecorder()\n+\thealthHandler(rec, httptest.NewRequest(http.MethodGet, \"/health\", nil))\n+\tif strings.Contains(rec.Body.String(), \"upstream_url\") {\n+\t\tt.Fatalf(\"unauthenticated /health leaked upstream_url: %s\", rec.Body.String())\n+\t}\n+}",
+        "seed_token": "fixed",
+        "samples": 1
+      },
+      "expected_answers": {
+        "violates_rule": "no",
+        "primary_rule": "none"
+      }
+    },
+    {
+      "name": "ambiguous",
+      "variables": {
+        "repo_rules": "R1: Never allocate per-request http.Client instances inside request handlers; share the pooled transport.\nR5: New decision options in CLI must also be exposed in gateway, MCP, and Studio.",
+        "change_summary": "Add hidden `--debug-dump-prompt` diagnostic flag to CLI `decide` command only.",
+        "proposed_diff": "@@ -80,0 +81,2 @@\n+decideCmd.Flags().BoolVar(&debugDumpPrompt, \"debug-dump-prompt\", false, \"Print rendered prompt to stderr\")\n+_ = decideCmd.Flags().MarkHidden(\"debug-dump-prompt\")",
+        "seed_token": "fixed",
+        "samples": 1
+      }
+    },
+    {
+      "name": "minimal",
+      "variables": {}
+    }
+  ]
+}

@@ -33,6 +33,7 @@ func writeTemplateTree(t *testing.T) (root, outside string) {
 		"multimodal/bbox_localization.json.tmpl",
 		"rai/prompt_safety_guardrail.json.tmpl",
 		"retail/retail_catalog_qa.json.tmpl",
+		"swe/pr_automerge_gate.json.tmpl",
 		"custom/nested/deep_policy.json.tmpl",
 	} {
 		p := filepath.Join(root, filepath.FromSlash(rel))
@@ -66,6 +67,8 @@ func TestResolveTemplateFileValidNames(t *testing.T) {
 		"rai/prompt_safety_guardrail":       "rai/prompt_safety_guardrail",
 		"retail_catalog_qa":                 "retail/retail_catalog_qa",
 		"retail/retail_catalog_qa":          "retail/retail_catalog_qa",
+		"pr_automerge_gate":                 "swe/pr_automerge_gate",
+		"swe/pr_automerge_gate":             "swe/pr_automerge_gate",
 		"deep_policy":                       "custom/nested/deep_policy",
 		"custom/nested/deep_policy":         "custom/nested/deep_policy",
 	}
@@ -136,6 +139,14 @@ func TestSecOpsAndRAITemplatesRenderValidJSON(t *testing.T) {
 		"rai/custom_content_policy.json.tmpl",
 		"rai/unbiased_context_qa.json.tmpl",
 		"rai/provenance_claim_check.json.tmpl",
+		"swe/swe_issue_readiness.json.tmpl",
+		"swe/swe_model_router.json.tmpl",
+		"swe/agent_loop_detector.json.tmpl",
+		"swe/test_integrity_gate.json.tmpl",
+		"swe/agents_md_compliance.json.tmpl",
+		"swe/pr_automerge_gate.json.tmpl",
+		"swe/ci_failure_triage.json.tmpl",
+		"swe/dep_bump_risk.json.tmpl",
 	}
 	for _, rel := range policies {
 		t.Run(rel, func(t *testing.T) {

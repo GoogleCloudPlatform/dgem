@@ -1,0 +1,55 @@
+{
+  "examples": [
+    {
+      "name": "typical",
+      "unambiguous": true,
+      "variables": {
+        "pr_title": "feat(auth): allow custom X-Forwarded-User header when IAP JWT is absent",
+        "pr_summary": "Fallback to trusting X-Forwarded-User header in callerAuthHandler so local proxies can pass user identity.",
+        "changed_files": "cmd/caller_auth.go",
+        "diff_excerpt": "@@ -48,4 +48,8 @@ func callerAuthHandler(next http.Handler) http.Handler {\n+\tif user == \"\" {\n+\t\tuser = r.Header.Get(\"X-Forwarded-User\")\n+\t}",
+        "ci_status": "all_passed",
+        "seed_token": "fixed",
+        "samples": 1
+      },
+      "expected_answers": {
+        "behavior_change_scope": "auth_security_or_infra",
+        "tests_cover_diff": "no"
+      }
+    },
+    {
+      "name": "edge",
+      "unambiguous": true,
+      "variables": {
+        "pr_title": "docs(security): fix broken anchor link in caller authentication overview",
+        "pr_summary": "Fixes a typo in the markdown anchor link pointing to the IAP JWT verification section; no code changes.",
+        "changed_files": "docs/operate/security.md, docs-site/src/content/docs/operate/security.md",
+        "diff_excerpt": "@@ -34,1 +34,1 @@\n-See [IAP JWT auth](#iap-jwt-verfication) for setup.\n+See [IAP JWT auth](#iap-jwt-verification) for setup.",
+        "ci_status": "all_passed (docs-sync-check, docs-link-check, starlight-build)",
+        "seed_token": "fixed",
+        "samples": 1
+      },
+      "expected_answers": {
+        "disposition": "auto_merge",
+        "behavior_change_scope": "docs_or_comments_only",
+        "tests_cover_diff": "yes"
+      }
+    },
+    {
+      "name": "ambiguous",
+      "variables": {
+        "pr_title": "perf(client): raise idle connection pool limit from 16 to 64",
+        "pr_summary": "Increases MaxIdleConnsPerHost in proxyHTTPClient to reduce TLS handshakes under batch load.",
+        "changed_files": "cmd/serve.go",
+        "diff_excerpt": "@@ -92,1 +92,1 @@\n-\tMaxIdleConnsPerHost: 16,\n+\tMaxIdleConnsPerHost: 64,",
+        "ci_status": "all_passed",
+        "seed_token": "fixed",
+        "samples": 1
+      }
+    },
+    {
+      "name": "minimal",
+      "variables": {}
+    }
+  ]
+}

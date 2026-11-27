@@ -1,0 +1,46 @@
+{
+  "examples": [
+    {
+      "name": "typical",
+      "unambiguous": true,
+      "variables": {
+        "task_description": "Diagnose and fix an intermittent deadlock under concurrent graceful shutdown when the HTTP proxy pool, background stale-while-revalidate endpoint refresher, and OTel batch span exporter flush simultaneously under high load.",
+        "candidate_files": "cmd/serve.go, cmd/otel.go, pkg/client/http.go, cmd/vertex_status_swr_test.go",
+        "repo_constraints": "Must pass `go test -race ./...` and preserve pooled transport + non-blocking SWR invariants.",
+        "seed_token": "fixed",
+        "samples": 1
+      },
+      "expected_answers": {
+        "model_tier": "frontier_model"
+      }
+    },
+    {
+      "name": "edge",
+      "unambiguous": true,
+      "variables": {
+        "task_description": "Run `gofmt -w` on `pkg/client/types.go` to fix indentation in the doc comment mentioning distributed deadlock recovery.",
+        "candidate_files": "pkg/client/types.go",
+        "repo_constraints": "No logic changes.",
+        "seed_token": "fixed",
+        "samples": 1
+      },
+      "expected_answers": {
+        "model_tier": "deterministic"
+      }
+    },
+    {
+      "name": "ambiguous",
+      "variables": {
+        "task_description": "Add a `--timeout` CLI flag to `dgem template render` and propagate the deadline into remote schema lookups if enabled.",
+        "candidate_files": "cmd/template.go, pkg/template/engine.go",
+        "repo_constraints": "Preserve existing CLI flag defaults.",
+        "seed_token": "fixed",
+        "samples": 1
+      }
+    },
+    {
+      "name": "minimal",
+      "variables": {}
+    }
+  ]
+}

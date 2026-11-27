@@ -1,0 +1,51 @@
+{
+  "examples": [
+    {
+      "name": "typical",
+      "unambiguous": true,
+      "variables": {
+        "diff_summary": "Refactored parseVertexEndpointIdentity in cmd/serve.go to validate regional host prefixes.",
+        "changed_files": "cmd/serve.go",
+        "failing_test_log_tail": "--- FAIL: TestExpandAndValidateVertexURL (0.00s)\n    serve_test.go:184: expandAndValidateVertexURL(\"https://us-central1-aiplatform.googleapis.com/v1/projects/p/locations/us-central1/endpoints/123:rawPredict\"): unexpected error: missing dedicated suffix\nFAIL\tgithub.com/GoogleCloudPlatform/dgem/cmd\t1.42s",
+        "recent_flake_history": "0 failures in last 50 runs on main.",
+        "seed_token": "fixed",
+        "samples": 1
+      },
+      "expected_answers": {
+        "failure_cause": "real_regression",
+        "rerun_safe": "no"
+      }
+    },
+    {
+      "name": "edge",
+      "unambiguous": true,
+      "variables": {
+        "diff_summary": "Updated markdown formatting in docs/glossary.md describing timeout and connection refused errors.",
+        "changed_files": "docs/glossary.md, docs-site/src/content/docs/glossary.md",
+        "failing_test_log_tail": "Step: Install pnpm\nError: Request failed with status code 503 Service Unavailable fetching https://registry.npmjs.org/pnpm/-/pnpm-10.34.9.tgz",
+        "recent_flake_history": "npm registry experienced transient 503s across 3 unrelated runs in the last hour.",
+        "seed_token": "fixed",
+        "samples": 1
+      },
+      "expected_answers": {
+        "failure_cause": "infra_or_network_flake",
+        "rerun_safe": "yes"
+      }
+    },
+    {
+      "name": "ambiguous",
+      "variables": {
+        "diff_summary": "Adjusted background SWR refresh interval in cmd/vertex_status.go.",
+        "changed_files": "cmd/vertex_status.go",
+        "failing_test_log_tail": "--- FAIL: TestVertexStatusSWRRefresh (0.05s)\n    vertex_status_swr_test.go:71: timed out waiting 50ms for background refresh completion",
+        "recent_flake_history": "1 timeout failure in last 40 runs on slow CI runners.",
+        "seed_token": "fixed",
+        "samples": 1
+      }
+    },
+    {
+      "name": "minimal",
+      "variables": {}
+    }
+  ]
+}

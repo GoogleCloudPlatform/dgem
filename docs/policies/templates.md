@@ -873,7 +873,33 @@ The expectation breaks ties between passages that share an `argmax` grade, which
 
 ---
 
-## 9. Template Engine Functions Reference
+## 9. Software Engineering (SWE) System-1 Lifecycle (`templates/swe/`)
+
+Eight single-pass policies covering intake, model routing, execution health, repository-rule compliance, merge gating, CI failure triage, and dependency upgrades. Each ships with a companion `.examples.json` containing `typical`, `edge` (`use`-vs-`mention` hard negative), `ambiguous`, and `minimal` cases:
+
+| Template | Stage | Slots | Key Design Notes |
+| :--- | :--- | :--- | :--- |
+| `templates/swe/swe_issue_readiness.json.tmpl` | Intake | `ready_to_work` (`boolean`), `missing_info_kind` (`choice`: 6), `clarity_score` (`score`) | Gates autonomous coding-agent dispatch before spending tokens on underspecified tickets. |
+| `templates/swe/swe_model_router.json.tmpl` | Routing | `model_tier` (`deterministic` / `fast_model` / `frontier_model`), `cross_file_coupling` (`score`), `reasoning_depth` (`score`) | Routes task complexity separately from `dgem`'s label-uncertainty cascade. |
+| `templates/swe/agent_loop_detector.json.tmpl` | Execution Health | `progress_state` (`choice`: 4), `intervention` (`choice`: 5), `loop_severity` (`score`) | Uses `"isolate": "all"` to decouple diagnosis from intervention; pairs with `calibration/agent_step_drift`. |
+| `templates/swe/test_integrity_gate.json.tmpl` | Execution Health | `test_cheating` (`boolean`), `cheat_mode` (`choice`: 5), `severity` (`score`) | Detects weakened assertions, skipped tests, mocked SUTs, or hardcoded expectations while avoiding false positives on test-linter code. |
+| `templates/swe/agents_md_compliance.json.tmpl` | Policy Compliance | `violates_rule` (`boolean`), `primary_rule` (`none` / `R1`–`R6`), `severity` (`score`), `needs_human_review` (`boolean`) | Dynamic `R1`–`R6` repository rules passed in `state`; uses `"isolate": "noul"`. |
+| `templates/swe/pr_automerge_gate.json.tmpl` | Code Review | `disposition` (`auto_merge` / `standard_review` / `specialist_review` / `block`), `behavior_change_scope` (`choice`: 5), `tests_cover_diff` (`boolean`) | 4-way merge disposition with orthogonal behavioral scope and test-coverage slots. |
+| `templates/swe/ci_failure_triage.json.tmpl` | CI Triage | `failure_cause` (`choice`: 5), `rerun_safe` (`boolean`), `revert_urgency` (`score`) | Evaluates diff overlap alongside failing log tails and recent flake history. |
+| `templates/swe/dep_bump_risk.json.tmpl` | Release / Deps | `breaking_risk` (`score`), `supply_chain_red_flag` (`boolean`), `disposition` (`choice`: 4) | Audits semver jumps, changelog breaking notes, newly added install/prepare scripts, and lockfile anomalies. |
+
+```bash
+# Dry-run a SWE template locally (0 GPU cost) and validate all shipped templates + .examples.json
+./bin/dgem template render -t templates/swe/pr_automerge_gate.json.tmpl \
+  -v 'pr_title=docs: fix typo in security guide' \
+  -v 'changed_files=docs/operate/security.md' \
+  -v 'ci_status=all_passed'
+go test ./pkg/template/... -run TestAllShippedTemplatesRenderAndValidate
+```
+
+---
+
+## 10. Template Engine Functions Reference
 
 The Go template engine in `dgem` exposes the following helper functions:
 

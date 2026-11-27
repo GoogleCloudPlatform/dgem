@@ -1,0 +1,48 @@
+{
+  "examples": [
+    {
+      "name": "typical",
+      "unambiguous": true,
+      "variables": {
+        "issue_title": "POST /api/v1/checkout intermittently returns HTTP 500 in payments-api",
+        "issue_body": "Service: Go payments-api (`POST /api/v1/checkout`, v2.14.0 on Linux amd64). Client: iOS 18.1 Safari.\nError log: `panic: runtime error: invalid memory address or nil pointer dereference at payments/checkout.go:142 (applyPromoCode)`.\nWe haven't been able to reproduce this locally yet — we don't know what cart state, promo code combination, or request sequence triggers the 500.",
+        "repo_context": "Go payments API service (`payments/checkout.go`).",
+        "seed_token": "fixed",
+        "samples": 1
+      },
+      "expected_answers": {
+        "ready_to_work": "no",
+        "missing_info_kind": "repro_steps"
+      }
+    },
+    {
+      "name": "edge",
+      "unambiguous": true,
+      "variables": {
+        "issue_title": "Document missing repro steps template warning in ISSUE_TEMPLATE",
+        "issue_body": "Update `.github/ISSUE_TEMPLATE/bug_report.yml` to add a required textarea field labeled `Reproduction Steps` with placeholder text `Describe the exact steps to reproduce, including error logs and environment`. Acceptance criteria: YAML parses cleanly and includes `validations: { required: true }`.",
+        "repo_context": "CLI repository with existing `.github/ISSUE_TEMPLATE/bug_report.yml`.",
+        "seed_token": "fixed",
+        "samples": 1
+      },
+      "expected_answers": {
+        "ready_to_work": "yes",
+        "missing_info_kind": "none"
+      }
+    },
+    {
+      "name": "ambiguous",
+      "variables": {
+        "issue_title": "Add rate limiting to POST /api/decide",
+        "issue_body": "We should add per-caller rate limiting to `POST /api/decide` in `cmd/serve.go` returning HTTP 429 with a `Retry-After` header when exceeded. Exact burst/sustained defaults and whether `/health` is exempt are not finalized yet.",
+        "repo_context": "Go HTTP gateway in `cmd/serve.go`.",
+        "seed_token": "fixed",
+        "samples": 1
+      }
+    },
+    {
+      "name": "minimal",
+      "variables": {}
+    }
+  ]
+}
