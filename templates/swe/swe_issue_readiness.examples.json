@@ -4,9 +4,9 @@
       "name": "typical",
       "unambiguous": true,
       "variables": {
-        "issue_title": "Checkout fails sometimes on mobile",
-        "issue_body": "A couple users said checkout broke yesterday on their phones. Can someone look into it and fix it ASAP?",
-        "repo_context": "E-commerce web app (Next.js frontend, Go payments API).",
+        "issue_title": "POST /api/v1/checkout intermittently returns HTTP 500 in payments-api",
+        "issue_body": "Service: Go payments-api (`POST /api/v1/checkout`, v2.14.0 on Linux amd64). Client: iOS 18.1 Safari.\nError log: `panic: runtime error: invalid memory address or nil pointer dereference at payments/checkout.go:142 (applyPromoCode)`.\nWe haven't been able to reproduce this locally yet — we don't know what cart state, promo code combination, or request sequence triggers the 500.",
+        "repo_context": "Go payments API service (`payments/checkout.go`).",
         "seed_token": "fixed",
         "samples": 1
       },

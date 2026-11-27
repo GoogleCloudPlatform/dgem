@@ -892,7 +892,8 @@ Eight single-pass policies covering intake, model routing, execution health, rep
 # Dry-run a SWE template locally (0 GPU cost) and validate all shipped templates + .examples.json
 ./bin/dgem template render -t templates/swe/pr_automerge_gate.json.tmpl \
   -v 'pr_title=docs: fix typo in security guide' \
-  -v 'changed_files=docs/operate/security.md'
+  -v 'changed_files=docs/operate/security.md' \
+  -v 'ci_status=all_passed'
 go test ./pkg/template/... -run TestAllShippedTemplatesRenderAndValidate
 ```
 
