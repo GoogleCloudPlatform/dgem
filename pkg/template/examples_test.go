@@ -15,6 +15,7 @@
 package template
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -178,6 +179,45 @@ func TestValidateRenderedPayloadRejectsInvalidSchemas(t *testing.T) {
 				if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
 					t.Fatalf("got error %v, want substring %q", err, tc.wantErr)
 				}
+			}
+		})
+	}
+}
+
+// TestSWETemplatesIncludeUntrustedDataGuard verifies that every templates/swe/*.json.tmpl
+// reminds the model in schema.instructions to treat untrusted state fields strictly as DATA
+// rather than instructions to follow.
+func TestSWETemplatesIncludeUntrustedDataGuard(t *testing.T) {
+	sweRoot := filepath.Join("..", "..", "templates", "swe")
+	matches, err := filepath.Glob(filepath.Join(sweRoot, "*.json.tmpl"))
+	if err != nil {
+		t.Fatalf("glob %s: %v", sweRoot, err)
+	}
+	if len(matches) == 0 {
+		t.Fatalf("no .json.tmpl files found under %s", sweRoot)
+	}
+
+	eng := NewEngine()
+	for _, tmplPath := range matches {
+		tmplName := filepath.Base(tmplPath)
+		t.Run(tmplName, func(t *testing.T) {
+			rendered, err := eng.RenderFile(tmplPath, nil)
+			if err != nil {
+				t.Fatalf("RenderFile(%s): %v", tmplName, err)
+			}
+			schemaStr, _, err := ParseStructuredPayload(rendered, nil)
+			if err != nil {
+				t.Fatalf("ParseStructuredPayload(%s): %v", tmplName, err)
+			}
+			var schema struct {
+				Instructions string `json:"instructions"`
+			}
+			if err := json.Unmarshal([]byte(schemaStr), &schema); err != nil {
+				t.Fatalf("json.Unmarshal(%s schema): %v", tmplName, err)
+			}
+			lower := strings.ToLower(schema.Instructions)
+			if !strings.Contains(lower, "untrusted data") || !strings.Contains(lower, "never as instructions") {
+				t.Fatalf("%s schema.instructions missing untrusted-DATA prompt-injection guard: %q", tmplName, schema.Instructions)
 			}
 		})
 	}
