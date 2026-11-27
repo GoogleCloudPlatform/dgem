@@ -1,0 +1,76 @@
+{
+  "schema": {
+    "isolate": "all",
+    "seed_token": {{ default "fixed" .seed_token | toJson }},
+    "instructions": "Evaluate the recent execution trace of an autonomous coding agent to detect unproductive loops, oscillating edits, or scope drift. Distinguish healthy iterative debugging (where each step gathers new diagnostic evidence or narrows the failing test set) from blind retries, back-and-forth reverts, or unrelated tangents.",
+    "questions": [
+      {
+        "id": "progress_state",
+        "type": "choice",
+        "instructions": "What best describes the agent's trajectory over the recent steps?",
+        "options": [
+          {
+            "name": "making_progress",
+            "description": "Each step advances toward original_goal, narrows the root cause with new evidence, or resolves distinct sub-problems."
+          },
+          {
+            "name": "blind_retry_loop",
+            "description": "Repeating substantially the same failing command, tool call, or near-identical edit with the same error and no new diagnostic hypothesis."
+          },
+          {
+            "name": "oscillating_edits",
+            "description": "Toggling back and forth between two or more competing edits, breaking test A to fix test B and vice versa."
+          },
+          {
+            "name": "rabbit_hole_drift",
+            "description": "Drifting into unrelated refactors, dependency upgrades, or speculative tooling changes disconnected from original_goal."
+          }
+        ]
+      },
+      {
+        "id": "intervention",
+        "type": "choice",
+        "instructions": "What runtime control action should the orchestrator take next?",
+        "options": [
+          {
+            "name": "continue",
+            "description": "Allow the agent to proceed normally with its current plan."
+          },
+          {
+            "name": "change_strategy",
+            "description": "Inject a reset/re-plan hint forcing the agent to gather new diagnostics or try a qualitatively different approach."
+          },
+          {
+            "name": "handoff_specialist",
+            "description": "Escalate the task to a stronger reasoning model or domain specialist agent."
+          },
+          {
+            "name": "ask_human",
+            "description": "Pause and request human clarification, missing credentials/environment access, or a policy decision."
+          },
+          {
+            "name": "abort_loop",
+            "description": "Terminate the run immediately to stop wasted tokens or further workspace churn."
+          }
+        ]
+      },
+      {
+        "id": "loop_severity",
+        "type": "score",
+        "instructions": "Rate the severity of execution stall or loop pathology in this trace.",
+        "levels": [
+          "healthy",
+          "mild_stall",
+          "stuck",
+          "runaway"
+        ]
+      }
+    ],
+    "samples": {{ default 1 .samples | toJson }}
+  },
+  "state": {
+    "original_goal": {{ default "" .original_goal | toJson }},
+    "recent_steps": {{ default "" .recent_steps | toJson }},
+    "recent_errors": {{ default "" .recent_errors | toJson }}
+  }
+}

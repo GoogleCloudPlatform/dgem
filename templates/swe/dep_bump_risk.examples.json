@@ -1,0 +1,57 @@
+{
+  "examples": [
+    {
+      "name": "typical",
+      "unambiguous": true,
+      "variables": {
+        "package_name": "katex",
+        "version_change": "0.16.47 -> 0.19.1",
+        "changelog_excerpt": "0.19.0 BREAKING CHANGES: Missing character metrics now reported via strict with error code symbolNotInFont; strict callbacks returning undefined now warn.",
+        "install_script_changes": "Added `prepare` script that runs during installation.",
+        "lockfile_diff_summary": "Deleted `overrides: { katex: ^0.19.0 }` from pnpm-lock.yaml without updating package.json or removing transitive katex@0.16.47; fails frozen-lockfile install.",
+        "callsite_usage": "Used at build time via rehype-katex in docs-site.",
+        "seed_token": "fixed",
+        "samples": 1
+      },
+      "expected_answers": {
+        "supply_chain_red_flag": "yes",
+        "disposition": "block"
+      }
+    },
+    {
+      "name": "edge",
+      "unambiguous": true,
+      "variables": {
+        "package_name": "yaml",
+        "version_change": "2.9.0 -> 2.9.1",
+        "changelog_excerpt": "Bug fix: properly quote strings containing `postinstall` or `preinstall` keys when serializing YAML comments. No API changes.",
+        "install_script_changes": "none",
+        "lockfile_diff_summary": "Updated yaml@2.9.0 -> yaml@2.9.1 integrity hash only; no transitive changes.",
+        "callsite_usage": "Transitive dependency of astro config loader.",
+        "seed_token": "fixed",
+        "samples": 1
+      },
+      "expected_answers": {
+        "supply_chain_red_flag": "no",
+        "disposition": "auto_merge"
+      }
+    },
+    {
+      "name": "ambiguous",
+      "variables": {
+        "package_name": "go.opentelemetry.io/otel",
+        "version_change": "v1.46.0 -> v1.47.0",
+        "changelog_excerpt": "Minor release adding experimental histogram options; deprecates legacy metric helper not called directly here.",
+        "install_script_changes": "none",
+        "lockfile_diff_summary": "Bumps otel core, sdk, trace, and otlptracegrpc in lockstep across go.mod and go.sum.",
+        "callsite_usage": "Imported in cmd/otel.go for gateway span export.",
+        "seed_token": "fixed",
+        "samples": 1
+      }
+    },
+    {
+      "name": "minimal",
+      "variables": {}
+    }
+  ]
+}

@@ -1,0 +1,55 @@
+{
+  "schema": {
+    "seed_token": {{ default "fixed" .seed_token | toJson }},
+    "instructions": "Route a software engineering task to the lowest-cost execution tier capable of solving it reliably. Distinguish mechanical transformations that a deterministic script/linter/codemod can handle, localized well-scoped edits suitable for a fast model, and cross-cutting architectural, concurrency, or deep debugging tasks requiring a frontier reasoning model.",
+    "questions": [
+      {
+        "id": "model_tier",
+        "type": "choice",
+        "instructions": "Which execution tier is most appropriate for completing this task accurately?",
+        "options": [
+          {
+            "name": "deterministic",
+            "description": "Purely mechanical change solvable without an LLM via formatter, linter autofix, rename script, or fixed CLI command (e.g., gofmt, import sort, exact string replacement)."
+          },
+          {
+            "name": "fast_model",
+            "description": "Well-scoped localized edit, straightforward bug fix, doc update, or unit test addition within 1-3 closely related files with clear local patterns."
+          },
+          {
+            "name": "frontier_model",
+            "description": "Complex multi-module design, subtle race condition or memory/security bug, cross-surface contract migration, or ambiguous root-cause debugging requiring deep reasoning."
+          }
+        ]
+      },
+      {
+        "id": "cross_file_coupling",
+        "type": "score",
+        "instructions": "Rate how tightly coupled this task is across files, packages, or system boundaries.",
+        "levels": [
+          "isolated",
+          "local_module",
+          "multi_package",
+          "system_wide"
+        ]
+      },
+      {
+        "id": "reasoning_depth",
+        "type": "score",
+        "instructions": "Rate the depth of semantic reasoning and trade-off analysis required beyond pattern matching.",
+        "levels": [
+          "mechanical",
+          "routine_edit",
+          "architectural",
+          "deep_diagnosis"
+        ]
+      }
+    ],
+    "samples": {{ default 1 .samples | toJson }}
+  },
+  "state": {
+    "task_description": {{ default "" .task_description | toJson }},
+    "candidate_files": {{ default "" .candidate_files | toJson }},
+    "repo_constraints": {{ default "" .repo_constraints | toJson }}
+  }
+}

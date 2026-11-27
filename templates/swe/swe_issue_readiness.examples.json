@@ -1,0 +1,48 @@
+{
+  "examples": [
+    {
+      "name": "typical",
+      "unambiguous": true,
+      "variables": {
+        "issue_title": "Checkout fails sometimes on mobile",
+        "issue_body": "A couple users said checkout broke yesterday on their phones. Can someone look into it and fix it ASAP?",
+        "repo_context": "E-commerce web app (Next.js frontend, Go payments API).",
+        "seed_token": "fixed",
+        "samples": 1
+      },
+      "expected_answers": {
+        "ready_to_work": "no",
+        "missing_info_kind": "repro_steps"
+      }
+    },
+    {
+      "name": "edge",
+      "unambiguous": true,
+      "variables": {
+        "issue_title": "Document missing repro steps template warning in ISSUE_TEMPLATE",
+        "issue_body": "Update `.github/ISSUE_TEMPLATE/bug_report.yml` to add a required textarea field labeled `Reproduction Steps` with placeholder text `Describe the exact steps to reproduce, including error logs and environment`. Acceptance criteria: YAML parses cleanly and includes `validations: { required: true }`.",
+        "repo_context": "CLI repository with existing `.github/ISSUE_TEMPLATE/bug_report.yml`.",
+        "seed_token": "fixed",
+        "samples": 1
+      },
+      "expected_answers": {
+        "ready_to_work": "yes",
+        "missing_info_kind": "none"
+      }
+    },
+    {
+      "name": "ambiguous",
+      "variables": {
+        "issue_title": "Add rate limiting to POST /api/decide",
+        "issue_body": "We should add per-caller rate limiting to `POST /api/decide` in `cmd/serve.go` returning HTTP 429 with a `Retry-After` header when exceeded. Exact burst/sustained defaults and whether `/health` is exempt are not finalized yet.",
+        "repo_context": "Go HTTP gateway in `cmd/serve.go`.",
+        "seed_token": "fixed",
+        "samples": 1
+      }
+    },
+    {
+      "name": "minimal",
+      "variables": {}
+    }
+  ]
+}

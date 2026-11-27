@@ -1,0 +1,56 @@
+{
+  "schema": {
+    "seed_token": {{ default "fixed" .seed_token | toJson }},
+    "instructions": "Assess the breaking-change risk, supply-chain posture, and merge disposition of a dependency version bump PR (such as Dependabot or Renovate). Examine the version jump, changelog breaking changes, newly added install/lifecycle scripts (preinstall/postinstall/prepare), lockfile anomalies (such as dropped overrides or unexpected transitive downgrades), and how the repository actually calls the package.",
+    "questions": [
+      {
+        "id": "breaking_risk",
+        "type": "score",
+        "instructions": "Rate the likelihood that this upgrade breaks builds, runtime behavior, or lockfile consistency.",
+        "levels": [
+          "none",
+          "low",
+          "moderate",
+          "high"
+        ]
+      },
+      {
+        "id": "supply_chain_red_flag",
+        "type": "boolean",
+        "instructions": "Does the update introduce a supply-chain concern such as newly added install/prepare lifecycle scripts, suspicious maintainer/source changes, or unexplained lockfile tampering?"
+      },
+      {
+        "id": "disposition",
+        "type": "choice",
+        "instructions": "What review and merge action should be taken on this dependency bump?",
+        "options": [
+          {
+            "name": "auto_merge",
+            "description": "Clean patch or safe minor bump with no breaking changes, no install-script additions, and clean lockfile diff; safe to auto-merge once CI passes."
+          },
+          {
+            "name": "ci_only_verify",
+            "description": "Low-to-moderate change where passing build, unit, and integration CI checks are sufficient without deep code audit."
+          },
+          {
+            "name": "manual_review",
+            "description": "Contains breaking API changes, major/0.x minor bump, newly added lifecycle scripts, or call-site impacts requiring human verification."
+          },
+          {
+            "name": "block",
+            "description": "Malformed lockfile diff (e.g., strips security overrides or fails to resolve the target CVE), unvetted suspicious install script, or known incompatible major break."
+          }
+        ]
+      }
+    ],
+    "samples": {{ default 1 .samples | toJson }}
+  },
+  "state": {
+    "package_name": {{ default "" .package_name | toJson }},
+    "version_change": {{ default "" .version_change | toJson }},
+    "changelog_excerpt": {{ default "" .changelog_excerpt | toJson }},
+    "install_script_changes": {{ default "none" .install_script_changes | toJson }},
+    "lockfile_diff_summary": {{ default "" .lockfile_diff_summary | toJson }},
+    "callsite_usage": {{ default "" .callsite_usage | toJson }}
+  }
+}

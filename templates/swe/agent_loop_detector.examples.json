@@ -1,0 +1,47 @@
+{
+  "examples": [
+    {
+      "name": "typical",
+      "unambiguous": true,
+      "variables": {
+        "original_goal": "Fix failing TestParseConfig in pkg/config/parser_test.go.",
+        "recent_steps": "Step 4: ran `go test ./pkg/config/...` (failed).\nStep 5: re-ran `go test -v ./pkg/config/...` without editing any file (same failure).\nStep 6: added whitespace comment in parser.go and ran `go test ./pkg/config/...` (same failure).\nStep 7: re-ran `go test ./pkg/config/...` again (same failure).",
+        "recent_errors": "parser_test.go:42: expected timeout=30s, got 0s (repeated identically across steps 4, 5, 6, 7)",
+        "seed_token": "fixed",
+        "samples": 1
+      },
+      "expected_answers": {
+        "progress_state": "blind_retry_loop"
+      }
+    },
+    {
+      "name": "edge",
+      "unambiguous": true,
+      "variables": {
+        "original_goal": "Fix infinite retry loop bug in client backoff logic.",
+        "recent_steps": "Step 1: read pkg/client/retry.go and reproduced infinite retry loop in a new unit test.\nStep 2: capped retry counter in retry.go and re-ran `go test ./pkg/client/...` — retry test now passes; discovered 1 remaining edge case on HTTP 429 Retry-After header.\nStep 3: inspecting Retry-After parser in retry.go.",
+        "recent_errors": "Step 1: FAIL TestRetryStopsOnMaxAttempts (fixed in step 2). Step 2: FAIL TestRetryAfterHeader (new isolated failure).",
+        "seed_token": "fixed",
+        "samples": 1
+      },
+      "expected_answers": {
+        "progress_state": "making_progress",
+        "intervention": "continue"
+      }
+    },
+    {
+      "name": "ambiguous",
+      "variables": {
+        "original_goal": "Make `docs-site` build pass on Node 22.",
+        "recent_steps": "Step 1: ran `pnpm build`, failed with missing peer dep.\nStep 2: upgraded Vite plugin, fixed peer dep, hit TypeScript error in config.\nStep 3: downgraded Vite plugin, back to peer dep error.",
+        "recent_errors": "Alternating between peer dependency mismatch and TS2345 in astro.config.mjs.",
+        "seed_token": "fixed",
+        "samples": 1
+      }
+    },
+    {
+      "name": "minimal",
+      "variables": {}
+    }
+  ]
+}

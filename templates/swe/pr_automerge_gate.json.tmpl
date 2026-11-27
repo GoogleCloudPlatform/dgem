@@ -1,0 +1,71 @@
+{
+  "schema": {
+    "seed_token": {{ default "fixed" .seed_token | toJson }},
+    "instructions": "Evaluate whether a pull request is safe to auto-merge, requires standard peer review, requires specialist review (security/auth/infra/data), or must be blocked. Evaluate the actual behavioral scope, test coverage, and CI status. Do not auto-merge diffs that alter auth, IAM, cryptography, persistence schemas, or unverified production behavior, or diffs with failing CI.",
+    "questions": [
+      {
+        "id": "disposition",
+        "type": "choice",
+        "instructions": "What merge-gate disposition should be applied to this pull request?",
+        "options": [
+          {
+            "name": "auto_merge",
+            "description": "Low-risk, tightly scoped change (e.g., docs/typos, isolated well-tested fix, or clean minor maintenance) with passing CI and adequate test coverage."
+          },
+          {
+            "name": "standard_review",
+            "description": "Normal feature, refactor, or behavioral bug fix that should receive standard engineering peer review before merging."
+          },
+          {
+            "name": "specialist_review",
+            "description": "Touches authentication, authorization/IAM, secrets, public API/wire contracts, database migrations, or critical serving/infra paths requiring domain-owner sign-off."
+          },
+          {
+            "name": "block",
+            "description": "Failing CI, introduced security/correctness defect, missing required tests for risky behavior, or clear policy violation that must be fixed before merge."
+          }
+        ]
+      },
+      {
+        "id": "behavior_change_scope",
+        "type": "choice",
+        "instructions": "What is the broadest behavioral scope affected by the diff?",
+        "options": [
+          {
+            "name": "docs_or_comments_only",
+            "description": "Only documentation, comments, examples, or non-runtime metadata changed."
+          },
+          {
+            "name": "internal_refactor",
+            "description": "Internal code restructuring, formatting, or test-only updates with no intended runtime behavior change."
+          },
+          {
+            "name": "localized_bugfix",
+            "description": "Bounded runtime fix or minor behavior adjustment contained within one package or component."
+          },
+          {
+            "name": "public_api_or_schema",
+            "description": "Changes CLI flags, HTTP/JSON request or response schemas, MCP contracts, or exported library APIs."
+          },
+          {
+            "name": "auth_security_or_infra",
+            "description": "Modifies authentication, IAM/RBAC, credential handling, network/SSRF guards, CI workflows, or cloud infrastructure."
+          }
+        ]
+      },
+      {
+        "id": "tests_cover_diff",
+        "type": "boolean",
+        "instructions": "Do the included tests or passing verification checks adequately cover the changed behavior (answer yes for pure docs/comment changes with passing docs checks)?"
+      }
+    ],
+    "samples": {{ default 1 .samples | toJson }}
+  },
+  "state": {
+    "pr_title": {{ default "" .pr_title | toJson }},
+    "pr_summary": {{ default "" .pr_summary | toJson }},
+    "changed_files": {{ default "" .changed_files | toJson }},
+    "diff_excerpt": {{ default "" .diff_excerpt | toJson }},
+    "ci_status": {{ default "all_passed" .ci_status | toJson }}
+  }
+}

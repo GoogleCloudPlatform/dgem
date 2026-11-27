@@ -1,0 +1,71 @@
+{
+  "schema": {
+    "isolate": "noul",
+    "seed_token": {{ default "fixed" .seed_token | toJson }},
+    "instructions": "Audit a proposed code diff or implementation plan against the repository rules R1 through R6 supplied in repo_rules (extracted from AGENTS.md or contributor guidelines). Judge strictly against the stated R1-R6 rules rather than unstated preferences. Distinguish USE vs MENTION: documentation, comments, or unit tests that quote a forbidden pattern to verify a guard or explain a rule do not violate that rule unless the rule explicitly bans mentions.",
+    "questions": [
+      {
+        "id": "violates_rule",
+        "type": "boolean",
+        "instructions": "Does proposed_diff or change_summary violate one or more of rules R1 through R6 defined in repo_rules?"
+      },
+      {
+        "id": "primary_rule",
+        "type": "choice",
+        "instructions": "Which rule in repo_rules is the primary violation (select none when the change complies with all rules)?",
+        "options": [
+          {
+            "name": "none",
+            "description": "Complies with all rules R1 through R6."
+          },
+          {
+            "name": "R1",
+            "description": "Violates Rule R1 as defined in repo_rules."
+          },
+          {
+            "name": "R2",
+            "description": "Violates Rule R2 as defined in repo_rules."
+          },
+          {
+            "name": "R3",
+            "description": "Violates Rule R3 as defined in repo_rules."
+          },
+          {
+            "name": "R4",
+            "description": "Violates Rule R4 as defined in repo_rules."
+          },
+          {
+            "name": "R5",
+            "description": "Violates Rule R5 as defined in repo_rules."
+          },
+          {
+            "name": "R6",
+            "description": "Violates Rule R6 as defined in repo_rules."
+          }
+        ]
+      },
+      {
+        "id": "severity",
+        "type": "score",
+        "instructions": "Rate the severity of the repository rule violation.",
+        "levels": [
+          "compliant",
+          "minor_borderline",
+          "moderate_violation",
+          "blocking_violation"
+        ]
+      },
+      {
+        "id": "needs_human_review",
+        "type": "boolean",
+        "instructions": "Does the change involve an ambiguous rule boundary, intentional exception, or cross-cutting trade-off that warrants maintainer review?"
+      }
+    ],
+    "samples": {{ default 1 .samples | toJson }}
+  },
+  "state": {
+    "repo_rules": {{ default "R1: Never allocate per-request http.Client instances inside request handlers; share the pooled transport.\nR2: Unauthenticated /health responses must report liveness and version only; never expose upstream URLs or auth configuration.\nR3: Never forward caller API keys to upstream serving backends.\nR4: Use placeholders only (<PROJECT>, <REGION>, <ENDPOINT_ID>) in docs; never commit real project IDs or internal hostnames.\nR5: New decision options in CLI must also be exposed in gateway, MCP, and Studio (four-surface parity).\nR6: Never commit build artifacts under studio/dist/." .repo_rules | toJson }},
+    "change_summary": {{ default "" .change_summary | toJson }},
+    "proposed_diff": {{ default "" .proposed_diff | toJson }}
+  }
+}

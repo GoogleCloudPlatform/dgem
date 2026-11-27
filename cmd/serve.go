@@ -268,6 +268,7 @@ func resolveTemplateFile(rootDir, name string) (string, string, error) {
 		"rerank/" + base,
 		"rai/" + base,
 		"retail/" + base,
+		"swe/" + base,
 	}
 	targetBase := base + ".json.tmpl"
 	bestRank := len(preferred) + 1
