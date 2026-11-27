@@ -15,6 +15,7 @@
 package template
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -178,6 +179,89 @@ func TestValidateRenderedPayloadRejectsInvalidSchemas(t *testing.T) {
 				if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
 					t.Fatalf("got error %v, want substring %q", err, tc.wantErr)
 				}
+			}
+		})
+	}
+}
+
+// TestSWETemplatesRenderTemplateDelimitersInDiffs verifies that every templates/swe/*.json.tmpl
+// safely escapes payloads containing React JSX, Helm/Go template directives, and Jinja braces
+// without triggering template execution errors or corrupting the rendered JSON state.
+func TestSWETemplatesRenderTemplateDelimitersInDiffs(t *testing.T) {
+	sweRoot := filepath.Join("..", "..", "templates", "swe")
+	matches, err := filepath.Glob(filepath.Join(sweRoot, "*.json.tmpl"))
+	if err != nil {
+		t.Fatalf("glob %s: %v", sweRoot, err)
+	}
+	if len(matches) == 0 {
+		t.Fatalf("no .json.tmpl files found under %s", sweRoot)
+	}
+
+	const (
+		jsxSnippet   = `<Badge style={{ color: "red", padding: 8 }} data-note="a\"b" />`
+		helmSnippet  = `image: {{ .Values.image.repository }}:{{ .Values.image.tag | default "latest" }}`
+		jinjaSnippet = `{% if env == "prod" %}{{ user_input }}{% endif %}`
+	)
+	adversarialPayload := strings.Join([]string{
+		"@@ -1,2 +1,4 @@",
+		"+" + jsxSnippet,
+		"+" + helmSnippet,
+		"+" + jinjaSnippet,
+	}, "\n")
+
+	eng := NewEngine()
+	for _, tmplPath := range matches {
+		tmplName := filepath.Base(tmplPath)
+		t.Run(tmplName, func(t *testing.T) {
+			ef, err := LoadExamplesFile(ExamplesFilePath(tmplPath))
+			if err != nil {
+				t.Fatalf("LoadExamplesFile(%s): %v", tmplName, err)
+			}
+			vars := make(map[string]any)
+			for _, ex := range ef.Examples {
+				if ex.Name == "typical" {
+					for k, v := range ex.Variables {
+						if _, isStr := v.(string); isStr && k != "seed_token" {
+							vars[k] = adversarialPayload
+						} else {
+							vars[k] = v
+						}
+					}
+					break
+				}
+			}
+			if len(vars) == 0 {
+				t.Fatalf("%s: typical example had no variables", tmplName)
+			}
+
+			rendered, err := eng.RenderFile(tmplPath, vars)
+			if err != nil {
+				t.Fatalf("RenderFile(%s) with JSX/Helm braces failed: %v", tmplName, err)
+			}
+			if err := ValidateRenderedPayload(rendered, vars, ef.AllowWideChoices, nil); err != nil {
+				t.Fatalf("ValidateRenderedPayload(%s) failed: %v\nrendered:\n%s", tmplName, err, rendered)
+			}
+
+			_, stateStr, err := ParseStructuredPayload(rendered, vars)
+			if err != nil {
+				t.Fatalf("ParseStructuredPayload(%s) failed: %v", tmplName, err)
+			}
+			var state map[string]any
+			if err := json.Unmarshal([]byte(stateStr), &state); err != nil {
+				t.Fatalf("json.Unmarshal(state of %s): %v", tmplName, err)
+			}
+			foundAll := false
+			for _, v := range state {
+				if s, ok := v.(string); ok &&
+					strings.Contains(s, jsxSnippet) &&
+					strings.Contains(s, helmSnippet) &&
+					strings.Contains(s, jinjaSnippet) {
+					foundAll = true
+					break
+				}
+			}
+			if !foundAll {
+				t.Fatalf("%s: rendered state did not preserve literal JSX/Helm/Jinja delimiters:\n%s", tmplName, stateStr)
 			}
 		})
 	}
