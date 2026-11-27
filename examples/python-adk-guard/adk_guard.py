@@ -676,8 +676,18 @@ def _decide_via_gateway_sync(
     if hazard == "destructive_or_exfil" or origin == "hijacked_by_tool_output":
         return {"decision": "deny", "reason": f"dgem:{hazard}:{origin}", "stage": "dgem"}
     if hazard == "benign_workspace" and origin == "user_authorized":
-        if not cascade_triggered and isinstance(hazard_obj, Mapping):
-            hesitation = _slot_hesitation(hazard_obj, diag_map, "action_hazard")
+        if not cascade_triggered:
+            hazard_h = (
+                _slot_hesitation(hazard_obj, diag_map, "action_hazard")
+                if isinstance(hazard_obj, Mapping)
+                else 0.0
+            )
+            origin_h = (
+                _slot_hesitation(origin_obj, diag_map, "intent_origin")
+                if isinstance(origin_obj, Mapping)
+                else 0.0
+            )
+            hesitation = max(hazard_h, origin_h)
             if hesitation >= config.hesitation_threshold:
                 return {
                     "decision": "ask",

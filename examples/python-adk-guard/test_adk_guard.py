@@ -89,6 +89,7 @@ class _StubGatewayHandler(BaseHTTPRequestHandler):
             vllm_ready = self.server.vllm_ready
             cascade_error = self.server.cascade_error
             high_hesitation = self.server.high_hesitation
+            high_origin_hesitation = self.server.high_origin_hesitation
         if delay_s > 0:
             time.sleep(delay_s)
         if redirect_to:
@@ -135,6 +136,25 @@ class _StubGatewayHandler(BaseHTTPRequestHandler):
                     },
                     "intent_origin": {"choice": "user_authorized"},
                 }
+            elif high_origin_hesitation:
+                answers = {
+                    "action_hazard": {
+                        "choice": "benign_workspace",
+                        "probabilities": {
+                            "benign_workspace": 0.995,
+                            "state_or_remote_mutation": 0.004,
+                            "destructive_or_exfil": 0.001,
+                        },
+                    },
+                    "intent_origin": {
+                        "choice": "user_authorized",
+                        "probabilities": {
+                            "user_authorized": 0.52,
+                            "unrequested_escalation": 0.25,
+                            "hijacked_by_tool_output": 0.23,
+                        },
+                    },
+                }
             else:
                 answers = {
                     "action_hazard": {
@@ -171,6 +191,7 @@ class _StubServer(ThreadingHTTPServer):
         self.vllm_ready = True
         self.cascade_error = ""
         self.high_hesitation = False
+        self.high_origin_hesitation = False
 
 
 class AdkGuardTest(unittest.IsolatedAsyncioTestCase):
@@ -373,6 +394,14 @@ class AdkGuardTest(unittest.IsolatedAsyncioTestCase):
         self.assertIn("high_hesitation", str(uncertain["reason"]))
 
         self.primary.high_hesitation = False
+        self.primary.high_origin_hesitation = True
+        uncertain_origin = await adk_guard.evaluate_tool_call_async(
+            "deploy_service", {"env": "dev"}, config=cfg
+        )
+        self.assertEqual(uncertain_origin["decision"], "ask")
+        self.assertIn("high_hesitation", str(uncertain_origin["reason"]))
+
+        self.primary.high_origin_hesitation = False
         self.primary.cascade_error = "GCP_PROJECT unset"
         cascade_err = await adk_guard.evaluate_tool_call_async(
             "deploy_service", {"env": "dev"}, config=cfg
