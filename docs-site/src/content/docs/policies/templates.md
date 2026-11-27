@@ -897,6 +897,33 @@ Eight single-pass policies covering intake, model routing, execution health, rep
 go test ./pkg/template/... -run TestAllShippedTemplatesRenderAndValidate
 ```
 
+### Input Chunking & Token Budget Contract (`4k` / `8k` `MAX_MODEL_LEN`)
+
+Each SWE template carries roughly `475–685` tokens of static schema and canvas overhead (`document_first` layout + `CANVAS_LEN = 64`). Raw multi-file diffs frequently exceed `4,096` tokens, and raw `200`-line CI failure logs on `ci_failure_triage` can exceed `10,000` tokens — overflowing an `8,192`-token production `MAX_MODEL_LEN`.
+
+Before calling `dgem decide` or `POST /api/decide` with large SWE inputs, apply a **deterministic, structure-preserving pre-flight chunker** targeting **`<= 12,000` total state characters** (`~3,750` code tokens + `~700` schema tokens, keeping total prompt length safely inside `4,096`–`6,144` tokens):
+
+1. **Unified diffs (`diff_excerpt`, `proposed_diff`, `source_diff`, `test_diff`, `lockfile_diff_summary`, `install_script_changes`):**
+   - Always prepend a compact `[Diff file index:]` listing every touched path so file-level scope is never lost.
+   - Prioritize hunks touching security/integrity/hook signals (`pytest.mark.skip`, `t.Skip`, `mock.patch`, `postinstall`/`preinstall`, `Makefile`, `conftest.py`, `auth`/`iam`/`secret`/`token`/`sql`/`exec`), retaining high-signal lines before clipping repetitive body lines with explicit `[... truncated N diff lines ...]` markers.
+2. **CI logs & error streams (`failing_test_log_tail`, `recent_errors`):**
+   - Reserve **60%** of the field budget for the final tail lines and **40%** for earlier failure/traceback anchor lines (`FAIL`, `ERROR`, `Traceback`, `AssertionError`, `panic:`, `exit status`, `timeout`, `OOMKilled`), dropping middle dependency-install or setup noise.
+3. **Agent trajectories (`recent_steps`):**
+   - Keep **25% head** (initial plan/steps) + **75% tail** (most recent retry/oscillation cadence) separated by an explicit truncation marker.
+4. **Issues, rules, changelogs, and summaries (`issue_body`, `repo_rules`, `changelog_excerpt`, `task_description`, `pr_summary`):**
+   - Keep **65% head** + **35% tail** with explicit truncation markers, never dropping `repo_rules` `R1`–`R6` definitions or exact package/version headers.
+
+| Template | Recommended Per-Field Character Budgets (`<= 12k` chars total) |
+| :--- | :--- |
+| `swe_issue_readiness` | `issue_title` `400` (`head_tail`), `issue_body` `6,500` (`head_tail`), `repo_context` `3,500` (`head_tail`) |
+| `swe_model_router` | `task_description` `5,500` (`head_tail`), `candidate_files` `3,500` (`head_tail`), `repo_constraints` `2,000` (`head_tail`) |
+| `agent_loop_detector` | `original_goal` `1,800` (`head_tail`), `recent_steps` `5,500` (`steps_head_tail`), `recent_errors` `3,500` (`log_tail`) |
+| `test_integrity_gate` | `task_goal` `1,500` (`head_tail`), `source_diff` `4,200` (`diff`), `test_diff` `5,200` (`diff`) |
+| `agents_md_compliance` | `repo_rules` `3,500` (`head_tail`), `change_summary` `1,500` (`head_tail`), `proposed_diff` `5,800` (`diff`) |
+| `pr_automerge_gate` | `pr_title` `400`, `pr_summary` `2,000`, `changed_files` `2,000`, `diff_excerpt` `6,000` (`diff`), `ci_status` `600` |
+| `ci_failure_triage` | `changed_files` `1,800`, `diff_summary` `3,200` (`diff`), `failing_test_log_tail` `4,800` (`log_tail`), `recent_flake_history` `1,500` |
+| `dep_bump_risk` | `package_name` `300` (`keep`), `version_change` `300` (`keep`), `lockfile_diff_summary` `3,000` (`diff`), `changelog_excerpt` `3,200`, `install_script_changes` `2,400` (`diff`), `callsite_usage` `2,200` |
+
 ---
 
 ## 10. Template Engine Functions Reference
